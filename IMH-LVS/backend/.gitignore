@@ -1,0 +1,19 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+
+# Environment files — never commit real credentials
+.env
+.env.local
+
+# Uploaded label files are temporary working data, not source — see
+# src/middleware/upload.middleware.ts, which deletes them after each
+# request anyway. Keep the folder itself tracked via .gitkeep.
+uploads/*
+!uploads/.gitkeep
+
+# Logs
+*.log
+npm-debug.log*

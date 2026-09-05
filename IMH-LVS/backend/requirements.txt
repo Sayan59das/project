@@ -1,0 +1,12 @@
+fastapi
+uvicorn
+python-multipart
+pdf2image
+pillow
+transformers
+sentence-transformers
+torch
+reportlab
+pydantic
+pyngrok
+nest_asyncio

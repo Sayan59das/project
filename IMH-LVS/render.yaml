@@ -1,0 +1,30 @@
+# Render Blueprint for the IMH LVS backend (see backend/README.md ->
+# "Deployment"). Deploy via https://dashboard.render.com/blueprints ->
+# "New Blueprint Instance", pointing at this repo. Uses the Dockerfile in
+# backend/ so poppler-utils (pdftoppm) and sharp's native binary are
+# installed correctly — a plain Node buildpack would miss poppler-utils.
+services:
+  - type: web
+    name: imh-lvs-backend
+    runtime: docker
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: ./backend
+    plan: free
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      # Set this to your deployed frontend's exact origin (e.g. a Vercel
+      # URL) after the first deploy — comma-separate multiple origins if
+      # you also need local dev access. Required for the frontend to be
+      # able to call this API at all (CORS).
+      - key: FRONTEND_ORIGIN
+        sync: false
+      - key: MAX_UPLOAD_FILE_SIZE_MB
+        value: "5"
+      - key: PDF_MIN_TEXT_LENGTH
+        value: "20"
+      - key: PDF_MAX_OCR_PAGES
+        value: "5"
+      - key: PDF_RASTER_DPI
+        value: "300"
