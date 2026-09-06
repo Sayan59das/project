@@ -1,0 +1,44 @@
+# Line endings: LF in the repository, and LF on checkout on every platform.
+#
+# Without this, the answer depends on each developer's core.autocrlf setting.
+# On this Windows machine it is `true`, so checkouts rewrite every file to CRLF
+# and the next person to touch one commits a whole-file diff that buries the
+# actual change in it. Two people on different platforms editing the same files
+# is exactly the situation here, and `git blame` stops being useful the first
+# time it happens.
+#
+# `text=auto` lets git decide what is text; `eol=lf` fixes what a checkout
+# produces, overriding autocrlf rather than trusting it to be set the same way
+# everywhere.
+* text=auto eol=lf
+
+# Files git must never inspect or convert. A PDF or PNG that gets line-ending
+# normalisation applied to it is a corrupt PDF or PNG — and the label artwork
+# in this repository is test data that has to stay byte-identical for the
+# extraction tests to mean anything.
+*.pdf  binary
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.gif  binary
+*.ico  binary
+*.webp binary
+*.woff  binary
+*.woff2 binary
+*.ttf  binary
+*.otf  binary
+*.eot  binary
+*.pyc  binary
+
+# Windows batch files are the one exception: cmd.exe requires CRLF, and a
+# batch file with LF endings fails in ways that are hard to read.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Shell scripts break outright with CRLF — the shebang line ends up with a
+# trailing carriage return and the interpreter is not found.
+*.sh text eol=lf
+
+# Lockfiles are generated: collapse them in diffs and mark them so GitHub does
+# not count them toward the repository's language statistics.
+package-lock.json linguist-generated=true -diff
