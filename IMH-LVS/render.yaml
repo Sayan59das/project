@@ -3,6 +3,12 @@
 # "New Blueprint Instance", pointing at this repo. Uses the Dockerfile in
 # backend/ so poppler-utils (pdftoppm) and sharp's native binary are
 # installed correctly — a plain Node buildpack would miss poppler-utils.
+databases:
+  - name: imh-lvs-db
+    databaseName: imh_lvs
+    user: lvs
+    plan: free
+
 services:
   - type: web
     name: imh-lvs-backend
@@ -11,9 +17,25 @@ services:
     dockerContext: ./backend
     plan: free
     healthCheckPath: /api/health
+    # Applies any unapplied migrations, then loads seed data, ONCE per
+    # deploy before the new instance takes traffic. Deliberately not in the
+    # container's CMD, which would race every replica against the same
+    # migration. Both scripts are safe to re-run: migrations are tracked in
+    # schema_migrations, and the seed inserts are ON CONFLICT DO NOTHING.
+    preDeployCommand: node dist/db/migrate.js && node dist/db/seed.js
     envVars:
       - key: NODE_ENV
         value: production
+      # Render injects the managed database's internal connection string.
+      # Never hardcode it — the password rotates.
+      - key: DATABASE_URL
+        fromDatabase:
+          name: imh-lvs-db
+          property: connectionString
+      # Render's managed Postgres requires TLS. Local Docker Postgres has no
+      # certificate, which is why this is explicit rather than inferred.
+      - key: DATABASE_SSL
+        value: "true"
       # Set this to your deployed frontend's exact origin (e.g. a Vercel
       # URL) after the first deploy — comma-separate multiple origins if
       # you also need local dev access. Required for the frontend to be

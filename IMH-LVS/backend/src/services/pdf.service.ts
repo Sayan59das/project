@@ -117,7 +117,25 @@ export function hasUsablePdfText(text: string): boolean {
 // installed, or rendering otherwise fails, logs a clear message and
 // resolves to an empty array so the caller can fall back to blank fields
 // instead of crashing the request.
-export async function rasterizePdfPages(pdfBuffer: Buffer): Promise<Buffer[]> {
+/**
+ * Options for a cheaper render than the OCR default.
+ *
+ * OCR wants every page at a resolution Tesseract can read. Colour extraction
+ * wants one page and downsamples it to 128px square regardless, so rendering it
+ * at OCR resolution costs seconds of CPU to throw the pixels away. Both
+ * default to the OCR settings, so existing callers are unchanged.
+ */
+export type RasterizeOptions = {
+  /** Render resolution. Defaults to env.pdfRasterDpi. */
+  dpi?: number;
+  /** How many pages from the front. Defaults to env.pdfMaxOcrPages. */
+  maxPages?: number;
+};
+
+export async function rasterizePdfPages(
+  pdfBuffer: Buffer,
+  options: RasterizeOptions = {}
+): Promise<Buffer[]> {
   const workDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'imh-lvs-pdf-'));
   const sourcePath = path.join(workDir, 'source.pdf');
   const outputPrefix = path.join(workDir, 'page');
@@ -128,11 +146,11 @@ export async function rasterizePdfPages(pdfBuffer: Buffer): Promise<Buffer[]> {
     await execFileAsync('pdftoppm', [
       '-png',
       '-r',
-      String(env.pdfRasterDpi),
+      String(options.dpi ?? env.pdfRasterDpi),
       '-f',
       '1',
       '-l',
-      String(env.pdfMaxOcrPages),
+      String(options.maxPages ?? env.pdfMaxOcrPages),
       sourcePath,
       outputPrefix
     ]);

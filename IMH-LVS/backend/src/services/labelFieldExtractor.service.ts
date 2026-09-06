@@ -490,7 +490,28 @@ function isFollowedByDosageWording(text: string, matchEndIndex: number): boolean
   return DOSAGE_TRAILING_PATTERN.test(restOfLine);
 }
 
+// The Net Content declaration, which Indian supplement labels carry by law and
+// which states the pack count explicitly: 'Net Content: 30 N' ('N' for
+// numbers/units). All three artworks in the project's dataset declare it this
+// way, and it is far more reliable than reading the stylised front-of-pack
+// count badge — that is display type, and OCR of it produced '9' for a pack of
+// 30 on one of them.
+//
+// The unit alternation is what keeps this a COUNT: 'Net Content: 100 g' is a
+// weight and must not be read as a pack of 100. Only counting units match, so
+// a mass or volume declaration is simply not a candidate.
+const NET_CONTENT_COUNT_PATTERN =
+  /\bnet\s*(?:content|qty|quantity)\s*[:\-]?\s*(\d{1,4})\s*(?:n|nos?|no\.?|units?|pieces?|gummies|gummy|tablets?|capsules?)\b/i;
+
 function extractPackageSize(text: string): string {
+  // Tried before the '<number> Gummies' wording below because it is an explicit
+  // declaration of the pack count rather than a phrase that usually means one.
+  const netContent = text.match(NET_CONTENT_COUNT_PATTERN);
+  if (netContent) {
+    debugLog(`packageSize: matched "${netContent[1]}" from the Net Content declaration "${netContent[0].trim()}".`);
+    return netContent[1];
+  }
+
   const re = new RegExp(PACKAGE_SIZE_PATTERN);
   let match: RegExpExecArray | null;
   while ((match = re.exec(text))) {

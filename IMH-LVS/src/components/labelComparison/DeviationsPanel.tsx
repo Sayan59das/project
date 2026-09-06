@@ -1,10 +1,10 @@
-// "Deviations" review list — the redesign's key UX improvement over forcing
+// "Deviations" review list â€” the redesign's key UX improvement over forcing
 // the user to scan a full comparison table: every non-matching field is
 // surfaced as a numbered, expandable review item instead. Clicking an item
 // reveals its New vs. Latest Approved values (a real, honest "details"
 // action); it deliberately does NOT claim to focus/highlight a location on
 // the artwork preview, since the extraction pipeline has no coordinate data
-// to back that up — faking it would be exactly the kind of invented
+// to back that up â€” faking it would be exactly the kind of invented
 // functionality this redesign must avoid.
 import { useState } from 'react';
 import { Box, Collapse, IconButton, Paper, Typography } from '@mui/material';
@@ -15,7 +15,7 @@ import type { LabelComparisonFieldResult } from '../../types/labelComparison';
 export type DeviationStatus = 'MODIFIED' | 'CONFLICTING' | 'MISSING' | 'NOT_COMPARED';
 
 // A DIFFERENT field is split into MODIFIED vs. CONFLICTING using the
-// backend's own per-field `importance` (HIGH/MEDIUM/LOW) — a real signal
+// backend's own per-field `importance` (HIGH/MEDIUM/LOW) â€” a real signal
 // already returned by the comparison API, not an invented distinction.
 export function classifyDeviation(field: LabelComparisonFieldResult): DeviationStatus | 'MATCH' {
   if (field.status === 'MATCH') return 'MATCH';
@@ -37,8 +37,8 @@ export function DeviationsPanel({ fields, newLabel, approvedLabel }: Props) {
   if (deviations.length === 0) {
     return (
       <Paper variant="outlined" sx={{ p: 3, borderRadius: 3, textAlign: 'center' }}>
-        <Typography variant="body2" sx={{ color: '#9EA4AB' }}>
-          No deviations found — every compared field matches the latest approved artwork.
+        <Typography variant="body2" sx={{ color: 'var(--c-text-3)' }}>
+          No deviations found â€” every compared field matches the latest approved artwork.
         </Typography>
       </Paper>
     );
@@ -55,10 +55,10 @@ export function DeviationsPanel({ fields, newLabel, approvedLabel }: Props) {
               onClick={() => setExpandedField(isOpen ? null : item.field.field)}
             >
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, minWidth: 0 }}>
-                <Typography variant="body2" sx={{ fontWeight: 700, color: '#9EA4AB', minWidth: 24 }}>
+                <Typography variant="body2" sx={{ fontWeight: 700, color: 'var(--c-text-3)', minWidth: 24 }}>
                   {String(index + 1).padStart(2, '0')}
                 </Typography>
-                <Typography variant="body2" sx={{ fontWeight: 700, color: '#2E3135' }}>
+                <Typography variant="body2" sx={{ fontWeight: 700, color: 'var(--c-text-1)' }}>
                   {item.field.label}
                 </Typography>
               </Box>
@@ -70,19 +70,19 @@ export function DeviationsPanel({ fields, newLabel, approvedLabel }: Props) {
             <Collapse in={isOpen}>
               <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: '1fr 1fr' }, gap: 2, px: 2, pb: 2 }}>
                 <Box>
-                  <Typography variant="caption" sx={{ color: '#9EA4AB', display: 'block' }}>
+                  <Typography variant="caption" sx={{ color: 'var(--c-text-3)', display: 'block' }}>
                     {newLabel}
                   </Typography>
-                  <Typography variant="body2" sx={{ fontWeight: 600, color: '#2E3135' }}>
-                    {item.field.labelA || '—'}
+                  <Typography variant="body2" sx={{ fontWeight: 600, color: 'var(--c-text-1)' }}>
+                    {item.field.labelA || 'â€”'}
                   </Typography>
                 </Box>
                 <Box>
-                  <Typography variant="caption" sx={{ color: '#9EA4AB', display: 'block' }}>
+                  <Typography variant="caption" sx={{ color: 'var(--c-text-3)', display: 'block' }}>
                     {approvedLabel}
                   </Typography>
-                  <Typography variant="body2" sx={{ fontWeight: 600, color: '#2E3135' }}>
-                    {item.field.labelB || '—'}
+                  <Typography variant="body2" sx={{ fontWeight: 600, color: 'var(--c-text-1)' }}>
+                    {item.field.labelB || 'â€”'}
                   </Typography>
                 </Box>
               </Box>

@@ -15,12 +15,12 @@ type Props = {
 
 export function DataTable({ columns, rows }: Props) {
   return (
-    <TableContainer component={Paper} sx={{ boxShadow: '0 18px 45px rgba(0,0,0,0.06)', borderRadius: 4, overflow: 'hidden' }}>
+    <TableContainer component={Paper} sx={{ boxShadow: 'var(--c-shadow-paper)', borderRadius: 4, overflow: 'hidden' }}>
       <Table>
-        <TableHead sx={{ bgcolor: '#FFFFFF' }}>
+        <TableHead sx={{ bgcolor: 'var(--c-paper)' }}>
           <TableRow>
             {columns.map((column) => (
-              <TableCell key={column.accessor} sx={{ fontWeight: 700, color: '#2E3135', borderBottom: 'none', py: 2, fontSize: 14 }}>
+              <TableCell key={column.accessor} sx={{ fontWeight: 700, color: 'var(--c-text-1)', borderBottom: 'none', py: 2, fontSize: 14 }}>
                 {column.header}
               </TableCell>
             ))}
@@ -33,12 +33,12 @@ export function DataTable({ columns, rows }: Props) {
               hover
               sx={{
                 transition: 'background 0.25s ease',
-                '&:hover': { bgcolor: '#FFF8F2' },
+                '&:hover': { bgcolor: 'var(--c-tint-orange)' },
                 '& td': { borderBottom: 'none', py: 2 }
               }}
             >
               {columns.map((column) => (
-                <TableCell key={column.accessor} sx={{ color: '#9EA4AB' }}>
+                <TableCell key={column.accessor} sx={{ color: 'var(--c-text-3)' }}>
                   {column.accessor === 'status' ? <StatusChip status={String(row[column.accessor])} /> : row[column.accessor]}
                 </TableCell>
               ))}

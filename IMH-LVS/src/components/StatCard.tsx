@@ -27,23 +27,23 @@ export function StatCard({ card, onClick }: Props) {
         justifyContent: 'space-between',
         minWidth: 220,
         borderRadius: 4,
-        bgcolor: 'rgba(255,255,255,0.95)',
+        bgcolor: 'var(--c-paper)',
         border: '1px solid rgba(230,103,55,0.12)',
         backdropFilter: 'blur(10px)',
         cursor: onClick ? 'pointer' : 'default',
         transition: 'box-shadow 0.2s ease',
-        '&:hover': onClick ? { boxShadow: '0 12px 30px rgba(0,0,0,0.08)' } : undefined
+        '&:hover': onClick ? { boxShadow: 'var(--c-shadow-card)' } : undefined
       }}
     >
       <Box>
-        <Typography variant="subtitle2" sx={{ color: '#6B7177', mb: 1 }}>
+        <Typography variant="subtitle2" sx={{ color: 'var(--c-text-2)', mb: 1 }}>
           {card.title}
         </Typography>
         <Typography variant="h4" sx={{ fontWeight: 700 }}>
           {card.value}
         </Typography>
         {card.caption && (
-          <Typography variant="body2" sx={{ color: '#9EA4AB', mt: 0.5 }}>
+          <Typography variant="body2" sx={{ color: 'var(--c-text-3)', mt: 0.5 }}>
             {card.caption}
           </Typography>
         )}

@@ -2,14 +2,16 @@ import { useState } from 'react';
 import { Alert, Box, Button, Card, CardContent, IconButton, InputAdornment, TextField, Typography } from '@mui/material';
 import { motion } from 'framer-motion';
 import { useNavigate } from 'react-router-dom';
-import { MdVisibility, MdVisibilityOff } from 'react-icons/md';
+import { MdVisibility, MdVisibilityOff, MdOutlineDarkMode, MdOutlineLightMode } from 'react-icons/md';
 import illustration from '../assets/label-verification-illustration.png';
+import { useColorMode } from '../theme/ColorModeContext';
 import { useAuth } from '../auth/AuthContext';
 import { getUserByEmail } from '../data/usersStore';
 import { getSettings } from '../services/settingsService';
 
 export function LoginPage() {
   const { login } = useAuth();
+  const { mode, toggleColorMode } = useColorMode();
   const navigate = useNavigate();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -28,7 +30,7 @@ export function LoginPage() {
   };
 
   return (
-    <Box sx={{ position: 'relative', minHeight: '100vh', display: 'grid', placeItems: 'center', p: 3, bgcolor: '#FFF7F0', overflow: 'hidden' }}>
+    <Box sx={{ position: 'relative', minHeight: '100vh', display: 'grid', placeItems: 'center', p: 3, bgcolor: 'var(--c-tint-orange-4)', overflow: 'hidden' }}>
       <Box
         component="img"
         src={illustration}
@@ -39,19 +41,43 @@ export function LoginPage() {
           width: '100%',
           height: '100%',
           objectFit: 'cover',
-          opacity: 0.4,
+          // The illustration is a bright, near-white artwork. At 0.4 it reads
+          // as a soft wash on the light background, but over the dark one it
+          // lifts the whole page into a muddy grey — the opposite of what
+          // dark mode is for. Drop it to a faint texture instead.
+          opacity: mode === 'dark' ? 0.13 : 0.4,
           pointerEvents: 'none'
         }}
       />
 
+      {/* The login screen sits outside AppLayout, so it has no Navbar to host
+          the theme switch — it gets its own, otherwise the first screen a user
+          ever sees would be stuck in whichever mode they last chose. */}
+      <IconButton
+        onClick={toggleColorMode}
+        aria-label={mode === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+        sx={{
+          position: 'absolute',
+          top: 20,
+          right: 20,
+          zIndex: 2,
+          bgcolor: 'var(--c-paper)',
+          color: 'var(--c-text-2)',
+          border: '1px solid var(--c-border)',
+          '&:hover': { bgcolor: 'var(--c-surface)' }
+        }}
+      >
+        {mode === 'dark' ? <MdOutlineLightMode size={20} /> : <MdOutlineDarkMode size={20} />}
+      </IconButton>
+
       <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.7 }} style={{ position: 'relative', zIndex: 1 }}>
-        <Card sx={{ width: 420, borderRadius: '20px', boxShadow: '0 26px 90px rgba(226,103,55,0.18)', bgcolor: '#FFFFFF', position: 'relative', overflow: 'hidden' }}>
+        <Card sx={{ width: 420, borderRadius: '20px', boxShadow: '0 26px 90px rgba(226,103,55,0.18)', bgcolor: 'var(--c-paper)', position: 'relative', overflow: 'hidden' }}>
           <Box sx={{ position: 'absolute', inset: 0, bgcolor: 'radial-gradient(circle at top left, rgba(226,103,55,0.08), transparent 42%)', pointerEvents: 'none' }} />
           <CardContent sx={{ position: 'relative', zIndex: 1, p: 5 }}>
-            <Typography variant="h4" sx={{ fontWeight: 800, color: '#E26737', mb: 1 }}>
+            <Typography variant="h4" sx={{ fontWeight: 800, color: 'var(--c-orange)', mb: 1 }}>
               Welcome to IMH LVS
             </Typography>
-            <Typography variant="body1" sx={{ color: '#9EA4AB', mb: 4, lineHeight: 1.7 }}>
+            <Typography variant="body1" sx={{ color: 'var(--c-text-3)', mb: 4, lineHeight: 1.7 }}>
               Simplified label verification for pharma packaging, artwork, and compliance.
             </Typography>
 
@@ -69,10 +95,10 @@ export function LoginPage() {
                 value={email}
                 onChange={(event) => setEmail(event.target.value)}
                 sx={{
-                  bgcolor: '#FFF6F1',
+                  bgcolor: 'var(--c-tint-orange-2)',
                   borderRadius: 2,
                   '& input:-webkit-autofill': {
-                    WebkitBoxShadow: '0 0 0 1000px #FFF6F1 inset',
+                    WebkitBoxShadow: '0 0 0 1000px var(--c-tint-orange-2) inset',
                     borderRadius: 2
                   }
                 }}
@@ -85,11 +111,11 @@ export function LoginPage() {
                 value={password}
                 onChange={(event) => setPassword(event.target.value)}
                 sx={{
-                  bgcolor: '#FFF6F1',
+                  bgcolor: 'var(--c-tint-orange-2)',
                   borderRadius: 2,
                   '& .MuiInputAdornment-root, & .MuiIconButton-root': { bgcolor: 'transparent' },
                   '& input:-webkit-autofill': {
-                    WebkitBoxShadow: '0 0 0 1000px #FFF6F1 inset',
+                    WebkitBoxShadow: '0 0 0 1000px var(--c-tint-orange-2) inset',
                     borderRadius: 2
                   }
                 }}
@@ -111,17 +137,17 @@ export function LoginPage() {
                 }}
               />
 
-              <Button type="submit" variant="contained" fullWidth sx={{ mt: 3, py: 1.5, bgcolor: '#E26737', '&:hover': { bgcolor: '#d55b2f' }, borderRadius: 3 }}>
+              <Button type="submit" variant="contained" fullWidth sx={{ mt: 3, py: 1.5, bgcolor: 'var(--c-orange)', '&:hover': { bgcolor: 'var(--c-orange-600)' }, borderRadius: 3 }}>
                 Login
               </Button>
-              <Typography variant="caption" sx={{ display: 'block', textAlign: 'center', color: '#9EA4AB', mt: 2 }}>
+              <Typography variant="caption" sx={{ display: 'block', textAlign: 'center', color: 'var(--c-text-3)', mt: 2 }}>
                 Forgot your password? Contact your Manager to have it reset.
               </Typography>
             </Box>
           </CardContent>
         </Card>
 
-        <Typography variant="caption" sx={{ display: 'block', textAlign: 'center', color: '#9EA4AB', mt: 3 }}>
+        <Typography variant="caption" sx={{ display: 'block', textAlign: 'center', color: 'var(--c-text-3)', mt: 3 }}>
           Copyright registered @ IM Healthcare 2026
         </Typography>
       </motion.div>

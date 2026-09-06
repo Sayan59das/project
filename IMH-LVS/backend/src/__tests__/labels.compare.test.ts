@@ -91,10 +91,12 @@ test('Compare two different real label PDFs: MATCH/DIFFERENT/MISSING all correct
   assert.equal(fieldResult(body, 'flavour').labelA, 'Apple');
   assert.equal(fieldResult(body, 'flavour').labelB, '');
 
-  // Neither label states a front-label package count — nothing to
-  // compare on either side, so this must never be reported the same way
-  // as a genuine one-sided gap (MISSING) or a real conflict (DIFFERENT).
-  assert.equal(fieldResult(body, 'packageSize').status, 'NOT_COMPARED');
+  // Both labels declare "Net Content: 30 N", so this parameter now has a value
+  // on both sides and genuinely matches. It used to be NOT_COMPARED because
+  // neither count could be read, not because neither existed — the
+  // NOT_COMPARED path itself is still covered, by the two-unreadable-files
+  // test further down.
+  assert.equal(fieldResult(body, 'packageSize').status, 'MATCH');
 
   // Summary counts must match what was actually computed, not a
   // hardcoded/demo figure.

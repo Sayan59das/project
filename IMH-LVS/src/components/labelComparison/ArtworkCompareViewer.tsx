@@ -1,8 +1,8 @@
 // Real, working artwork preview controls for the Label Comparison Detail
-// page — Side by Side (default), Overlay/Flicker, Zoom, Fit to Screen and
+// page â€” Side by Side (default), Overlay/Flicker, Zoom, Fit to Screen and
 // Full Screen. All operate purely client-side on whichever preview images
 // are actually available (the just-uploaded file's session-scoped object
-// URL, and the approved artwork's own filePath) — there is no fake visual
+// URL, and the approved artwork's own filePath) â€” there is no fake visual
 // diffing here (no highlighted regions, no pixel comparison): this is a
 // viewing aid, not a claim that the system has determined WHERE two
 // artworks differ. Overlay is automatically disabled when either side has
@@ -28,13 +28,13 @@ function PreviewImage({ file, zoom }: { file?: PreviewableFile; zoom: number }) 
   if (loading) {
     return (
       <Box sx={{ display: 'grid', placeItems: 'center', height: '100%' }}>
-        <CircularProgress size={22} sx={{ color: '#E26737' }} />
+        <CircularProgress size={22} sx={{ color: 'var(--c-orange)' }} />
       </Box>
     );
   }
   if (!url) {
     return (
-      <Box sx={{ display: 'grid', placeItems: 'center', height: '100%', color: '#9EA4AB', textAlign: 'center', p: 2 }}>
+      <Box sx={{ display: 'grid', placeItems: 'center', height: '100%', color: 'var(--c-text-3)', textAlign: 'center', p: 2 }}>
         <Box>
           <MdInsertDriveFile size={28} />
           <Typography variant="caption" sx={{ display: 'block', mt: 1 }}>
@@ -73,13 +73,13 @@ export function ArtworkCompareViewer({ newFile, approvedFile, newLabel, approved
   const canOverlay = Boolean(newFile?.filePath && approvedFile?.filePath);
 
   const toolbarButtonSx = (active: boolean) =>
-    active ? { textTransform: 'none' as const, bgcolor: '#2E3135', '&:hover': { bgcolor: '#1f2124' } } : { textTransform: 'none' as const, color: '#6B7177', borderColor: '#D8DDE3' };
+    active ? { textTransform: 'none' as const, bgcolor: 'var(--c-text-1)', '&:hover': { bgcolor: 'var(--c-text-0)' } } : { textTransform: 'none' as const, color: 'var(--c-text-2)', borderColor: 'var(--c-border)' };
 
   return (
     <Box
       sx={
         fullscreen
-          ? { position: 'fixed', inset: 0, bgcolor: '#fff', zIndex: 1300, display: 'flex', flexDirection: 'column', p: 2 }
+          ? { position: 'fixed', inset: 0, bgcolor: 'var(--c-paper)', zIndex: 1300, display: 'flex', flexDirection: 'column', p: 2 }
           : { display: 'flex', flexDirection: 'column' }
       }
     >
@@ -110,7 +110,7 @@ export function ArtworkCompareViewer({ newFile, approvedFile, newLabel, approved
               </IconButton>
             </span>
           </Tooltip>
-          <Typography variant="caption" sx={{ color: '#6B7177', minWidth: 36, textAlign: 'center' }}>
+          <Typography variant="caption" sx={{ color: 'var(--c-text-2)', minWidth: 36, textAlign: 'center' }}>
             {zoom}%
           </Typography>
           <Tooltip title="Zoom in">
@@ -141,9 +141,9 @@ export function ArtworkCompareViewer({ newFile, approvedFile, newLabel, approved
           ].map((panel) => (
             <Box
               key={panel.label}
-              sx={{ border: '1px solid #D8DDE3', borderRadius: 3, overflow: 'hidden', bgcolor: '#EEF1F4', height: fullscreen ? '100%' : 320, display: 'flex', flexDirection: 'column' }}
+              sx={{ border: '1px solid var(--c-border)', borderRadius: 3, overflow: 'hidden', bgcolor: 'var(--c-surface)', height: fullscreen ? '100%' : 320, display: 'flex', flexDirection: 'column' }}
             >
-              <Typography variant="caption" sx={{ display: 'block', p: 1, fontWeight: 700, color: '#6B7177', bgcolor: '#fff', borderBottom: '1px solid #D8DDE3' }}>
+              <Typography variant="caption" sx={{ display: 'block', p: 1, fontWeight: 700, color: 'var(--c-text-2)', bgcolor: 'var(--c-paper)', borderBottom: '1px solid var(--c-border)' }}>
                 {panel.label}
               </Typography>
               <Box sx={{ flex: 1, minHeight: 0 }}>
@@ -155,11 +155,11 @@ export function ArtworkCompareViewer({ newFile, approvedFile, newLabel, approved
       ) : (
         <Box sx={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
           <Box sx={{ display: 'flex', justifyContent: 'center', mb: 1 }}>
-            <Button size="small" sx={{ textTransform: 'none', color: '#6B7177' }} onClick={() => setOverlayShowNew((value) => !value)} startIcon={<MdCompareArrows />}>
+            <Button size="small" sx={{ textTransform: 'none', color: 'var(--c-text-2)' }} onClick={() => setOverlayShowNew((value) => !value)} startIcon={<MdCompareArrows />}>
               Showing: {overlayShowNew ? newLabel : approvedLabel} (click to flicker)
             </Button>
           </Box>
-          <Box sx={{ border: '1px solid #D8DDE3', borderRadius: 3, overflow: 'hidden', bgcolor: '#EEF1F4', flex: 1, minHeight: fullscreen ? 0 : 320 }}>
+          <Box sx={{ border: '1px solid var(--c-border)', borderRadius: 3, overflow: 'hidden', bgcolor: 'var(--c-surface)', flex: 1, minHeight: fullscreen ? 0 : 320 }}>
             <PreviewImage file={overlayShowNew ? newFile : approvedFile} zoom={zoom} />
           </Box>
         </Box>

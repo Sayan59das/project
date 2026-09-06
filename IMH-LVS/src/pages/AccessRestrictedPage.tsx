@@ -13,8 +13,8 @@ export function AccessRestrictedPage() {
             width: 72,
             height: 72,
             borderRadius: '50%',
-            bgcolor: '#FDEDE9',
-            color: '#D32F2F',
+            bgcolor: 'var(--c-tint-error)',
+            color: 'var(--c-error)',
             display: 'grid',
             placeItems: 'center',
             mx: 'auto',
@@ -26,13 +26,13 @@ export function AccessRestrictedPage() {
         <Typography variant="h4" sx={{ fontWeight: 800, mb: 1.5 }}>
           Access Restricted
         </Typography>
-        <Typography variant="body1" sx={{ color: '#9EA4AB', mb: 4 }}>
+        <Typography variant="body1" sx={{ color: 'var(--c-text-3)', mb: 4 }}>
           You don&apos;t have permission to access this module. Contact your administrator if you believe this is a
           mistake.
         </Typography>
         <Button
           variant="contained"
-          sx={{ bgcolor: '#E26737', '&:hover': { bgcolor: '#d55b2f' }, textTransform: 'none', px: 4 }}
+          sx={{ bgcolor: 'var(--c-orange)', '&:hover': { bgcolor: 'var(--c-orange-600)' }, textTransform: 'none', px: 4 }}
           onClick={() => navigate('/dashboard')}
         >
           Back to Dashboard

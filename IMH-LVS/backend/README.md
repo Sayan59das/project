@@ -35,6 +35,171 @@ everything else is unaffected) degrades gracefully: the API still returns
 `200` with all 7 fields blank rather than erroring or crashing, and a clear
 message is logged server-side. See "Known limitations" below.
 
+## There is no authentication yet — do not expose this API
+
+The persistence routes (`/api/masters`, `/api/products`, `/api/users`,
+`/api/artworks`, `/api/comparisons`) have **no authentication and no
+authorization**. Every write is recorded against a person because the audit
+trail requires one, and with no sessions the caller simply states who they are:
+
+```
+X-Actor-Name: Neha Singh          # every write
+X-Actor-Id / X-Actor-Role          # also required for a workflow decision
+```
+
+The server believes it. Anyone who can reach the API can approve a label as
+anybody, and read or change every record.
+
+A missing actor is a `400` rather than a default like `system`, on purpose: a
+fabricated name in a pharma approval trail reads exactly like a real one, and
+is worse than a refused request. But that only makes the trail honest about
+*absence* — it does nothing about impersonation.
+
+**So until real auth lands, this backend must not be reachable from the public
+internet.** `requireActor` in `src/controllers/http.ts` is the single place a
+decoded session would replace these headers.
+
+## Database (Postgres)
+
+The backend persists Products, Artwork, Masters, Users, Label Attributes and
+Comparisons in Postgres. Label extraction is the exception — `/api/labels/extract`
+is stateless, OCRs the uploaded file and stores nothing, so **it works with no
+database configured at all**. That is why a missing `DATABASE_URL` does not stop
+the server booting; it fails on the first request that actually needs storage.
+
+### Why Postgres and not MongoDB
+
+This domain is relational and the invariants are worth enforcing in the
+database rather than in whichever service happens to write:
+
+- **Cross-company comparison** finds the same product name at a *different*
+  marketing company and then that product's latest approved artwork — a
+  self-join plus a ranking, expressed as one query against
+  `products_name_lower_idx` and the `latest_approved_artworks` view.
+- **`comparison_parameters_absent_is_missing`** makes it impossible to store
+  "these two labels match" when either side has no captured value. That
+  false-MATCH was a real defect; it is now unrepresentable.
+- **`comparison_workflow_history` is append-only**, enforced by a trigger.
+  An audit trail a compliance reviewer relies on should not depend on every
+  code path remembering not to rewrite it.
+- **Approval decisions write three tables atomically** (comparison status,
+  history entry, artwork status). One transaction, or none of it.
+
+The `$jsonSchema` validators MongoDB offers cannot express a cross-field
+conditional like the first two, and it has no triggers for the third.
+
+### User permissions
+
+A user's `permissions` object has two halves and they are stored differently
+(migration 003):
+
+- **`actions`** is not stored. `UsersPage` recomputes it from the role on
+  every save and offers no control that edits it, so it is derived. A stored
+  copy would go stale the moment `src/auth/permissions.ts` changes, and a
+  stale action list is how a revoked capability comes back.
+- **`modules`** is stored, in `user_module_access`, because a Manager can
+  tick and untick it per user. Only the **overrides** are there: a user with
+  no rows has not been customised, and the caller applies the role's defaults
+  from `ROLE_MODULE_ACCESS`, which stays the only copy of that policy.
+
+Absence therefore means "no override", never "no access" — reading it the
+other way would have locked every existing user out the moment the migration
+ran.
+
+### Local setup
+
+Run Postgres in Docker (port 5433 rather than 5432, so it cannot collide
+with a Postgres already installed on the host):
+
+```bash
+docker run -d --name imh-lvs-pg \
+  -e POSTGRES_USER=lvs -e POSTGRES_PASSWORD=lvsdev -e POSTGRES_DB=imh_lvs \
+  -p 5433:5432 --restart unless-stopped postgres:16-alpine
+```
+
+Then, with `DATABASE_URL` set in `.env` (see `.env.example`):
+
+```bash
+npm run db:migrate   # apply schema migrations
+npm run db:seed      # load the app's existing demo data
+```
+
+Both are safe to re-run. Migrations are recorded in `schema_migrations` and
+skipped once applied; seed inserts are `ON CONFLICT DO NOTHING`.
+
+A `psql` shell, without installing Postgres locally:
+
+```bash
+docker exec -it imh-lvs-pg psql -U lvs -d imh_lvs
+```
+
+#### Without Docker
+
+If the Docker daemon is not available, `embedded-postgres` runs a real
+Postgres as an ordinary process — no VM, no admin rights, contrib extensions
+(`citext`, which the schema needs) included. Install it **outside this
+repository** so it does not become a dependency of the backend:
+
+```bash
+mkdir /tmp/pg && cd /tmp/pg && npm init -y && npm install embedded-postgres
+BIN=node_modules/@embedded-postgres/*/native/bin
+printf 'lvsdev' > pwfile.txt
+$BIN/initdb -D ./pgdata -U lvs --pwfile=./pwfile.txt -E UTF8 --auth=md5
+$BIN/pg_ctl -D ./pgdata -l pg.log -o "-p 5433 -c listen_addresses=127.0.0.1" start
+```
+
+Then create the database once (`CREATE DATABASE imh_lvs`) and use the same
+`DATABASE_URL` as the Docker setup, with host `127.0.0.1` rather than
+`localhost` — the cluster above listens on IPv4 only, and `localhost`
+resolves to `::1` first on Windows.
+
+### Database tests
+
+`src/__tests__/db.repositories.test.ts` runs the repositories and the
+schema's constraints against a real database. It **skips** when
+`DATABASE_URL` is unset, so `npm test` still works on a machine with no
+Postgres — the same rule `src/db/pool.ts` follows.
+
+When it is set, the tests expect a migrated and seeded database and say so if
+they do not find one. Every write runs in a transaction that is rolled back
+whether the test passes or fails, so the suite leaves the seed data exactly
+as it found it and is safe to re-run.
+
+### Migrations
+
+SQL files in `db/migrations/`, named `NNN_description.sql` and applied in
+filename order, exactly once each, by `src/db/migrate.ts`.
+
+Rules the runner enforces:
+
+- **Each migration runs in its own transaction**, together with its
+  bookkeeping row. A failure part-way leaves it fully rolled back, never
+  half-applied and recorded as done.
+- **Migration files must not contain their own `BEGIN`/`COMMIT`.** The
+  runner owns the transaction; an inner `COMMIT` would close it early.
+- **Applied migrations are immutable.** Each file's checksum is stored, and
+  editing an already-applied migration aborts the next run with an
+  explanation. Add a new migration instead.
+- Concurrent runners (two deploy hooks, CI racing a developer) serialise on
+  a table lock, so the second one skips rather than double-applies.
+
+### Deployment
+
+`render.yaml` provisions a managed Postgres and injects its connection
+string. Migrations run in the service's pre-deploy command:
+
+```
+node dist/db/migrate.js && node dist/db/seed.js
+```
+
+Compiled output, not `npm run db:migrate` — that runs the TypeScript through
+`tsx`, which is a devDependency and absent from the production image. It is a
+pre-deploy step rather than part of `CMD` so it runs once per deploy instead
+of racing every replica against the same migration.
+
+Set `DATABASE_SSL=true` for any hosted Postgres (Render, Neon, Supabase);
+local Docker Postgres has no certificate, so it stays `false`.
+
 ## Development
 
 ```bash

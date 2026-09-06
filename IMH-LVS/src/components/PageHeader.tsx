@@ -12,7 +12,7 @@ export function PageHeader({ title, subtitle }: Props) {
         {title}
       </Typography>
       {subtitle && (
-        <Typography variant="body2" sx={{ color: '#9EA4AB', mt: 1 }}>
+        <Typography variant="body2" sx={{ color: 'var(--c-text-3)', mt: 1 }}>
           {subtitle}
         </Typography>
       )}

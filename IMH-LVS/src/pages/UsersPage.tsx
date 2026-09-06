@@ -223,7 +223,7 @@ export function UsersPage() {
           <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: 2, width: '100%' }}>
             <Card sx={{ borderRadius: 14 }}>
               <CardContent>
-                <Typography variant="subtitle2" sx={{ color: '#6B7177' }}>
+                <Typography variant="subtitle2" sx={{ color: 'var(--c-text-2)' }}>
                   Total Users
                 </Typography>
                 <Typography variant="h4" sx={{ fontWeight: 800 }}>
@@ -233,7 +233,7 @@ export function UsersPage() {
             </Card>
             <Card sx={{ borderRadius: 14 }}>
               <CardContent>
-                <Typography variant="subtitle2" sx={{ color: '#6B7177' }}>
+                <Typography variant="subtitle2" sx={{ color: 'var(--c-text-2)' }}>
                   Active
                 </Typography>
                 <Typography variant="h4" sx={{ fontWeight: 800 }}>
@@ -243,7 +243,7 @@ export function UsersPage() {
             </Card>
             <Card sx={{ borderRadius: 14 }}>
               <CardContent>
-                <Typography variant="subtitle2" sx={{ color: '#6B7177' }}>
+                <Typography variant="subtitle2" sx={{ color: 'var(--c-text-2)' }}>
                   Pending
                 </Typography>
                 <Typography variant="h4" sx={{ fontWeight: 800 }}>
@@ -253,7 +253,7 @@ export function UsersPage() {
             </Card>
             <Card sx={{ borderRadius: 14 }}>
               <CardContent>
-                <Typography variant="subtitle2" sx={{ color: '#6B7177' }}>
+                <Typography variant="subtitle2" sx={{ color: 'var(--c-text-2)' }}>
                   Inactive
                 </Typography>
                 <Typography variant="h4" sx={{ fontWeight: 800 }}>
@@ -332,7 +332,7 @@ export function UsersPage() {
             </TableHead>
             <TableBody>
               {filteredUsers.map((user) => (
-                <TableRow key={user.id} hover sx={{ '&:hover': { bgcolor: '#EEF1F4' } }}>
+                <TableRow key={user.id} hover sx={{ '&:hover': { bgcolor: 'var(--c-surface)' } }}>
                   <TableCell>{user.id}</TableCell>
                   <TableCell>{user.fullName}</TableCell>
                   <TableCell>{user.email}</TableCell>
@@ -366,7 +366,7 @@ export function UsersPage() {
               {filteredUsers.length === 0 && (
                 <TableRow>
                   <TableCell colSpan={8}>
-                    <Typography variant="body2" sx={{ color: '#9EA4AB', textAlign: 'center', py: 3 }}>
+                    <Typography variant="body2" sx={{ color: 'var(--c-text-3)', textAlign: 'center', py: 3 }}>
                       No users match the current filters.
                     </Typography>
                   </TableCell>
@@ -431,7 +431,7 @@ export function UsersPage() {
           <Typography variant="subtitle2" sx={{ fontWeight: 700, mb: 1 }}>
             Module Access
           </Typography>
-          <Typography variant="body2" sx={{ color: '#9EA4AB', mb: 1.5 }}>
+          <Typography variant="body2" sx={{ color: 'var(--c-text-3)', mb: 1.5 }}>
             Defaults are set from the selected role. Customize below if this user needs different access.
           </Typography>
           <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 0.5 }}>
@@ -468,8 +468,8 @@ export function UsersPage() {
 
           {selectedUser && (
             <Box sx={{ display: 'grid', gap: 3 }}>
-              <Paper sx={{ p: 3, borderRadius: 3, bgcolor: '#EEF1F4' }}>
-                <Typography variant="subtitle2" sx={{ color: '#6B7177', mb: 1 }}>
+              <Paper sx={{ p: 3, borderRadius: 3, bgcolor: 'var(--c-surface)' }}>
+                <Typography variant="subtitle2" sx={{ color: 'var(--c-text-2)', mb: 1 }}>
                   {selectedUser.fullName}
                 </Typography>
                 <Typography variant="h6" sx={{ fontWeight: 700, mb: 1 }}>
@@ -479,7 +479,7 @@ export function UsersPage() {
               </Paper>
 
               <Box>
-                <Typography variant="subtitle2" sx={{ color: '#6B7177', mb: 1, fontWeight: 700 }}>
+                <Typography variant="subtitle2" sx={{ color: 'var(--c-text-2)', mb: 1, fontWeight: 700 }}>
                   Contact Information
                 </Typography>
                 <Typography variant="body2">Email: {selectedUser.email}</Typography>
@@ -488,13 +488,13 @@ export function UsersPage() {
               </Box>
 
               <Box>
-                <Typography variant="subtitle2" sx={{ color: '#6B7177', mb: 1, fontWeight: 700 }}>
+                <Typography variant="subtitle2" sx={{ color: 'var(--c-text-2)', mb: 1, fontWeight: 700 }}>
                   Module Access
                 </Typography>
                 <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 0.5 }}>
                   {MODULES.map((module) => (
-                    <Typography key={module.id} variant="body2" sx={{ color: selectedUser.permissions.modules[module.id] ? '#0B3926' : '#D8DDE3' }}>
-                      {selectedUser.permissions.modules[module.id] ? '✓' : '✕'} {module.label}
+                    <Typography key={module.id} variant="body2" sx={{ color: selectedUser.permissions.modules[module.id] ? 'var(--c-green-900)' : 'var(--c-border)' }}>
+                      {selectedUser.permissions.modules[module.id] ? 'âœ“' : 'âœ•'} {module.label}
                     </Typography>
                   ))}
                 </Box>
@@ -521,7 +521,7 @@ export function UsersPage() {
       <Dialog open={Boolean(deactivateTarget)} onClose={() => setDeactivateTarget(null)} maxWidth="xs" fullWidth>
         <DialogTitle sx={{ fontWeight: 700 }}>Deactivate User</DialogTitle>
         <DialogContent>
-          <Typography variant="body2" sx={{ color: '#9EA4AB' }}>
+          <Typography variant="body2" sx={{ color: 'var(--c-text-3)' }}>
             Are you sure you want to deactivate this user? They will lose access to the system.
           </Typography>
           {deactivateTarget && (

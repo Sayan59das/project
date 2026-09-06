@@ -23,7 +23,25 @@ export const SEED_BRANDS: Brand[] = [
   { id: 'BRD-0002', brandName: 'NutriPlus', marketingCompany: 'XYZ Healthcare', status: 'Active', createdDate: SEED_DATE, updatedDate: SEED_DATE, createdBy: SYSTEM_ACTOR, updatedBy: SYSTEM_ACTOR },
   { id: 'BRD-0003', brandName: 'HairCare Plus', marketingCompany: 'ABC Healthcare', status: 'Active', createdDate: SEED_DATE, updatedDate: SEED_DATE, createdBy: SYSTEM_ACTOR, updatedBy: SYSTEM_ACTOR },
   { id: 'BRD-0004', brandName: 'Wellness Co', marketingCompany: 'Wellness Co', status: 'Active', createdDate: SEED_DATE, updatedDate: SEED_DATE, createdBy: SYSTEM_ACTOR, updatedBy: SYSTEM_ACTOR },
-  { id: 'BRD-0005', brandName: 'CalmLife', marketingCompany: 'PureHealth Retail', status: 'Active', createdDate: SEED_DATE, updatedDate: SEED_DATE, createdBy: SYSTEM_ACTOR, updatedBy: SYSTEM_ACTOR }
+  { id: 'BRD-0005', brandName: 'CalmLife', marketingCompany: 'PureHealth Retail', status: 'Active', createdDate: SEED_DATE, updatedDate: SEED_DATE, createdBy: SYSTEM_ACTOR, updatedBy: SYSTEM_ACTOR },
+  // The brands below were in use by seeded products (data/products.ts) without
+  // ever existing in this master list. Products Management tolerates that —
+  // its brand dropdown injects the record's current value via
+  // withCurrentValue() so an unlisted brand still renders — which is why the
+  // gap survived: nothing in the UI ever showed it. It is a real gap all the
+  // same. The Masters page under-reported the brands in use, and a product
+  // could not be re-saved with the brand it already had unless that injection
+  // happened to fire. The backend makes it fail loudly instead: products.brand_name
+  // is a foreign key onto brands.brand_name (migration 001), so seeding this
+  // data into Postgres stops on the first one.
+  //
+  // Each is registered to the marketing company of the product that uses it.
+  { id: 'BRD-0006', brandName: 'BoneStrong', marketingCompany: 'ABC Healthcare', status: 'Active', createdDate: SEED_DATE, updatedDate: SEED_DATE, createdBy: SYSTEM_ACTOR, updatedBy: SYSTEM_ACTOR },
+  { id: 'BRD-0007', brandName: 'GutHealth', marketingCompany: 'XYZ Healthcare', status: 'Active', createdDate: SEED_DATE, updatedDate: SEED_DATE, createdBy: SYSTEM_ACTOR, updatedBy: SYSTEM_ACTOR },
+  { id: 'BRD-0008', brandName: 'GlowUp', marketingCompany: 'Wellness Co', status: 'Active', createdDate: SEED_DATE, updatedDate: SEED_DATE, createdBy: SYSTEM_ACTOR, updatedBy: SYSTEM_ACTOR },
+  { id: 'BRD-0009', brandName: 'KidCare', marketingCompany: 'ABC Healthcare', status: 'Active', createdDate: SEED_DATE, updatedDate: SEED_DATE, createdBy: SYSTEM_ACTOR, updatedBy: SYSTEM_ACTOR },
+  { id: 'BRD-0010', brandName: 'CitraBoost', marketingCompany: 'XYZ Healthcare', status: 'Active', createdDate: SEED_DATE, updatedDate: SEED_DATE, createdBy: SYSTEM_ACTOR, updatedBy: SYSTEM_ACTOR },
+  { id: 'BRD-0011', brandName: 'ImmunoBoost', marketingCompany: 'NutriCare', status: 'Active', createdDate: SEED_DATE, updatedDate: SEED_DATE, createdBy: SYSTEM_ACTOR, updatedBy: SYSTEM_ACTOR }
 ];
 
 export const SEED_FLAVOURS: Flavour[] = [

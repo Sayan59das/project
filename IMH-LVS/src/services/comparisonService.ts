@@ -140,8 +140,15 @@ export function saveLabelAttributes(attributes: LabelAttributes): void {
 // data first (see saveLabelAttributes above), then hand-authored seed data,
 // and only then a synthesized record built from Product/Artwork fields for
 // artworks that have neither (e.g. artwork created via the legacy Edit
-// path) — those fallback fields read "Not specified" rather than guessing,
-// since there is no OCR step yet to actually read the file.
+// path).
+//
+// Fields that cannot be resolved are returned as EMPTY STRINGS, not as a
+// placeholder like 'Not specified'. That distinction is load-bearing: a
+// placeholder is just another string to the classifier, so two artworks
+// that had never been read compared equal on it and the engine reported a
+// 100% MATCH across parameters it had never actually seen. An empty value
+// is recognised by classifyParameterValues() as MISSING instead. Render
+// MISSING_VALUE_DISPLAY in the UI where a blank would look broken.
 export function getLabelAttributes(artwork: Artwork, product?: Product): LabelAttributes {
   const custom = readCustomLabelAttributes().find((attributes) => attributes.artworkId === artwork.id);
   if (custom) return custom;
@@ -153,17 +160,17 @@ export function getLabelAttributes(artwork: Artwork, product?: Product): LabelAt
     artworkId: artwork.id,
     brandName: artwork.brand,
     productName: artwork.productName,
-    address: 'Not specified',
-    customerCareNumber: 'Not specified',
-    customerCareEmail: 'Not specified',
-    colourTheme: 'Not specified',
-    flavour: product?.flavour ?? 'Not specified',
-    claims: 'Not specified',
-    logo: 'Not specified',
-    labelDesign: 'Not specified',
-    nutritionTableFormat: 'Not specified',
-    fssaiNumber: product?.fssaiNumber ?? 'Not specified',
-    ingredients: 'Not specified'
+    address: '',
+    customerCareNumber: '',
+    customerCareEmail: '',
+    colourTheme: '',
+    flavour: product?.flavour ?? '',
+    claims: '',
+    logo: '',
+    labelDesign: '',
+    nutritionTableFormat: '',
+    fssaiNumber: product?.fssaiNumber ?? '',
+    ingredients: ''
   };
 }
 
@@ -193,9 +200,18 @@ function jaccardSimilarity(a: Set<string>, b: Set<string>): number {
 
 // The replaceable classifier: swap this implementation for an OCR/AI-backed
 // one later without changing its signature or any caller.
+//
+// The MISSING check must stay FIRST. Two absent values are equal as strings,
+// so an equality test that runs before it reports "both unknown" as a MATCH.
 function classifyParameterValues(referenceValue: string, newValue: string): ParameterResult {
   const normalizedReference = referenceValue.trim().toLowerCase();
   const normalizedNew = newValue.trim().toLowerCase();
+
+  // Either side absent: there is nothing to compare. Not agreement, and not
+  // a conflict — a label that hasn't been read yet must not generate
+  // findings against one that has.
+  if (!normalizedReference || !normalizedNew) return 'MISSING';
+
   if (normalizedReference === normalizedNew) return 'MATCH';
 
   const similarity = jaccardSimilarity(tokenize(referenceValue), tokenize(newValue));
@@ -235,22 +251,47 @@ export function compareParameters(reference: LabelAttributes, newLabel: LabelAtt
 }
 
 // Documented, transparent scoring: each parameter contributes a fixed
-// point value by its result, averaged across all compared parameters.
+// point value by its result, averaged across the parameters that could
+// actually be compared.
+//
+// MISSING parameters are excluded from the average rather than scored as
+// zero. Scoring them as zero would punish a label for data nobody has
+// captured yet; counting them as matches would inflate the score. Neither
+// is a measurement, so they leave the ratio alone — but note the score is
+// then only as meaningful as its coverage, which is why
+// countComparableParameters() exists for the UI to report alongside it.
 export function calculateSimilarity(parameters: ParameterComparison[]): number {
-  if (parameters.length === 0) return 0;
-  const total = parameters.reduce((sum, param) => {
+  const comparable = parameters.filter((param) => param.result !== 'MISSING');
+  if (comparable.length === 0) return 0;
+  const total = comparable.reduce((sum, param) => {
     if (param.result === 'MATCH') return sum + MATCH_SCORE;
     if (param.result === 'SIMILAR') return sum + SIMILAR_SCORE;
     return sum + CONFLICT_SCORE;
   }, 0);
-  return Math.round(total / parameters.length);
+  return Math.round(total / comparable.length);
 }
 
-// CONFLICT if any parameter conflicts; REVIEW REQUIRED if no conflicts but
-// at least one SIMILAR; MATCH only when every parameter matches exactly.
+// How many parameters carried enough data to compare, out of how many were
+// attempted. A similarity percentage is misleading without this — 100%
+// across two comparable parameters is not the same claim as 100% across
+// thirteen.
+export function countComparableParameters(parameters: ParameterComparison[]): { comparable: number; total: number } {
+  return {
+    comparable: parameters.filter((param) => param.result !== 'MISSING').length,
+    total: parameters.length
+  };
+}
+
+// CONFLICT if any parameter conflicts. Otherwise MATCH is reserved for the
+// case where every parameter was compared AND every one agreed exactly —
+// anything less is REVIEW REQUIRED, because a clean-looking result built on
+// parameters nobody could read is exactly the outcome a compliance reviewer
+// must not be allowed to rubber-stamp.
 export function generateComparisonResult(parameters: ParameterComparison[]): OverallResult {
   if (parameters.some((param) => param.result === 'CONFLICT')) return 'CONFLICT';
   if (parameters.some((param) => param.result === 'SIMILAR')) return 'REVIEW REQUIRED';
+  if (parameters.some((param) => param.result === 'MISSING')) return 'REVIEW REQUIRED';
+  if (parameters.length === 0) return 'REVIEW REQUIRED';
   return 'MATCH';
 }
 

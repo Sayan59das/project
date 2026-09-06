@@ -15,7 +15,7 @@ import {
   TextField,
   Typography
 } from '@mui/material';
-import { MdArrowBack, MdCancel, MdCheckCircle, MdWarningAmber } from 'react-icons/md';
+import { MdArrowBack, MdCancel, MdCheckCircle, MdRemoveCircleOutline, MdWarningAmber } from 'react-icons/md';
 import { PageHeader } from '../components/PageHeader';
 import { StatusChip } from '../components/StatusChip';
 import { ArtworkPreview } from '../components/ArtworkPreview';
@@ -25,7 +25,7 @@ import { Actor, getArtworkVersionsForSelection, getComparisons, qaRejectComparis
 import { Comparison, ParameterResult } from '../types/comparison';
 import { formatDateTime } from '../utils/dateFormat';
 
-// The QA stage's Approval User ID for this comparison — who is specifically
+// The QA stage's Approval User ID for this comparison â€” who is specifically
 // responsible for QA verification, distinct from the QA role generally and
 // from whoever actually performs the action (see comparisonService's
 // Actor/approvalAssignments split).
@@ -34,9 +34,12 @@ function qaAssignedUserId(comparison: Comparison): string | undefined {
 }
 
 function resultIcon(result: ParameterResult) {
-  if (result === 'MATCH') return <MdCheckCircle color="#00A651" size={18} />;
-  if (result === 'SIMILAR') return <MdWarningAmber color="#F4C542" size={18} />;
-  return <MdCancel color="#D32F2F" size={18} />;
+  if (result === 'MATCH') return <MdCheckCircle color="var(--c-green)" size={18} />;
+  if (result === 'SIMILAR') return <MdWarningAmber color="var(--c-warn-400)" size={18} />;
+  // Neutral, not red: MISSING means the parameter could not be checked, so
+  // it must not read to a QA reviewer as a failed check.
+  if (result === 'MISSING') return <MdRemoveCircleOutline color="var(--c-text-3)" size={18} />;
+  return <MdCancel color="var(--c-error)" size={18} />;
 }
 
 // Maps the comparison's overall result/status onto the QA page's own status
@@ -129,7 +132,7 @@ export function QAPage() {
 
       {selectedItem ? (
         <Box sx={{ display: 'grid', gap: 3 }}>
-          <Button startIcon={<MdArrowBack />} onClick={handleBack} sx={{ alignSelf: 'start', color: '#1976D2', textTransform: 'none' }}>
+          <Button startIcon={<MdArrowBack />} onClick={handleBack} sx={{ alignSelf: 'start', color: 'var(--c-info)', textTransform: 'none' }}>
             QA Verification
           </Button>
 
@@ -140,20 +143,20 @@ export function QAPage() {
                   <Typography variant="h4" sx={{ fontWeight: 700, mb: 1 }}>
                     {selectedItem.productName}
                   </Typography>
-                  <Typography variant="body2" sx={{ color: '#9EA4AB' }}>
-                    Version {selectedItem.newArtworkVersion} · {selectedItem.newArtworkCompany}
+                  <Typography variant="body2" sx={{ color: 'var(--c-text-3)' }}>
+                    Version {selectedItem.newArtworkVersion} Â· {selectedItem.newArtworkCompany}
                   </Typography>
-                  <Typography variant="body2" sx={{ color: '#9EA4AB', mt: 0.5 }}>
+                  <Typography variant="body2" sx={{ color: 'var(--c-text-3)', mt: 0.5 }}>
                     Approval User ID: <strong>{qaAssignedUserId(selectedItem) ?? 'Unassigned'}</strong>
                     {qaAssignedUserId(selectedItem) && ` (${getUserById(qaAssignedUserId(selectedItem)!)?.fullName ?? 'Unknown User'})`}
                   </Typography>
                 </Box>
 
-                <Card sx={{ p: 3, borderRadius: 3, textAlign: 'center', minWidth: 200, bgcolor: '#EEF1F4' }}>
-                  <Typography variant="subtitle2" sx={{ color: '#6B7177', letterSpacing: 1.2, mb: 1 }}>
+                <Card sx={{ p: 3, borderRadius: 3, textAlign: 'center', minWidth: 200, bgcolor: 'var(--c-surface)' }}>
+                  <Typography variant="subtitle2" sx={{ color: 'var(--c-text-2)', letterSpacing: 1.2, mb: 1 }}>
                     Comparison Score
                   </Typography>
-                  <Typography variant="h2" sx={{ fontWeight: 800, color: '#E26737' }}>
+                  <Typography variant="h2" sx={{ fontWeight: 800, color: 'var(--c-orange)' }}>
                     {selectedItem.overallSimilarity}%
                   </Typography>
                   <Typography
@@ -161,36 +164,36 @@ export function QAPage() {
                     sx={{
                       mt: 1,
                       fontWeight: 700,
-                      color: selectedItem.overallResult === 'CONFLICT' ? '#D32F2F' : selectedItem.overallResult === 'REVIEW REQUIRED' ? '#B26A00' : '#00A651'
+                      color: selectedItem.overallResult === 'CONFLICT' ? 'var(--c-error)' : selectedItem.overallResult === 'REVIEW REQUIRED' ? 'var(--c-warn-800)' : 'var(--c-green)'
                     }}
                   >
                     {selectedItem.overallResult === 'CONFLICT'
-                      ? '✕ Conflict Found'
+                      ? 'âœ• Conflict Found'
                       : selectedItem.overallResult === 'REVIEW REQUIRED'
-                      ? '⚠ Review Required'
-                      : '✓ Generally Matched'}
+                      ? 'âš  Review Required'
+                      : 'âœ“ Generally Matched'}
                   </Typography>
                 </Card>
               </Box>
 
-              <Divider sx={{ borderColor: '#D8DDE3' }} />
+              <Divider sx={{ borderColor: 'var(--c-border)' }} />
 
               <Box sx={{ display: 'grid', gap: 3, gridTemplateColumns: { xs: '1fr', md: '1fr 1fr' } }}>
-                <Paper sx={{ p: 3, borderRadius: 3, bgcolor: '#EEF1F4' }}>
-                  <Typography variant="subtitle2" sx={{ color: '#6B7177', mb: 2, fontWeight: 700 }}>
+                <Paper sx={{ p: 3, borderRadius: 3, bgcolor: 'var(--c-surface)' }}>
+                  <Typography variant="subtitle2" sx={{ color: 'var(--c-text-2)', mb: 2, fontWeight: 700 }}>
                     Existing Approved
                   </Typography>
                   <ArtworkPreview artwork={referenceArtwork} />
                 </Paper>
-                <Paper sx={{ p: 3, borderRadius: 3, bgcolor: '#EEF1F4' }}>
-                  <Typography variant="subtitle2" sx={{ color: '#6B7177', mb: 2, fontWeight: 700 }}>
+                <Paper sx={{ p: 3, borderRadius: 3, bgcolor: 'var(--c-surface)' }}>
+                  <Typography variant="subtitle2" sx={{ color: 'var(--c-text-2)', mb: 2, fontWeight: 700 }}>
                     Current Label
                   </Typography>
                   <ArtworkPreview artwork={newArtwork} />
                 </Paper>
               </Box>
 
-              <Divider sx={{ borderColor: '#D8DDE3' }} />
+              <Divider sx={{ borderColor: 'var(--c-border)' }} />
 
               <Box>
                 <Typography variant="h6" sx={{ fontWeight: 700, mb: 2 }}>
@@ -198,16 +201,16 @@ export function QAPage() {
                 </Typography>
                 <TableContainer component={Paper} sx={{ boxShadow: 'none', borderRadius: 3, overflow: 'hidden' }}>
                   <Table>
-                    <TableHead sx={{ bgcolor: '#FFFFFF' }}>
+                    <TableHead sx={{ bgcolor: 'var(--c-paper)' }}>
                       <TableRow>
-                        <TableCell sx={{ fontWeight: 700, color: '#2E3135' }}>Parameter</TableCell>
-                        <TableCell sx={{ fontWeight: 700, color: '#2E3135' }}>Result</TableCell>
-                        <TableCell sx={{ fontWeight: 700, color: '#2E3135' }}>QA Check</TableCell>
+                        <TableCell sx={{ fontWeight: 700, color: 'var(--c-text-1)' }}>Parameter</TableCell>
+                        <TableCell sx={{ fontWeight: 700, color: 'var(--c-text-1)' }}>Result</TableCell>
+                        <TableCell sx={{ fontWeight: 700, color: 'var(--c-text-1)' }}>QA Check</TableCell>
                       </TableRow>
                     </TableHead>
                     <TableBody>
                       {selectedItem.parameters.map((row) => (
-                        <TableRow key={row.parameter} hover sx={{ '&:hover': { bgcolor: '#FFF8F2' } }}>
+                        <TableRow key={row.parameter} hover sx={{ '&:hover': { bgcolor: 'var(--c-tint-orange)' } }}>
                           <TableCell>{row.parameter}</TableCell>
                           <TableCell sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                             {resultIcon(row.result)} {row.result}
@@ -238,7 +241,7 @@ export function QAPage() {
                   {canVerify && (
                     <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                       <Checkbox checked={checked} onChange={(event) => setChecked(event.target.checked)} />
-                      <Typography variant="body2" sx={{ color: '#9EA4AB' }}>
+                      <Typography variant="body2" sx={{ color: 'var(--c-text-3)' }}>
                         I have verified the above label comparison.
                       </Typography>
                     </Box>
@@ -259,9 +262,9 @@ export function QAPage() {
                     onClick={handleVerify}
                     sx={{
                       textTransform: 'none',
-                      bgcolor: '#00A651',
-                      '&:hover': { bgcolor: '#008f45' },
-                      '&:disabled': { bgcolor: '#B2DFBC', color: '#FFFFFF' }
+                      bgcolor: 'var(--c-green)',
+                      '&:hover': { bgcolor: 'var(--c-green-650)' },
+                      '&:disabled': { bgcolor: 'var(--c-border-green-3)', color: 'var(--c-paper)' }
                     }}
                   >
                     Verify & Approve
@@ -275,8 +278,8 @@ export function QAPage() {
         <Box sx={{ display: 'grid', gap: 3 }}>
           <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: 'repeat(3, 1fr)' }, gap: 2 }}>
             {summaryCards.map((card) => (
-              <Card key={card.label} sx={{ p: 3, borderRadius: 3, bgcolor: '#EEF1F4' }}>
-                <Typography variant="subtitle2" sx={{ color: '#6B7177', mb: 1, fontWeight: 700 }}>
+              <Card key={card.label} sx={{ p: 3, borderRadius: 3, bgcolor: 'var(--c-surface)' }}>
+                <Typography variant="subtitle2" sx={{ color: 'var(--c-text-2)', mb: 1, fontWeight: 700 }}>
                   {card.label}
                 </Typography>
                 <Typography variant="h4" sx={{ fontWeight: 800 }}>
@@ -292,7 +295,7 @@ export function QAPage() {
             </Typography>
             {queue.length === 0 ? (
               <Box sx={{ py: 6, textAlign: 'center' }}>
-                <Typography variant="body1" sx={{ color: '#9EA4AB' }}>
+                <Typography variant="body1" sx={{ color: 'var(--c-text-3)' }}>
                   No comparisons are currently pending QA review.
                 </Typography>
               </Box>
@@ -301,19 +304,19 @@ export function QAPage() {
                 <Table>
                   <TableHead>
                     <TableRow>
-                      <TableCell sx={{ fontWeight: 700, color: '#2E3135' }}>Product Name</TableCell>
-                      <TableCell sx={{ fontWeight: 700, color: '#2E3135' }}>Party</TableCell>
-                      <TableCell sx={{ fontWeight: 700, color: '#2E3135' }}>Version</TableCell>
-                      <TableCell sx={{ fontWeight: 700, color: '#2E3135' }}>Comparison</TableCell>
-                      <TableCell sx={{ fontWeight: 700, color: '#2E3135' }}>Approval User ID</TableCell>
-                      <TableCell sx={{ fontWeight: 700, color: '#2E3135' }}>Submitted</TableCell>
-                      <TableCell sx={{ fontWeight: 700, color: '#2E3135' }}>Status</TableCell>
-                      <TableCell sx={{ fontWeight: 700, color: '#2E3135' }}>Action</TableCell>
+                      <TableCell sx={{ fontWeight: 700, color: 'var(--c-text-1)' }}>Product Name</TableCell>
+                      <TableCell sx={{ fontWeight: 700, color: 'var(--c-text-1)' }}>Party</TableCell>
+                      <TableCell sx={{ fontWeight: 700, color: 'var(--c-text-1)' }}>Version</TableCell>
+                      <TableCell sx={{ fontWeight: 700, color: 'var(--c-text-1)' }}>Comparison</TableCell>
+                      <TableCell sx={{ fontWeight: 700, color: 'var(--c-text-1)' }}>Approval User ID</TableCell>
+                      <TableCell sx={{ fontWeight: 700, color: 'var(--c-text-1)' }}>Submitted</TableCell>
+                      <TableCell sx={{ fontWeight: 700, color: 'var(--c-text-1)' }}>Status</TableCell>
+                      <TableCell sx={{ fontWeight: 700, color: 'var(--c-text-1)' }}>Action</TableCell>
                     </TableRow>
                   </TableHead>
                   <TableBody>
                     {queue.map((item) => (
-                      <TableRow key={item.id} hover sx={{ '&:hover': { bgcolor: '#FFF8F2' } }}>
+                      <TableRow key={item.id} hover sx={{ '&:hover': { bgcolor: 'var(--c-tint-orange)' } }}>
                         <TableCell>{item.productName}</TableCell>
                         <TableCell>{item.newArtworkCompany}</TableCell>
                         <TableCell>{item.newArtworkVersion}</TableCell>
@@ -328,7 +331,7 @@ export function QAPage() {
                             variant="contained"
                             size="small"
                             onClick={() => handleOpenItem(item)}
-                            sx={{ textTransform: 'none', bgcolor: '#1976D2', '&:hover': { bgcolor: '#135ba1' } }}
+                            sx={{ textTransform: 'none', bgcolor: 'var(--c-info)', '&:hover': { bgcolor: 'var(--c-info-700)' } }}
                           >
                             Verify
                           </Button>

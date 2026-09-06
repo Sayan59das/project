@@ -124,7 +124,7 @@ export function ProductsPage() {
 
   // Add/Edit form dropdowns only offer ACTIVE master records for new
   // selections, but always keep the record's current saved value selectable
-  // even if that master has since gone inactive — so editing a product never
+  // even if that master has since gone inactive â€” so editing a product never
   // silently blanks out its historical value.
   const activeMarketingCompanies = useMemo(() => getMarketingCompanies().filter((company) => company.status === 'Active').map((company) => company.companyName), []);
   const activeBrands = useMemo(() => getBrands().filter((brand) => brand.status === 'Active').map((brand) => brand.brandName), []);
@@ -218,7 +218,7 @@ export function ProductsPage() {
     return Object.keys(errors).length === 0;
   };
 
-  // Product Management no longer creates products manually — every record
+  // Product Management no longer creates products manually â€” every record
   // comes from the label upload pipeline (see ArtworkPage / labelIntakeService).
   // This drawer/handleSave path only ever runs against an existing product.
   const handleSave = () => {
@@ -252,13 +252,13 @@ export function ProductsPage() {
       renderCell: (params) => (
         <Box sx={{ display: 'flex', gap: 0.5 }}>
           <Tooltip title="View">
-            <IconButton size="small" sx={{ color: '#E26737' }} onClick={() => handleOpenView(params.row)}>
+            <IconButton size="small" sx={{ color: 'var(--c-orange)' }} onClick={() => handleOpenView(params.row)}>
               <MdRemoveRedEye size={18} />
             </IconButton>
           </Tooltip>
           {canEdit && (
             <Tooltip title="Edit">
-              <IconButton size="small" sx={{ color: '#00A651' }} onClick={() => handleOpenEdit(params.row)}>
+              <IconButton size="small" sx={{ color: 'var(--c-green)' }} onClick={() => handleOpenEdit(params.row)}>
                 <MdEdit size={18} />
               </IconButton>
             </Tooltip>
@@ -281,7 +281,7 @@ export function ProductsPage() {
     { field: 'updatedDate', headerName: 'Last Updated', minWidth: 130, flex: 0.9, renderCell: (params) => formatDateTime(String(params.value ?? '')) }
   ];
 
-  // Product Details drawer's audit sections — sourced from the real
+  // Product Details drawer's audit sections â€” sourced from the real
   // artwork/comparison records for this product, not placeholder text.
   const viewArtworks = viewProduct ? getArtworksByProduct(viewProduct.id) : [];
   const viewComparisons = viewProduct ? getComparisonsByProduct(viewProduct.id) : [];
@@ -299,9 +299,9 @@ export function ProductsPage() {
           component="form"
           onSubmit={(event) => event.preventDefault()}
           elevation={0}
-          sx={{ display: 'flex', alignItems: 'center', p: '10px 14px', borderRadius: 3, bgcolor: '#F6F9F3', border: '1px solid #EAEFE7', mb: 3 }}
+          sx={{ display: 'flex', alignItems: 'center', p: '10px 14px', borderRadius: 3, bgcolor: 'var(--c-tint-green)', border: '1px solid var(--c-border-green)', mb: 3 }}
         >
-          <MdSearch size={18} color="#9EA4AB" />
+          <MdSearch size={18} color="var(--c-text-3)" />
           <InputBase
             sx={{ ml: 1.5, flex: 1, fontSize: 14 }}
             placeholder="Search by name, brand, company, flavour, or FSSAI number"
@@ -310,7 +310,7 @@ export function ProductsPage() {
           />
         </Paper>
 
-        <Typography variant="subtitle2" sx={{ fontWeight: 700, mb: 1.5, color: '#6B7177' }}>
+        <Typography variant="subtitle2" sx={{ fontWeight: 700, mb: 1.5, color: 'var(--c-text-2)' }}>
           Filters
         </Typography>
         <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 2, alignItems: 'center' }}>
@@ -405,10 +405,10 @@ export function ProductsPage() {
             </Select>
           </FormControl>
 
-          <Button variant="contained" sx={{ bgcolor: '#00A651', '&:hover': { bgcolor: '#00913f' } }} onClick={handleApplyFilters}>
+          <Button variant="contained" sx={{ bgcolor: 'var(--c-green)', '&:hover': { bgcolor: 'var(--c-green-600)' } }} onClick={handleApplyFilters}>
             Apply Filters
           </Button>
-          <Button variant="outlined" sx={{ borderColor: '#D8DDE3', color: '#9EA4AB' }} onClick={handleClearFilters}>
+          <Button variant="outlined" sx={{ borderColor: 'var(--c-border)', color: 'var(--c-text-3)' }} onClick={handleClearFilters}>
             Clear Filters
           </Button>
         </Box>
@@ -417,7 +417,7 @@ export function ProductsPage() {
       <Paper sx={{ p: 3, mb: 3 }}>
         {filteredRows.length === 0 ? (
           <Box sx={{ py: 6, textAlign: 'center' }}>
-            <Typography variant="body1" sx={{ color: '#9EA4AB' }}>
+            <Typography variant="body1" sx={{ color: 'var(--c-text-3)' }}>
               {emptyMessage}
             </Typography>
           </Box>
@@ -431,13 +431,13 @@ export function ProductsPage() {
               disableRowSelectionOnClick
               sx={{
                 borderRadius: 3,
-                borderColor: '#D8DDE3',
+                borderColor: 'var(--c-border)',
                 '& .MuiDataGrid-columnHeaders': {
-                  bgcolor: '#F3F7FA',
-                  borderBottom: '1px solid #D8DDE3'
+                  bgcolor: 'var(--c-tint-blue)',
+                  borderBottom: '1px solid var(--c-border)'
                 },
                 '& .MuiDataGrid-cell': {
-                  borderBottom: '1px solid #D8DDE3'
+                  borderBottom: '1px solid var(--c-border)'
                 }
               }}
             />
@@ -525,7 +525,7 @@ export function ProductsPage() {
       <Dialog open={Boolean(deactivateTarget)} onClose={() => setDeactivateTarget(null)} maxWidth="xs" fullWidth>
         <DialogTitle sx={{ fontWeight: 700 }}>Deactivate Product</DialogTitle>
         <DialogContent>
-          <Typography variant="body2" sx={{ color: '#9EA4AB' }}>
+          <Typography variant="body2" sx={{ color: 'var(--c-text-3)' }}>
             Are you sure you want to deactivate this product?
           </Typography>
           {deactivateTarget && (
@@ -556,7 +556,7 @@ export function ProductsPage() {
           <>
             <DialogTitle sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', pb: 1 }}>
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                <MdInventory2 color="#E26737" size={22} />
+                <MdInventory2 color="var(--c-orange)" size={22} />
                 <Typography variant="h6" sx={{ fontWeight: 700 }}>
                   Product Details
                 </Typography>
@@ -573,39 +573,39 @@ export function ProductsPage() {
 
             <DialogContent dividers>
               <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-                <Typography variant="body2" sx={{ color: '#9EA4AB', fontWeight: 700 }}>
-                  {viewProduct.id} — {viewProduct.productName}
+                <Typography variant="body2" sx={{ color: 'var(--c-text-3)', fontWeight: 700 }}>
+                  {viewProduct.id} â€” {viewProduct.productName}
                 </Typography>
                 <StatusChip status={viewProduct.status} />
               </Box>
 
               <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', md: '1fr 1fr' }, gap: 2, mb: 3 }}>
-                <Paper variant="outlined" sx={{ p: 2, borderRadius: 3, borderColor: '#F3D9C9' }}>
+                <Paper variant="outlined" sx={{ p: 2, borderRadius: 3, borderColor: 'var(--c-border-orange)' }}>
                   <Box
                     sx={{
                       width: 64,
                       height: 64,
                       borderRadius: '50%',
-                      bgcolor: '#FFF3EA',
+                      bgcolor: 'var(--c-tint-orange-3)',
                       display: 'flex',
                       alignItems: 'center',
                       justifyContent: 'center',
                       mb: 1.5
                     }}
                   >
-                    <MdInventory2 color="#E26737" size={30} />
+                    <MdInventory2 color="var(--c-orange)" size={30} />
                   </Box>
                   <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>
                     {viewProduct.productName}
                   </Typography>
-                  <Typography variant="body2" sx={{ color: '#9EA4AB', mb: 1.5 }}>
+                  <Typography variant="body2" sx={{ color: 'var(--c-text-3)', mb: 1.5 }}>
                     {viewProduct.marketingCompany}
                   </Typography>
                   <Box sx={{ display: 'flex', gap: 3 }}>
                     <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
-                      <MdLocalOffer color="#9EA4AB" size={16} />
+                      <MdLocalOffer color="var(--c-text-3)" size={16} />
                       <Box>
-                        <Typography variant="caption" sx={{ color: '#9EA4AB', display: 'block', lineHeight: 1.2 }}>
+                        <Typography variant="caption" sx={{ color: 'var(--c-text-3)', display: 'block', lineHeight: 1.2 }}>
                           Brand
                         </Typography>
                         <Typography variant="body2" sx={{ fontWeight: 600 }}>
@@ -614,9 +614,9 @@ export function ProductsPage() {
                       </Box>
                     </Box>
                     <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
-                      <MdIcecream color="#9EA4AB" size={16} />
+                      <MdIcecream color="var(--c-text-3)" size={16} />
                       <Box>
-                        <Typography variant="caption" sx={{ color: '#9EA4AB', display: 'block', lineHeight: 1.2 }}>
+                        <Typography variant="caption" sx={{ color: 'var(--c-text-3)', display: 'block', lineHeight: 1.2 }}>
                           Flavour
                         </Typography>
                         <Typography variant="body2" sx={{ fontWeight: 600 }}>
@@ -640,8 +640,8 @@ export function ProductsPage() {
                       ] as [typeof MdInventory2, string, number][]
                     ).map(([Icon, label, count]) => (
                       <Box key={label} sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                        <Icon color="#9EA4AB" size={16} />
-                        <Typography variant="body2" sx={{ flex: 1, color: '#9EA4AB' }}>
+                        <Icon color="var(--c-text-3)" size={16} />
+                        <Typography variant="body2" sx={{ flex: 1, color: 'var(--c-text-3)' }}>
                           {label}
                         </Typography>
                         <Typography variant="body2" sx={{ fontWeight: 700 }}>
@@ -682,9 +682,9 @@ export function ProductsPage() {
                       ] as [typeof MdBadge, string, string][]
                     ).map(([Icon, label, value]) => (
                       <Box key={label} sx={{ display: 'flex', alignItems: 'flex-start', gap: 1 }}>
-                        <Icon color="#9EA4AB" size={16} style={{ marginTop: 3, flexShrink: 0 }} />
+                        <Icon color="var(--c-text-3)" size={16} style={{ marginTop: 3, flexShrink: 0 }} />
                         <Box sx={{ minWidth: 0 }}>
-                          <Typography variant="caption" sx={{ color: '#9EA4AB', display: 'block', lineHeight: 1.2 }}>
+                          <Typography variant="caption" sx={{ color: 'var(--c-text-3)', display: 'block', lineHeight: 1.2 }}>
                             {label}
                           </Typography>
                           <Typography variant="body2" sx={{ fontWeight: 600, wordBreak: 'break-word' }}>
@@ -701,7 +701,7 @@ export function ProductsPage() {
                     Artwork
                   </Typography>
                   {viewArtworks.length === 0 ? (
-                    <Typography variant="body2" sx={{ color: '#9EA4AB' }}>
+                    <Typography variant="body2" sx={{ color: 'var(--c-text-3)' }}>
                       No artwork available.
                     </Typography>
                   ) : (
@@ -711,9 +711,9 @@ export function ProductsPage() {
                           <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 2 }}>
                             <Box>
                               <Typography variant="body2" sx={{ fontWeight: 700 }}>
-                                {artwork.version} — {artwork.artworkType}
+                                {artwork.version} â€” {artwork.artworkType}
                               </Typography>
-                              <Typography variant="caption" sx={{ color: '#9EA4AB' }}>
+                              <Typography variant="caption" sx={{ color: 'var(--c-text-3)' }}>
                                 {artwork.id}
                               </Typography>
                             </Box>
@@ -729,10 +729,10 @@ export function ProductsPage() {
               <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', md: '1fr 1fr' }, gap: 3 }}>
                 <Box>
                   <Typography variant="subtitle2" sx={{ fontWeight: 700, mb: 1.5, display: 'flex', alignItems: 'center', gap: 0.75 }}>
-                    <MdCompareArrows color="#9EA4AB" size={18} /> Comparison History
+                    <MdCompareArrows color="var(--c-text-3)" size={18} /> Comparison History
                   </Typography>
                   {viewComparisons.length === 0 ? (
-                    <Typography variant="body2" sx={{ color: '#9EA4AB' }}>
+                    <Typography variant="body2" sx={{ color: 'var(--c-text-3)' }}>
                       No comparison history available.
                     </Typography>
                   ) : (
@@ -744,7 +744,7 @@ export function ProductsPage() {
                               <Typography variant="body2" sx={{ fontWeight: 700 }}>
                                 {comparison.id}
                               </Typography>
-                              <Typography variant="caption" sx={{ color: '#9EA4AB' }}>
+                              <Typography variant="caption" sx={{ color: 'var(--c-text-3)' }}>
                                 {formatDateTime(comparison.updatedDate)}
                               </Typography>
                             </Box>
@@ -758,10 +758,10 @@ export function ProductsPage() {
 
                 <Box>
                   <Typography variant="subtitle2" sx={{ fontWeight: 700, mb: 1.5, display: 'flex', alignItems: 'center', gap: 0.75 }}>
-                    <MdAssignment color="#9EA4AB" size={18} /> Approval History
+                    <MdAssignment color="var(--c-text-3)" size={18} /> Approval History
                   </Typography>
                   {viewApprovalHistory.length === 0 ? (
-                    <Typography variant="body2" sx={{ color: '#9EA4AB' }}>
+                    <Typography variant="body2" sx={{ color: 'var(--c-text-3)' }}>
                       No approval history available.
                     </Typography>
                   ) : (
@@ -769,10 +769,10 @@ export function ProductsPage() {
                       {viewApprovalHistory.slice(0, 5).map((entry, index) => (
                         <Paper key={`${entry.comparisonId}-${index}`} variant="outlined" sx={{ p: 1.5, borderRadius: 2 }}>
                           <Typography variant="body2" sx={{ fontWeight: 700 }}>
-                            {entry.stage} — {entry.action}
+                            {entry.stage} â€” {entry.action}
                           </Typography>
-                          <Typography variant="caption" sx={{ color: '#9EA4AB' }}>
-                            {entry.actorName} · {formatDateTime(entry.date)}
+                          <Typography variant="caption" sx={{ color: 'var(--c-text-3)' }}>
+                            {entry.actorName} Â· {formatDateTime(entry.date)}
                           </Typography>
                         </Paper>
                       ))}

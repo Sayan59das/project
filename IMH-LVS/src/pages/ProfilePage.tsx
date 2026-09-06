@@ -13,7 +13,7 @@ function initialsFor(name: string): string {
   return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
 }
 
-// Lenient on purpose — digits, spaces, +, -, parentheses, 7-20 characters.
+// Lenient on purpose â€” digits, spaces, +, -, parentheses, 7-20 characters.
 // Phone is optional, so an empty value is always valid.
 function isValidPhone(phone: string): boolean {
   if (!phone.trim()) return true;
@@ -73,7 +73,7 @@ export function ProfilePage() {
       <PageHeader title="My Profile" subtitle="Manage your account information and preferences." />
 
       <Box sx={{ display: 'grid', gap: 3, maxWidth: 640 }}>
-        <Card sx={{ borderRadius: 3, p: 3, bgcolor: '#EEF1F4' }}>
+        <Card sx={{ borderRadius: 3, p: 3, bgcolor: 'var(--c-surface)' }}>
           <CardContent sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
             <Box
               sx={{
@@ -86,7 +86,7 @@ export function ProfilePage() {
                 flexShrink: 0
               }}
             >
-              <Typography variant="h5" sx={{ fontWeight: 800, color: '#E26737' }}>
+              <Typography variant="h5" sx={{ fontWeight: 800, color: 'var(--c-orange)' }}>
                 {initialsFor(currentUser.fullName)}
               </Typography>
             </Box>
@@ -94,7 +94,7 @@ export function ProfilePage() {
               <Typography variant="h5" sx={{ fontWeight: 700, mb: 0.5 }}>
                 {currentUser.fullName}
               </Typography>
-              <Typography variant="body2" sx={{ color: '#9EA4AB', mb: 0.5 }}>
+              <Typography variant="body2" sx={{ color: 'var(--c-text-3)', mb: 0.5 }}>
                 {ROLE_LABELS[currentUser.role]}
               </Typography>
               <Chip
@@ -134,7 +134,7 @@ export function ProfilePage() {
                 <Button variant="outlined" sx={{ textTransform: 'none' }} onClick={handleCancel}>
                   Cancel
                 </Button>
-                <Button variant="contained" sx={{ bgcolor: '#00A651', '&:hover': { bgcolor: '#00913f' }, textTransform: 'none' }} onClick={handleSave}>
+                <Button variant="contained" sx={{ bgcolor: 'var(--c-green)', '&:hover': { bgcolor: 'var(--c-green-600)' }, textTransform: 'none' }} onClick={handleSave}>
                   Save Changes
                 </Button>
               </Box>
@@ -142,7 +142,7 @@ export function ProfilePage() {
           ) : (
             <Box sx={{ display: 'grid', gap: 2, maxWidth: 560 }}>
               <Box>
-                <Typography variant="subtitle2" sx={{ color: '#6B7177' }}>
+                <Typography variant="subtitle2" sx={{ color: 'var(--c-text-2)' }}>
                   Full Name
                 </Typography>
                 <Typography variant="body1" sx={{ fontWeight: 700 }}>
@@ -150,7 +150,7 @@ export function ProfilePage() {
                 </Typography>
               </Box>
               <Box>
-                <Typography variant="subtitle2" sx={{ color: '#6B7177' }}>
+                <Typography variant="subtitle2" sx={{ color: 'var(--c-text-2)' }}>
                   Email
                 </Typography>
                 <Typography variant="body1" sx={{ fontWeight: 700 }}>
@@ -158,7 +158,7 @@ export function ProfilePage() {
                 </Typography>
               </Box>
               <Box>
-                <Typography variant="subtitle2" sx={{ color: '#6B7177' }}>
+                <Typography variant="subtitle2" sx={{ color: 'var(--c-text-2)' }}>
                   Role
                 </Typography>
                 <Typography variant="body1" sx={{ fontWeight: 700 }}>
@@ -166,7 +166,7 @@ export function ProfilePage() {
                 </Typography>
               </Box>
               <Box>
-                <Typography variant="subtitle2" sx={{ color: '#6B7177' }}>
+                <Typography variant="subtitle2" sx={{ color: 'var(--c-text-2)' }}>
                   Department
                 </Typography>
                 <Typography variant="body1" sx={{ fontWeight: 700 }}>
@@ -174,15 +174,15 @@ export function ProfilePage() {
                 </Typography>
               </Box>
               <Box>
-                <Typography variant="subtitle2" sx={{ color: '#6B7177' }}>
+                <Typography variant="subtitle2" sx={{ color: 'var(--c-text-2)' }}>
                   Phone
                 </Typography>
                 <Typography variant="body1" sx={{ fontWeight: 700 }}>
-                  {currentUser.phone || '—'}
+                  {currentUser.phone || 'â€”'}
                 </Typography>
               </Box>
               <Box>
-                <Typography variant="subtitle2" sx={{ color: '#6B7177' }}>
+                <Typography variant="subtitle2" sx={{ color: 'var(--c-text-2)' }}>
                   Status
                 </Typography>
                 <Typography variant="body1" sx={{ fontWeight: 700 }}>
@@ -202,7 +202,7 @@ export function ProfilePage() {
           </Typography>
           <Box sx={{ display: 'grid', gap: 2, maxWidth: 560 }}>
             <Box>
-              <Typography variant="subtitle2" sx={{ color: '#6B7177' }}>
+              <Typography variant="subtitle2" sx={{ color: 'var(--c-text-2)' }}>
                 User ID
               </Typography>
               <Typography variant="body1" sx={{ fontWeight: 700 }}>
@@ -210,7 +210,7 @@ export function ProfilePage() {
               </Typography>
             </Box>
             <Box>
-              <Typography variant="subtitle2" sx={{ color: '#6B7177' }}>
+              <Typography variant="subtitle2" sx={{ color: 'var(--c-text-2)' }}>
                 Created Date
               </Typography>
               <Typography variant="body1" sx={{ fontWeight: 700 }}>
@@ -218,7 +218,7 @@ export function ProfilePage() {
               </Typography>
             </Box>
             <Box>
-              <Typography variant="subtitle2" sx={{ color: '#6B7177' }}>
+              <Typography variant="subtitle2" sx={{ color: 'var(--c-text-2)' }}>
                 Last Login
               </Typography>
               <Typography variant="body1" sx={{ fontWeight: 700 }}>
@@ -232,8 +232,8 @@ export function ProfilePage() {
           <Typography variant="h6" sx={{ fontWeight: 700, mb: 1 }}>
             Password
           </Typography>
-          <Typography variant="body2" sx={{ color: '#9EA4AB' }}>
-            Password management isn&apos;t available in this prototype — sign-in currently uses a shared demo credential for every
+          <Typography variant="body2" sx={{ color: 'var(--c-text-3)' }}>
+            Password management isn&apos;t available in this prototype â€” sign-in currently uses a shared demo credential for every
             account rather than a per-user password. This section will become active once real per-user authentication is
             implemented.
           </Typography>

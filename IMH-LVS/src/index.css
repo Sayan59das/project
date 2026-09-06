@@ -1,5 +1,143 @@
+/* Design tokens.
+ *
+ * Every colour the app uses is declared here twice: once for light and once
+ * for dark. Components reference them as var(--c-*) — including inside MUI
+ * `sx` props and react-icons `color` props, both of which resolve CSS
+ * custom properties normally.
+ *
+ * The light values are the app's original hard-coded hex values, unchanged,
+ * so light mode renders exactly as it did before dark mode existed. Only the
+ * dark block is new.
+ *
+ * Dark palette notes: the base is a soft charcoal (#13171B), not pure black
+ * — pure black against light text causes halation and is harder on the eyes
+ * during long sessions. Brand orange/green are lifted a few steps so they
+ * keep AA contrast on dark surfaces, and the pale tint backgrounds become
+ * low-saturation dark washes rather than inverting to bright colours.
+ */
+
 :root {
   color-scheme: light;
+
+  /* Neutrals — text, borders, surfaces */
+  --c-text-0: #1F2124;
+  --c-text-1: #2E3135;
+  --c-text-2: #6B7177;
+  --c-text-3: #9EA4AB;
+  --c-border: #D8DDE3;
+  --c-surface: #EEF1F4;
+  --c-paper: #FFFFFF;
+  --c-bg: #FCFBF7;
+
+  /* Brand */
+  --c-orange: #E26737;
+  --c-orange-600: #D55B2F;
+  --c-orange-500: #F57C00;
+  --c-green: #00A651;
+  --c-green-600: #00913F;
+  --c-green-650: #008F45;
+  --c-green-850: #15432D;
+  --c-green-900: #0B3926;
+
+  /* Semantic */
+  --c-error: #D32F2F;
+  --c-info: #1976D2;
+  --c-info-700: #135BA1;
+  --c-warn: #E29B17;
+  --c-warn-400: #F4C542;
+  --c-warn-500: #F2B400;
+  --c-warn-800: #B26A00;
+
+  /* Pale tint backgrounds */
+  --c-tint-green: #F6F9F3;
+  --c-tint-green-2: #F8FFF9;
+  --c-tint-green-3: #DFF5E6;
+  --c-tint-green-4: #EAF8F1;
+  --c-tint-orange: #FFF8F2;
+  --c-tint-orange-2: #FFF6F1;
+  --c-tint-orange-3: #FFF3EA;
+  --c-tint-orange-4: #FFF7F0;
+  --c-tint-blue: #F3F7FA;
+  --c-tint-warn: #FFF6E9;
+  --c-tint-error: #FDEDE9;
+  --c-tint-error-2: #FDEDEC;
+
+  /* Tinted borders */
+  --c-border-green: #EAEFE7;
+  --c-border-green-2: #E9F0E6;
+  --c-border-green-3: #B2DFBC;
+  --c-border-green-4: #CBEFD9;
+  --c-border-orange: #F3D9C9;
+
+  /* Elevation — shadows need to be near-invisible on dark surfaces */
+  --c-shadow-card: 0 18px 45px rgba(0, 0, 0, 0.05);
+  --c-shadow-paper: 0 18px 45px rgba(0, 0, 0, 0.06);
+  --c-action-hover: rgba(46, 49, 53, 0.04);
+  --c-action-selected: rgba(46, 49, 53, 0.08);
+  --c-action-focus: rgba(46, 49, 53, 0.12);
+}
+
+:root[data-theme='dark'] {
+  color-scheme: dark;
+
+  /* Neutrals — text lightens, borders/surfaces darken */
+  --c-text-0: #F5F7F9;
+  --c-text-1: #EDF0F3;
+  --c-text-2: #B3BAC2;
+  --c-text-3: #8A929B;
+  --c-border: #2F363E;
+  --c-surface: #222930;
+  --c-paper: #1A2026;
+  --c-bg: #13171B;
+
+  /* Brand — lifted for contrast against dark surfaces */
+  --c-orange: #F07C4E;
+  --c-orange-600: #E8703F;
+  --c-orange-500: #F59042;
+  --c-green: #2FBF6B;
+  --c-green-600: #27AE60;
+  --c-green-650: #29B463;
+  /* These two are used as TEXT on pale tints in light mode, so in dark they
+     must become light mints rather than staying deep greens. */
+  --c-green-850: #B8ECCB;
+  --c-green-900: #A8E6C0;
+
+  /* Semantic */
+  --c-error: #F0625E;
+  --c-info: #5AA9F0;
+  --c-info-700: #7FBFF5;
+  --c-warn: #F0B33D;
+  --c-warn-400: #F7D06B;
+  --c-warn-500: #F5C453;
+  --c-warn-800: #E09A3C;
+
+  /* Tints become low-saturation dark washes, not inverted brights */
+  --c-tint-green: #172219;
+  --c-tint-green-2: #16231A;
+  --c-tint-green-3: #172C21;
+  --c-tint-green-4: #16281F;
+  --c-tint-orange: #2A1C14;
+  --c-tint-orange-2: #2B1D15;
+  --c-tint-orange-3: #2D1E15;
+  --c-tint-orange-4: #2A1D15;
+  --c-tint-blue: #151E26;
+  --c-tint-warn: #2A2214;
+  --c-tint-error: #2C1A17;
+  --c-tint-error-2: #2C1A18;
+
+  /* Tinted borders */
+  --c-border-green: #24352A;
+  --c-border-green-2: #23342A;
+  --c-border-green-3: #2C4A36;
+  --c-border-green-4: #2E5240;
+  --c-border-orange: #3D2A1E;
+
+  /* Elevation */
+  --c-shadow-card: 0 18px 45px rgba(0, 0, 0, 0.45);
+  --c-shadow-paper: 0 18px 45px rgba(0, 0, 0, 0.5);
+  --c-action-hover: rgba(255, 255, 255, 0.06);
+  --c-action-selected: rgba(255, 255, 255, 0.1);
+  --c-action-focus: rgba(255, 255, 255, 0.14);
 }
 
 html, body, #root {
@@ -9,8 +147,11 @@ html, body, #root {
 body {
   margin: 0;
   font-family: 'Inter', sans-serif;
-  background: #F5F6FA;
-  color: #2B2B2B;
+  background: var(--c-bg);
+  color: var(--c-text-1);
+  /* Only the theme swap animates — not every colour change inside the app,
+     which would make table/filter updates feel laggy. */
+  transition: background-color 180ms ease, color 180ms ease;
 }
 
 * {
@@ -24,3 +165,10 @@ button {
 input, textarea, button {
   font: inherit;
 }
+
+/* Deliberately NO global filter on img/canvas in dark mode.
+   Dimming or shifting images would be reasonable in most apps, but this one
+   exists to verify label COLOUR against an approved reference — altering how
+   artwork renders would corrupt the very comparison the user is making.
+   Artwork surfaces therefore keep their own light sheet (see ArtworkPreview)
+   and images are shown untouched in both modes. */

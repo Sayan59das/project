@@ -45,6 +45,13 @@ import { extractMarketingCompanyAndAddressFromRegion } from './regionOcr.service
 import { recoverProductTitleFromRegion, type OcrSource } from './titleRegionOcr.service';
 import { recoverPackageSizeFromBadge } from './packageSizeOcr.service';
 import { ExtractedLabelFields, extractLabelFields, isGenericProductFormWord, setLabelFieldExtractorDebug } from './labelFieldExtractor.service';
+import { extractColourTheme } from './colourTheme.service';
+import { looksLikeOcrGarbage, scrubPlaceholders } from './placeholderText.service';
+import {
+  extractClaims,
+  extractIngredients,
+  extractNutritionTableFormat
+} from './labelSemanticExtractor.service';
 
 setLabelFieldExtractorDebug(env.labelExtractionDebug);
 
@@ -59,6 +66,50 @@ export type LabelExtractionResult = {
   productName: string;
   packageSize: string;
   manufacturingCompany: string;
+
+  // Four of the six comparison parameters Tesseract's anchor/regex extraction
+  // cannot reach. None of them uses a model: colourTheme counts pixels
+  // (colourTheme.service), the other three read structure out of the text
+  // already extracted (labelSemanticExtractor.service). '' is absence
+  // throughout — the caller stores NULL and the comparison reports MISSING.
+  //
+  // Logo and Label Design / Layout are the two still outstanding. Both are
+  // genuinely visual, and both want a same/different verdict between two
+  // artworks rather than a description, so neither belongs in this shape.
+  colourTheme: string;
+  claims: string;
+  ingredients: string;
+  nutritionTableFormat: string;
+};
+
+/**
+ * Claims found on the label that the Claims master has no record of.
+ *
+ * Returned alongside the result rather than folded into it: they ARE stored in
+ * `claims` (a claim the label makes is on the label whether or not Masters
+ * knows it, and dropping it would let two differently-claiming labels compare
+ * as MATCH), but a Manager needs to be told which master records are missing.
+ */
+export type LabelExtractionReport = {
+  result: LabelExtractionResult;
+  unknownClaims: string[];
+
+  /**
+   * Fields that were read off the page successfully and then thrown away
+   * because what was read is not a value.
+   *
+   * Two families end up here: artwork-template scaffolding ('Company Name &
+   * Logo', 'Xxxxxxxxxxxxxxxx') and OCR debris from stylised display type
+   * ('Mc Mc Mg'). They are listed together because the caller does the same
+   * thing with both — the field is absent, and something WAS printed there.
+   *
+   * Surfaced rather than silently dropped: a file whose fields are mostly
+   * discarded is either a blank template somebody uploaded by mistake or an
+   * artwork whose display type did not survive OCR, and telling the operator
+   * which fields those were is far more useful than a form of empty boxes with
+   * no explanation.
+   */
+  discardedFields: string[];
 };
 
 export function buildPlaceholderExtraction(): LabelExtractionResult {
@@ -72,7 +123,11 @@ export function buildPlaceholderExtraction(): LabelExtractionResult {
     flavour: '',
     productName: '',
     packageSize: '',
-    manufacturingCompany: FIXED_MANUFACTURING_COMPANY
+    manufacturingCompany: FIXED_MANUFACTURING_COMPANY,
+    colourTheme: '',
+    claims: '',
+    ingredients: '',
+    nutritionTableFormat: ''
   };
 }
 
@@ -80,8 +135,55 @@ function debugLog(message: string): void {
   if (env.labelExtractionDebug) console.log(`[labelExtraction] ${message}`);
 }
 
-function toResult(fields: ExtractedLabelFields): LabelExtractionResult {
-  return { ...fields, manufacturingCompany: FIXED_MANUFACTURING_COMPANY };
+function toResult(fields: ExtractedLabelFields, extended: ExtendedFields): LabelExtractionResult {
+  return { ...fields, manufacturingCompany: FIXED_MANUFACTURING_COMPANY, ...extended.values };
+}
+
+type ExtendedFields = {
+  values: Pick<LabelExtractionResult, 'colourTheme' | 'claims' | 'ingredients' | 'nutritionTableFormat'>;
+  unknownClaims: string[];
+};
+
+/**
+ * The four extra parameters, from the text already extracted plus one page
+ * image.
+ *
+ * `pageImage` is undefined when the label could not be rasterized — no poppler
+ * on the host, a PDF that produced no pages. Colour is then absent rather than
+ * guessed, which is the same answer the schema wants for anything unread, and
+ * the three text-derived fields are unaffected.
+ */
+async function extractExtendedFields(
+  text: string,
+  pageImage: Buffer | undefined,
+  knownClaims: readonly string[]
+): Promise<ExtendedFields> {
+  const claims = extractClaims(text, knownClaims);
+
+  let colourTheme = '';
+  if (pageImage) {
+    try {
+      colourTheme = (await extractColourTheme(pageImage)).theme;
+    } catch (error) {
+      // A colour read that fails is one absent parameter, not a failed
+      // extraction — the label's text fields are already in hand and throwing
+      // here would discard them.
+      console.warn(
+        '[labelExtraction] Colour theme could not be read:',
+        error instanceof Error ? error.message : error
+      );
+    }
+  }
+
+  return {
+    values: {
+      colourTheme,
+      claims: claims.claims,
+      ingredients: extractIngredients(text),
+      nutritionTableFormat: extractNutritionTableFormat(text)
+    },
+    unknownClaims: claims.unmatched
+  };
 }
 
 // True once every field this module is responsible for extracting has a
@@ -201,7 +303,18 @@ async function ocrImageWithEnhancement(imageBuffer: Buffer, priorText: string): 
 // text layer alone doesn't yield a complete result. Never throws — a
 // rasterization/OCR failure just means the text-layer-only result
 // (however complete) is kept.
-async function extractFieldsFromPdf(pdfBuffer: Buffer): Promise<ExtractedLabelFields> {
+// Carries out the text and the rasterized pages alongside the fields, because
+// the four extra parameters need both and re-deriving either would mean
+// re-running the expensive part of this pipeline.
+type FieldPass = {
+  fields: ExtractedLabelFields;
+  /** Text layer plus any OCR text, which is what the semantic extractors read. */
+  text: string;
+  /** Pages this pass happened to rasterize. Empty on the text-layer fast path. */
+  pageImages: Buffer[];
+};
+
+async function extractFieldsFromPdf(pdfBuffer: Buffer): Promise<FieldPass> {
   const { text: textLayerText } = await extractPdfText(pdfBuffer);
   debugLog(`PDF text layer (${textLayerText.length} chars):\n${textLayerText}`);
 
@@ -209,7 +322,9 @@ async function extractFieldsFromPdf(pdfBuffer: Buffer): Promise<ExtractedLabelFi
   const textLayerFields = textLayerUsable ? extractLabelFields(textLayerText) : null;
 
   if (textLayerFields && isComplete(textLayerFields)) {
-    return textLayerFields;
+    // Fast path: nothing was rasterized, so pageImages is empty and the caller
+    // rasterizes a single page itself if it still wants colour.
+    return { fields: textLayerFields, text: textLayerText, pageImages: [] };
   }
 
   if (!textLayerUsable) {
@@ -221,7 +336,7 @@ async function extractFieldsFromPdf(pdfBuffer: Buffer): Promise<ExtractedLabelFi
   const pageImages = await rasterizePdfPages(pdfBuffer);
   if (pageImages.length === 0) {
     console.warn('[labelExtraction] No pages could be rasterized for OCR — using text-layer result as-is.');
-    return textLayerFields ?? extractLabelFields('');
+    return { fields: textLayerFields ?? extractLabelFields(''), text: textLayerText, pageImages: [] };
   }
 
   let combinedText = textLayerText;
@@ -234,13 +349,14 @@ async function extractFieldsFromPdf(pdfBuffer: Buffer): Promise<ExtractedLabelFi
   }
   debugLog(`Combined text after OCR (${combinedText.length} chars):\n${combinedText}`);
 
-  return fields;
+  return { fields, text: combinedText, pageImages };
 }
 
-async function extractFieldsFromImage(imageBuffer: Buffer): Promise<ExtractedLabelFields> {
+async function extractFieldsFromImage(imageBuffer: Buffer): Promise<FieldPass> {
   const { text, fields } = await ocrImageWithEnhancement(imageBuffer, '');
   debugLog(`OCR text (${text.length} chars):\n${text}`);
-  return fields;
+  // The upload IS the page image, so colour reads straight off it.
+  return { fields, text, pageImages: [imageBuffer] };
 }
 
 // The real integration point: reads the uploaded label, runs it through the
@@ -250,22 +366,92 @@ async function extractFieldsFromImage(imageBuffer: Buffer): Promise<ExtractedLab
 // never change based on which internal path ran. Falls back to
 // buildPlaceholderExtraction() — never an exception, never a fabricated
 // value — for any missing/corrupt file, unsupported type, or OCR failure.
-export async function extractLabelFromFile(filePath: string, mimeType: string): Promise<LabelExtractionResult> {
+export async function extractLabelFromFile(
+  filePath: string,
+  mimeType: string,
+  knownClaims: readonly string[] = []
+): Promise<LabelExtractionResult> {
+  return (await extractLabelReportFromFile(filePath, mimeType, knownClaims)).result;
+}
+
+/**
+ * The same extraction, plus the claims the Claims master does not know about.
+ *
+ * `knownClaims` is passed in rather than read from the database here, on
+ * purpose: this module stays stateless and works with no DATABASE_URL at all
+ * (see src/db/pool.ts). A caller that has a database supplies the master; one
+ * that does not still gets every other field, with badge claims recognised and
+ * all of them reported as unknown.
+ */
+export async function extractLabelReportFromFile(
+  filePath: string,
+  mimeType: string,
+  knownClaims: readonly string[] = []
+): Promise<LabelExtractionReport> {
   try {
     const fileBuffer = fs.readFileSync(filePath);
+    const isPdf = mimeType === 'application/pdf';
 
-    const fields =
-      mimeType === 'application/pdf' ? await extractFieldsFromPdf(fileBuffer) : await extractFieldsFromImage(fileBuffer);
+    const pass = isPdf ? await extractFieldsFromPdf(fileBuffer) : await extractFieldsFromImage(fileBuffer);
 
-    debugLog(`Parsed fields: ${JSON.stringify(fields)}`);
+    debugLog(`Parsed fields: ${JSON.stringify(pass.fields)}`);
 
-    if (Object.values(fields).every((value) => !value.trim())) {
+    if (Object.values(pass.fields).every((value) => !value.trim())) {
       console.warn('[labelExtraction] No fields could be confidently extracted from the uploaded file — returning blank fields.');
     }
 
-    return toResult(fields);
+    // Colour is the one parameter that needs pixels rather than text, and the
+    // PDF fast path (a text layer complete enough to skip OCR) never
+    // rasterized anything. Do it here instead — best effort, because a host
+    // without pdftoppm must still return the fields it did read. One absent
+    // parameter is a MISSING for a reviewer to look at; a thrown error would
+    // discard a complete text extraction over a colour swatch.
+    let pageImage = pass.pageImages[0];
+    if (!pageImage && isPdf) {
+      try {
+        // One page, at a resolution suited to counting colours rather than
+        // reading text — the image is downsampled to 128px square anyway, so
+        // rendering it at OCR resolution would burn seconds per label to
+        // produce pixels that are immediately discarded.
+        pageImage = (await rasterizePdfPages(fileBuffer, { dpi: 72, maxPages: 1 }))[0];
+      } catch (error) {
+        console.warn(
+          '[labelExtraction] Could not rasterize a page for colour extraction:',
+          error instanceof Error ? error.message : error
+        );
+      }
+    }
+
+    const extended = await extractExtendedFields(pass.text, pageImage, knownClaims);
+
+    // Placeholder scrubbing is last, over the assembled result, so it applies
+    // to every field from every path — text layer, OCR, and the four extra
+    // parameters — rather than being repeated at each source.
+    const { fields: scrubbed, blanked } = scrubPlaceholders(toResult(pass.fields, extended));
+
+    // Only the two name-shaped fields are judged for OCR debris. An address or
+    // an ingredients list legitimately contains runs of short tokens, so the
+    // same rule there would delete real content.
+    for (const field of ['brand', 'productName'] as const) {
+      if (scrubbed[field] !== '' && looksLikeOcrGarbage(scrubbed[field])) {
+        console.warn(
+          `[labelExtraction] Discarded "${scrubbed[field]}" for ${field} — reads as OCR debris from ` +
+            'stylised display type rather than a name.'
+        );
+        scrubbed[field] = '';
+        blanked.push(field);
+      }
+    }
+    if (blanked.length > 0) {
+      console.warn(
+        `[labelExtraction] Discarded artwork-template placeholder text for: ${blanked.join(', ')}. ` +
+          'This file may be a blank template rather than a finished label.'
+      );
+    }
+
+    return { result: scrubbed, unknownClaims: extended.unknownClaims, discardedFields: blanked };
   } catch (error) {
     console.error('[labelExtraction] Unexpected error during label extraction:', error instanceof Error ? error.message : error);
-    return buildPlaceholderExtraction();
+    return { result: buildPlaceholderExtraction(), unknownClaims: [], discardedFields: [] };
   }
 }

@@ -68,7 +68,7 @@ import {
 
 const ALL = 'All';
 
-// Any record from any of the six master collections — this page treats them
+// Any record from any of the six master collections â€” this page treats them
 // generically by field name, which is safe because each branch below only
 // ever reads/writes the fields that type actually has.
 type MasterRecord = Record<string, any>;
@@ -423,7 +423,7 @@ export function MasterDataPage() {
             {activeConfig.label}
           </Typography>
           {canManage && (
-            <Button variant="contained" sx={{ bgcolor: '#E26737', '&:hover': { bgcolor: '#d55b2f' } }} onClick={handleOpenAdd}>
+            <Button variant="contained" sx={{ bgcolor: 'var(--c-orange)', '&:hover': { bgcolor: 'var(--c-orange-600)' } }} onClick={handleOpenAdd}>
               + Add {activeConfig.addLabel}
             </Button>
           )}
@@ -448,7 +448,7 @@ export function MasterDataPage() {
 
         {filteredItems.length === 0 ? (
           <Box sx={{ py: 6, textAlign: 'center' }}>
-            <Typography variant="body1" sx={{ color: '#9EA4AB' }}>
+            <Typography variant="body1" sx={{ color: 'var(--c-text-3)' }}>
               {emptyMessage}
             </Typography>
           </Box>
@@ -468,7 +468,7 @@ export function MasterDataPage() {
               </TableHead>
               <TableBody>
                 {filteredItems.map((item) => (
-                  <TableRow key={item.id} hover sx={{ '&:hover': { bgcolor: '#EEF1F4' } }}>
+                  <TableRow key={item.id} hover sx={{ '&:hover': { bgcolor: 'var(--c-surface)' } }}>
                     {columns.map((column) => (
                       <TableCell key={column.header}>{column.render(item)}</TableCell>
                     ))}
@@ -544,7 +544,7 @@ export function MasterDataPage() {
                   value={formState.brandName}
                   onChange={(event) => setFormState((prev) => ({ ...prev, brandName: event.target.value }))}
                   error={Boolean(formErrors.brandName)}
-                  helperText={formErrors.brandName || 'Stored exactly as typed — casing is not auto-changed.'}
+                  helperText={formErrors.brandName || 'Stored exactly as typed â€” casing is not auto-changed.'}
                 />
                 <FormControl error={Boolean(formErrors.marketingCompany)}>
                   <InputLabel>Party *</InputLabel>
@@ -640,11 +640,11 @@ export function MasterDataPage() {
       <Dialog open={Boolean(duplicateMatch)} onClose={() => setDuplicateMatch(null)} maxWidth="xs" fullWidth>
         <DialogTitle sx={{ fontWeight: 700 }}>Similar master record already exists</DialogTitle>
         <DialogContent>
-          <Typography variant="body2" sx={{ color: '#9EA4AB', mb: 2 }}>
+          <Typography variant="body2" sx={{ color: 'var(--c-text-3)', mb: 2 }}>
             An active {activeConfig.addLabel.toLowerCase()} with this information already exists:
           </Typography>
           {duplicateMatch && (
-            <Paper sx={{ p: 2, bgcolor: '#EEF1F4' }}>
+            <Paper sx={{ p: 2, bgcolor: 'var(--c-surface)' }}>
               <Typography variant="body2">
                 <strong>{getPrimaryLabel(activeType, duplicateMatch)}</strong> ({duplicateMatch.id})
               </Typography>
@@ -667,7 +667,7 @@ export function MasterDataPage() {
       <Dialog open={Boolean(deactivateTarget)} onClose={() => setDeactivateTarget(null)} maxWidth="xs" fullWidth>
         <DialogTitle sx={{ fontWeight: 700 }}>Deactivate {activeConfig.addLabel}</DialogTitle>
         <DialogContent>
-          <Typography variant="body2" sx={{ color: '#9EA4AB' }}>
+          <Typography variant="body2" sx={{ color: 'var(--c-text-3)' }}>
             Are you sure you want to deactivate this {activeConfig.addLabel.toLowerCase()}?
           </Typography>
           {deactivateTarget && (
@@ -700,8 +700,8 @@ export function MasterDataPage() {
 
           {viewItem && (
             <Box sx={{ display: 'grid', gap: 3 }}>
-              <Paper sx={{ p: 3, borderRadius: 3, bgcolor: '#EEF1F4' }}>
-                <Typography variant="subtitle2" sx={{ color: '#6B7177', mb: 1 }}>
+              <Paper sx={{ p: 3, borderRadius: 3, bgcolor: 'var(--c-surface)' }}>
+                <Typography variant="subtitle2" sx={{ color: 'var(--c-text-2)', mb: 1 }}>
                   {viewItem.id}
                 </Typography>
                 <Typography variant="h6" sx={{ fontWeight: 700, mb: 1 }}>
@@ -711,7 +711,7 @@ export function MasterDataPage() {
               </Paper>
 
               <Box>
-                <Typography variant="subtitle2" sx={{ color: '#6B7177', mb: 1, fontWeight: 700 }}>
+                <Typography variant="subtitle2" sx={{ color: 'var(--c-text-2)', mb: 1, fontWeight: 700 }}>
                   Details
                 </Typography>
                 <Box sx={{ display: 'grid', gap: 0.5 }}>
@@ -728,7 +728,7 @@ export function MasterDataPage() {
               <Divider />
 
               <Box>
-                <Typography variant="subtitle2" sx={{ color: '#6B7177', mb: 1, fontWeight: 700 }}>
+                <Typography variant="subtitle2" sx={{ color: 'var(--c-text-2)', mb: 1, fontWeight: 700 }}>
                   Audit Information
                 </Typography>
                 <Box sx={{ display: 'grid', gap: 0.5 }}>

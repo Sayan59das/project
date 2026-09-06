@@ -13,7 +13,7 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
         flexDirection: 'column',
         height: '100vh',
         overflow: 'hidden',
-        bgcolor: '#FCFBF7',
+        bgcolor: 'var(--c-bg)',
         backgroundImage: 'radial-gradient(circle at top left, rgba(226,103,55,0.10), transparent 30%), radial-gradient(circle at bottom right, rgba(0,166,81,0.10), transparent 28%)'
       }}
     >

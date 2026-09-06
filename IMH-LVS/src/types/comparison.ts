@@ -10,7 +10,18 @@
 //   - 'cross_company'  — a finalized label vs. another marketing company's
 //                        artwork for the same product.
 
-export type ParameterResult = 'MATCH' | 'SIMILAR' | 'CONFLICT';
+// MISSING means "this parameter could not be compared" — at least one side
+// has no captured value for it. It is deliberately NOT a kind of match and
+// NOT a kind of conflict: treating absent data as agreement lets a
+// comparison report a perfect match having actually compared nothing, and
+// treating it as disagreement raises conflicts against labels that simply
+// haven't been read yet. Both were real defects before this status existed.
+export type ParameterResult = 'MATCH' | 'SIMILAR' | 'CONFLICT' | 'MISSING';
+
+// What to show in the UI where a parameter has no captured value. The stored
+// value stays an empty string — this is presentation only, so that "unknown"
+// is never persisted as though it were label content.
+export const MISSING_VALUE_DISPLAY = 'Not captured';
 
 // Fixed set of label parameters this stage compares. Batch Number is
 // deliberately excluded — see comparisonService.ts for why.

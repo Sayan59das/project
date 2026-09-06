@@ -58,7 +58,15 @@ const RESPONSE_FIELD_KEYS = [
   'flavour',
   'productName',
   'packageSize',
-  'manufacturingCompany'
+  'manufacturingCompany',
+  // Four comparison parameters Tesseract's anchor/regex extraction cannot
+  // reach, added alongside it: colourTheme counts pixels, the other three read
+  // structure out of the text already extracted. All local, no model. Like
+  // every key above, '' means the label did not yield one.
+  'colourTheme',
+  'claims',
+  'ingredients',
+  'nutritionTableFormat'
 ];
 
 function assertWellFormedSuccessResponse(body: any) {
@@ -174,10 +182,13 @@ test('Real label PDF (Apple Cider Vinegar Gummy): reliable fields correct, targe
   assert.ok(body.data.address.length <= 120, 'address must not be a multi-hundred-character noise dump');
   assert.notEqual(body.data.productName, 'Gummies Gummies Gummies Gummies Gummies');
 
-  // No "<N> Gummies"-style front-label count text survived text
-  // extraction on this specific file — correctly blank rather than
-  // confused with "Serving Size: 1 Gummy" or "No. of Serving: ... 30".
-  assert.equal(body.data.packageSize, '');
+  // This file states no "<N> Gummies" front-label count, but it does carry
+  // the statutory declaration "Net Content: 30 N" — which is where the pack
+  // count now comes from. It previously read blank, and that blank was a
+  // limitation of the extractor rather than a fact about the label; the
+  // serving-size guards below still hold, so "Serving Size: 1 Gummy" and
+  // "No. of Serving: ... 30" are still not mistaken for the pack.
+  assert.equal(body.data.packageSize, '30');
 });
 
 // A second real label from the same manufacturer/marketing company family
@@ -237,10 +248,11 @@ test('Real label PDF (Chyawanprash Gummies): same manufacturer, different produc
   assert.notEqual(body.data.brand, 'Gummies');
   assert.ok(!/immunity|booster|non calorie|sweetener/i.test(body.data.productName), 'productName must not contain marketing-claim or disclaimer text');
 
-  // No genuine front-label pack count exists on this file — correctly
-  // blank rather than derived from "Serving Size: 1 Gummy" or "No. of
-  // Serving: per container 30".
-  assert.equal(body.data.packageSize, '');
+  // As with the Apple Cider Vinegar artwork: no "<N> Gummies" wording, but a
+  // "Net Content: 30 N" declaration that does state the pack count. Still not
+  // derived from "Serving Size: 1 Gummy" or "No. of Serving: per container 30"
+  // — those guards are unchanged.
+  assert.equal(body.data.packageSize, '30');
 });
 
 // Reproduces a real user-reported extraction failure: a label whose front

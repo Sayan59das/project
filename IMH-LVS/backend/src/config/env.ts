@@ -19,8 +19,31 @@ function parseOrigins(value: string | undefined, fallback: string): string | str
   return origins.length > 1 ? origins : origins[0];
 }
 
+function parseBoolean(value: string | undefined, fallback: boolean): boolean {
+  if (value === undefined) return fallback;
+  return value.trim().toLowerCase() === 'true';
+}
+
 export const env = {
   nodeEnv: process.env.NODE_ENV ?? 'development',
+  // Postgres connection string. Deliberately has NO fallback value: a silent
+  // default would let a misconfigured deployment connect to the wrong
+  // database (or to nothing) and only reveal it once data went missing.
+  //
+  // It is also deliberately NOT validated here. Label extraction is
+  // stateless — /api/labels/extract does OCR on an uploaded file and stores
+  // nothing — so the OCR half of this service must keep starting, and its
+  // tests keep running, on a machine with no database at all. The check
+  // happens on first database use instead (see src/db/pool.ts), which fails
+  // loudly for the routes that actually need it and stays silent for the
+  // ones that do not.
+  databaseUrl: process.env.DATABASE_URL?.trim() ?? '',
+  // Hosted Postgres requires TLS; local Docker Postgres has no certificate.
+  // Explicit rather than inferred from NODE_ENV — see src/db/pool.ts.
+  databaseSsl: parseBoolean(process.env.DATABASE_SSL, false),
+  // Render's free Postgres plan caps concurrent connections in the low tens
+  // and this process is not the only client, so stay well under it.
+  databasePoolMax: parsePositiveNumber(process.env.DATABASE_POOL_MAX, 10),
   port: parsePositiveNumber(process.env.PORT, 4000),
   frontendOrigin: parseOrigins(process.env.FRONTEND_ORIGIN, 'http://localhost:4173'),
   maxUploadFileSizeMb: parsePositiveNumber(process.env.MAX_UPLOAD_FILE_SIZE_MB, 5),

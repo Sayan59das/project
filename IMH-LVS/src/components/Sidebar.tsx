@@ -29,8 +29,8 @@ export function Sidebar({ collapsed }: Props) {
         display: 'flex',
         flexDirection: 'column',
         alignItems: 'center',
-        bgcolor: '#EAF8F1',
-        color: '#0B3926',
+        bgcolor: 'var(--c-tint-green-4)',
+        color: 'var(--c-green-900)',
         px: { xs: 2, md: 1 },
         py: { xs: 2, md: 3 },
         boxShadow: { xs: 'none', md: '2px 0 18px rgba(0, 0, 0, 0.06)' },
@@ -62,22 +62,22 @@ export function Sidebar({ collapsed }: Props) {
                   py: 0.9,
                   px: collapsed ? 0 : 1,
                   borderRadius: 2,
-                  bgcolor: selected ? '#00A651' : 'transparent',
-                  color: selected ? '#FFFFFF' : '#0B3926',
+                  bgcolor: selected ? 'var(--c-green)' : 'transparent',
+                  color: selected ? 'var(--c-paper)' : 'var(--c-green-900)',
                   textTransform: 'none',
                   fontSize: 13,
                   minHeight: 40,
-                  '&:hover': { bgcolor: selected ? '#00A651' : 'rgba(8,24,22,0.04)' }
+                  '&:hover': { bgcolor: selected ? 'var(--c-green)' : 'var(--c-action-hover)' }
                 }}
               >
-                <ListItemIcon sx={{ color: selected ? '#FFFFFF' : '#00A651', minWidth: 34, justifyContent: 'center' }}>
+                <ListItemIcon sx={{ color: selected ? 'var(--c-paper)' : 'var(--c-green)', minWidth: 34, justifyContent: 'center' }}>
                   {Icon && <Icon size={18} />}
                 </ListItemIcon>
                 {!collapsed && (
                   <ListItemText
                     disableTypography
                     primary={
-                      <Typography sx={{ fontWeight: selected ? 700 : 600, color: selected ? '#FFFFFF' : '#0B3926', fontSize: 13 }}>
+                      <Typography sx={{ fontWeight: selected ? 700 : 600, color: selected ? 'var(--c-paper)' : 'var(--c-green-900)', fontSize: 13 }}>
                         {item.label}
                       </Typography>
                     }
@@ -96,7 +96,7 @@ export function Sidebar({ collapsed }: Props) {
             mt: 'auto',
             pt: 2,
             borderRadius: 4,
-            background: 'linear-gradient(180deg, #DFF5E6 0%, #CBEFD9 100%)',
+            background: 'linear-gradient(180deg, var(--c-tint-green-3) 0%, var(--c-border-green-4) 100%)',
             display: 'flex',
             flexDirection: 'column',
             alignItems: 'center',
@@ -106,7 +106,7 @@ export function Sidebar({ collapsed }: Props) {
           }}
         >
           <Box component="img" src={sidebarGummy} alt="" sx={{ width: 108, height: 'auto', mb: 1 }} />
-          <Typography sx={{ fontSize: 11, fontWeight: 700, color: '#0B3926', letterSpacing: 0.3 }}>
+          <Typography sx={{ fontSize: 11, fontWeight: 700, color: 'var(--c-green-900)', letterSpacing: 0.3 }}>
             Your Nutrition Ally
           </Typography>
         </Box>

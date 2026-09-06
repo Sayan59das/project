@@ -46,7 +46,7 @@ export function SettingsPage() {
 
   // Catches an accidental tab close/reload with unsaved changes. In-app
   // route-change blocking isn't available without moving this app onto a
-  // data router, which is out of scope here — this is the lightweight
+  // data router, which is out of scope here â€” this is the lightweight
   // equivalent the task calls for.
   useEffect(() => {
     if (!hasUnsavedChanges) return;
@@ -145,8 +145,8 @@ export function SettingsPage() {
           <Typography variant="h6" sx={{ fontWeight: 700, mb: 1 }}>
             Notifications
           </Typography>
-          <Typography variant="body2" sx={{ color: '#9EA4AB', mb: 2 }}>
-            These preferences are saved for when email/in-app delivery is implemented — no notifications are sent yet in this
+          <Typography variant="body2" sx={{ color: 'var(--c-text-3)', mb: 2 }}>
+            These preferences are saved for when email/in-app delivery is implemented â€” no notifications are sent yet in this
             prototype.
           </Typography>
           <Box sx={{ display: 'grid', gap: 1 }}>
@@ -181,10 +181,10 @@ export function SettingsPage() {
           {hasUnsavedChanges && (
             <>
               <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 2 }}>
-                <Typography variant="body2" sx={{ color: '#B26A00', fontWeight: 700 }}>
+                <Typography variant="body2" sx={{ color: 'var(--c-warn-800)', fontWeight: 700 }}>
                   Unsaved changes
                 </Typography>
-                <Button size="small" sx={{ textTransform: 'none', color: '#9EA4AB' }} onClick={handleDiscard}>
+                <Button size="small" sx={{ textTransform: 'none', color: 'var(--c-text-3)' }} onClick={handleDiscard}>
                   Discard changes
                 </Button>
               </Box>
@@ -192,12 +192,12 @@ export function SettingsPage() {
             </>
           )}
           <Box sx={{ display: 'flex', gap: 2 }}>
-            <Button variant="outlined" sx={{ borderColor: '#D8DDE3', color: '#9EA4AB', textTransform: 'none' }} onClick={handleResetClick}>
+            <Button variant="outlined" sx={{ borderColor: 'var(--c-border)', color: 'var(--c-text-3)', textTransform: 'none' }} onClick={handleResetClick}>
               Reset to Defaults
             </Button>
             <Button
               variant="contained"
-              sx={{ bgcolor: '#00A651', '&:hover': { bgcolor: '#00913f' }, textTransform: 'none' }}
+              sx={{ bgcolor: 'var(--c-green)', '&:hover': { bgcolor: 'var(--c-green-600)' }, textTransform: 'none' }}
               onClick={handleSave}
               disabled={!hasUnsavedChanges}
             >

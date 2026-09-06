@@ -28,7 +28,26 @@ COPY package.json package-lock.json ./
 RUN npm ci --omit=dev
 
 COPY --from=builder /app/dist ./dist
+
+# SQL migrations and seeds are data files, not TypeScript, so they are not
+# in dist/ — they have to be copied in separately or `npm run db:migrate`
+# has nothing to apply in the deployed container. dist/db/migrate.js
+# resolves them relative to itself (../../db/migrations), which lands here.
+COPY db ./db
+
 RUN mkdir -p uploads
+
+# Applying migrations in a deployment
+# -----------------------------------
+# `npm run db:migrate` runs the TypeScript source via tsx, which is a
+# devDependency and therefore absent from this image. Use the compiled
+# output instead:
+#
+#   node dist/db/migrate.js && node dist/db/seed.js
+#
+# On Render that belongs in the service's "Pre-Deploy Command" so it runs
+# once per deploy, before the new instance starts taking traffic — not in
+# CMD, which would race every replica against the same migration.
 
 # The platform's own $PORT (Render/Railway/Fly all set this) takes
 # precedence — see src/config/env.ts. 4000 is only the local-dev default.
