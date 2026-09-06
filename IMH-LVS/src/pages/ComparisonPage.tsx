@@ -1,17 +1,17 @@
-// Label Comparison â€” main/list page.
+// Label Comparison — main/list page.
 //
 // Business workflow: the user selects an EXISTING label (Product) already
-// in the system â€” never uploads a file. The system automatically resolves
+// in the system — never uploads a file. The system automatically resolves
 // that label's own highest-versioned artwork and its latest APPROVED
 // artwork, runs Version Comparison between them when an approved baseline
 // exists (skipping it, with a clear reason, when it doesn't), and always
 // runs Cross-Company Comparison against every other marketing company's
-// approved artwork for the same product name â€” see
+// approved artwork for the same product name — see
 // components/labelComparison/SelectLabelCard.tsx and
 // services/labelComparisonWorkflowService.ts.
 //
 // Comparison History below is fed by labelComparisonHistoryService (a
-// store dedicated to this real-OCR-based workflow) â€” deliberately separate
+// store dedicated to this real-OCR-based workflow) — deliberately separate
 // from services/comparisonService.ts's `Comparison` records, which power
 // the pre-existing Label Final -> Technical -> QA -> Manager approval
 // pipeline (Approvals/QA/Dashboard/Reports) via a hand-authored parameter
@@ -56,7 +56,7 @@ function formatVersionLabel(version: string): string {
 function comparedAgainstLabel(run: LabelComparisonRun): string {
   if (run.versionComparison) return `Latest Approved ${formatVersionLabel(run.versionComparison.approvedArtworkVersion)}`;
   if (run.crossCompanyResults.length > 0) return 'Cross-Company only';
-  return 'â€”';
+  return '—';
 }
 
 export function ComparisonPage() {
@@ -129,7 +129,7 @@ export function ComparisonPage() {
               placeholder="Search comparisons"
               value={search}
               onChange={(event) => setSearch(event.target.value)}
-              slotProps={{ input: { startAdornment: <MdSearch style={{ marginRight: 6, color: 'var(--c-text-3)' }} /> } }}
+              slotProps={{ input: { startAdornment: <MdSearch style={{ marginRight: 6, color: '#9EA4AB' }} /> } }}
               sx={{ minWidth: 220 }}
             />
             <FormControl size="small" sx={{ minWidth: 170 }}>
@@ -180,7 +180,7 @@ export function ComparisonPage() {
               sx={{ minWidth: 150 }}
             />
             {hasActiveFilters && (
-              <Button variant="outlined" sx={{ borderColor: 'var(--c-border)', color: 'var(--c-text-2)', textTransform: 'none' }} onClick={handleClearFilters}>
+              <Button variant="outlined" sx={{ borderColor: '#D8DDE3', color: '#6B7177', textTransform: 'none' }} onClick={handleClearFilters}>
                 Clear Filters
               </Button>
             )}
@@ -189,16 +189,16 @@ export function ComparisonPage() {
 
         {!hasAnyHistory ? (
           <Box sx={{ py: 6, textAlign: 'center' }}>
-            <Typography variant="body1" sx={{ fontWeight: 700, color: 'var(--c-text-2)' }}>
+            <Typography variant="body1" sx={{ fontWeight: 700, color: '#6B7177' }}>
               No comparisons yet
             </Typography>
-            <Typography variant="body2" sx={{ color: 'var(--c-text-3)', mt: 0.5 }}>
+            <Typography variant="body2" sx={{ color: '#9EA4AB', mt: 0.5 }}>
               Start a new comparison by selecting a label above.
             </Typography>
           </Box>
         ) : filteredRuns.length === 0 ? (
           <Box sx={{ py: 6, textAlign: 'center' }}>
-            <Typography variant="body2" sx={{ color: 'var(--c-text-3)' }}>
+            <Typography variant="body2" sx={{ color: '#9EA4AB' }}>
               No comparisons match the current filters.
             </Typography>
           </Box>
@@ -220,7 +220,7 @@ export function ComparisonPage() {
               </TableHead>
               <TableBody>
                 {filteredRuns.map((run) => (
-                  <TableRow key={run.id} hover sx={{ '&:hover': { bgcolor: 'var(--c-surface)' } }}>
+                  <TableRow key={run.id} hover sx={{ '&:hover': { bgcolor: '#EEF1F4' } }}>
                     <TableCell>
                       <Tooltip title="View">
                         <IconButton size="small" aria-label="View" onClick={() => navigate(`/comparison/${run.id}`)}>
@@ -233,7 +233,7 @@ export function ComparisonPage() {
                     <TableCell>{run.marketingCompany}</TableCell>
                     <TableCell>{run.candidateArtworkFileName}</TableCell>
                     <TableCell>{comparedAgainstLabel(run)}</TableCell>
-                    <TableCell>{run.versionComparison ? `${run.versionComparison.result.comparison.overallPercentage}%` : 'â€”'}</TableCell>
+                    <TableCell>{run.versionComparison ? `${run.versionComparison.result.comparison.overallPercentage}%` : '—'}</TableCell>
                     <TableCell>
                       <StatusChip status="Completed" />
                     </TableCell>

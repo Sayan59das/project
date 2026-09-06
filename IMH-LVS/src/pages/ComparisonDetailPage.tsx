@@ -1,8 +1,8 @@
-// Label Comparison Detail â€” the dedicated result page opened via "View"
+// Label Comparison Detail — the dedicated result page opened via "View"
 // from the main page's Comparison History. Shows, in order, the Version
-// Comparison (candidate artwork vs. latest approved â€” omitted with a plain
+// Comparison (candidate artwork vs. latest approved — omitted with a plain
 // explanation when this label had no approved baseline to compare against)
-// and the Cross-Company Comparison results (always present) â€” matching the
+// and the Cross-Company Comparison results (always present) — matching the
 // business workflow: Select Label -> Version Comparison (or skip) ->
 // Cross-Company Comparison -> Final Result. See components/labelComparison/*
 // for the individual pieces this composes.
@@ -20,13 +20,13 @@ import type { LabelComparisonFieldResult } from '../types/labelComparison';
 import type { VersionComparisonResult } from '../types/labelComparisonRecord';
 
 const SUMMARY_METRICS: { key: 'matching' | 'modified' | 'conflicting' | 'missing'; label: string; color: string }[] = [
-  { key: 'matching', label: 'Matching', color: 'var(--c-green)' },
-  { key: 'modified', label: 'Modified', color: 'var(--c-warn)' },
-  { key: 'conflicting', label: 'Conflicting', color: 'var(--c-error)' },
-  { key: 'missing', label: 'Missing', color: 'var(--c-info)' }
+  { key: 'matching', label: 'Matching', color: '#00A651' },
+  { key: 'modified', label: 'Modified', color: '#E29B17' },
+  { key: 'conflicting', label: 'Conflicting', color: '#D32F2F' },
+  { key: 'missing', label: 'Missing', color: '#1976D2' }
 ];
 
-// Artwork.version is already stored as "V1"/"V2" (see types/artwork.ts) â€” this
+// Artwork.version is already stored as "V1"/"V2" (see types/artwork.ts) — this
 // normalizes any of that, a bare number, or an already-lowercase "v1" into a
 // single consistent "v1" display form, so it's never doubled into "vV1".
 function formatVersionLabel(version: string): string {
@@ -72,10 +72,10 @@ export function ComparisonDetailPage() {
           Back to Label Comparison
         </Button>
         <Paper sx={{ p: 4, textAlign: 'center' }}>
-          <Typography variant="body1" sx={{ color: 'var(--c-text-2)', fontWeight: 700 }}>
+          <Typography variant="body1" sx={{ color: '#6B7177', fontWeight: 700 }}>
             Comparison not found
           </Typography>
-          <Typography variant="body2" sx={{ color: 'var(--c-text-3)', mt: 0.5 }}>
+          <Typography variant="body2" sx={{ color: '#9EA4AB', mt: 0.5 }}>
             This comparison may have been removed, or the link is incorrect.
           </Typography>
         </Paper>
@@ -103,7 +103,7 @@ export function ComparisonDetailPage() {
         ''
       );
     } else {
-      lines.push('VERSION COMPARISON: Skipped â€” no previous approved version found for this label.', '');
+      lines.push('VERSION COMPARISON: Skipped — no previous approved version found for this label.', '');
     }
     lines.push('CROSS-COMPANY COMPARISON', '========================');
     if (run.crossCompanyResults.length === 0) {
@@ -139,40 +139,40 @@ export function ComparisonDetailPage() {
             </Typography>
             <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 3, mt: 1.5 }}>
               <Box>
-                <Typography variant="caption" sx={{ color: 'var(--c-text-3)', display: 'block' }}>
+                <Typography variant="caption" sx={{ color: '#9EA4AB', display: 'block' }}>
                   Product
                 </Typography>
-                <Typography variant="body2" sx={{ fontWeight: 600, color: 'var(--c-text-1)' }}>
+                <Typography variant="body2" sx={{ fontWeight: 600, color: '#2E3135' }}>
                   {run.productName}
                 </Typography>
               </Box>
               <Box>
-                <Typography variant="caption" sx={{ color: 'var(--c-text-3)', display: 'block' }}>
+                <Typography variant="caption" sx={{ color: '#9EA4AB', display: 'block' }}>
                   Party
                 </Typography>
-                <Typography variant="body2" sx={{ fontWeight: 600, color: 'var(--c-text-1)' }}>
+                <Typography variant="body2" sx={{ fontWeight: 600, color: '#2E3135' }}>
                   {run.marketingCompany}
                 </Typography>
               </Box>
               <Box>
-                <Typography variant="caption" sx={{ color: 'var(--c-text-3)', display: 'block' }}>
+                <Typography variant="caption" sx={{ color: '#9EA4AB', display: 'block' }}>
                   Comparison ID
                 </Typography>
-                <Typography variant="body2" sx={{ fontWeight: 600, color: 'var(--c-text-1)' }}>
+                <Typography variant="body2" sx={{ fontWeight: 600, color: '#2E3135' }}>
                   {run.id}
                 </Typography>
               </Box>
               <Box>
-                <Typography variant="caption" sx={{ color: 'var(--c-text-3)', display: 'block' }}>
+                <Typography variant="caption" sx={{ color: '#9EA4AB', display: 'block' }}>
                   Status
                 </Typography>
                 <StatusChip status="Completed" />
               </Box>
               <Box>
-                <Typography variant="caption" sx={{ color: 'var(--c-text-3)', display: 'block' }}>
+                <Typography variant="caption" sx={{ color: '#9EA4AB', display: 'block' }}>
                   Compared On
                 </Typography>
-                <Typography variant="body2" sx={{ fontWeight: 600, color: 'var(--c-text-1)' }}>
+                <Typography variant="body2" sx={{ fontWeight: 600, color: '#2E3135' }}>
                   {formatDateTime(run.comparisonDate)}
                 </Typography>
               </Box>
@@ -188,7 +188,7 @@ export function ComparisonDetailPage() {
         <>
           <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', md: '1fr 1fr' }, gap: 2, mb: 3 }}>
             <Paper variant="outlined" sx={{ p: 2.5, borderRadius: 3 }}>
-              <Typography variant="overline" sx={{ color: 'var(--c-text-3)', letterSpacing: 1 }}>
+              <Typography variant="overline" sx={{ color: '#9EA4AB', letterSpacing: 1 }}>
                 Label Artwork
               </Typography>
               <Typography variant="body2" sx={{ mt: 1 }}>
@@ -200,7 +200,7 @@ export function ComparisonDetailPage() {
             </Paper>
 
             <Paper variant="outlined" sx={{ p: 2.5, borderRadius: 3 }}>
-              <Typography variant="overline" sx={{ color: 'var(--c-text-3)', letterSpacing: 1 }}>
+              <Typography variant="overline" sx={{ color: '#9EA4AB', letterSpacing: 1 }}>
                 Latest Approved Artwork
               </Typography>
               <Typography variant="body2" sx={{ mt: 1 }}>
@@ -220,22 +220,22 @@ export function ComparisonDetailPage() {
 
           <Paper sx={{ p: 3, mb: 3 }}>
             <Box sx={{ textAlign: 'center', mb: 2.5 }}>
-              <Typography variant="overline" sx={{ color: 'var(--c-text-3)', letterSpacing: 1.2 }}>
+              <Typography variant="overline" sx={{ color: '#9EA4AB', letterSpacing: 1.2 }}>
                 Overall Match
               </Typography>
-              <Typography variant="h3" sx={{ fontWeight: 800, color: 'var(--c-orange)' }}>
+              <Typography variant="h3" sx={{ fontWeight: 800, color: '#E26737' }}>
                 {versionComparison.result.comparison.overallPercentage}%
               </Typography>
             </Box>
             <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 2 }}>
               {SUMMARY_METRICS.map((metric) => (
-                <Box key={metric.key} sx={{ display: 'flex', alignItems: 'center', gap: 1.5, border: '1px solid var(--c-border)', borderRadius: 2, p: 1.5 }}>
+                <Box key={metric.key} sx={{ display: 'flex', alignItems: 'center', gap: 1.5, border: '1px solid #D8DDE3', borderRadius: 2, p: 1.5 }}>
                   <Box sx={{ width: 10, height: 10, borderRadius: '50%', bgcolor: metric.color, flexShrink: 0 }} />
                   <Box>
-                    <Typography variant="caption" sx={{ color: 'var(--c-text-3)', display: 'block' }}>
+                    <Typography variant="caption" sx={{ color: '#9EA4AB', display: 'block' }}>
                       {metric.label}
                     </Typography>
-                    <Typography variant="body1" sx={{ fontWeight: 700, color: 'var(--c-text-1)' }}>
+                    <Typography variant="body1" sx={{ fontWeight: 700, color: '#2E3135' }}>
                       {summary![metric.key]}
                     </Typography>
                   </Box>
@@ -267,9 +267,9 @@ export function ComparisonDetailPage() {
             <Box sx={{ overflowX: 'auto' }}>
               <Box component="table" sx={{ width: '100%', borderCollapse: 'collapse', minWidth: 640 }}>
                 <Box component="thead">
-                  <Box component="tr" sx={{ bgcolor: 'var(--c-tint-blue)' }}>
+                  <Box component="tr" sx={{ bgcolor: '#F3F7FA' }}>
                     {['Parameter', 'Label Artwork', 'Latest Approved', 'Status'].map((heading) => (
-                      <Box component="th" key={heading} sx={{ textAlign: 'left', p: 1.5, fontWeight: 700, fontSize: 14, borderBottom: '1px solid var(--c-border)' }}>
+                      <Box component="th" key={heading} sx={{ textAlign: 'left', p: 1.5, fontWeight: 700, fontSize: 14, borderBottom: '1px solid #D8DDE3' }}>
                         {heading}
                       </Box>
                     ))}
@@ -277,17 +277,17 @@ export function ComparisonDetailPage() {
                 </Box>
                 <Box component="tbody">
                   {versionComparison.result.comparison.fields.map((field) => (
-                    <Box component="tr" key={field.field} sx={{ '&:hover': { bgcolor: 'var(--c-surface)' } }}>
-                      <Box component="td" sx={{ p: 1.5, borderBottom: '1px solid var(--c-border)', fontWeight: 600, fontSize: 14 }}>
+                    <Box component="tr" key={field.field} sx={{ '&:hover': { bgcolor: '#EEF1F4' } }}>
+                      <Box component="td" sx={{ p: 1.5, borderBottom: '1px solid #D8DDE3', fontWeight: 600, fontSize: 14 }}>
                         {field.label}
                       </Box>
-                      <Box component="td" sx={{ p: 1.5, borderBottom: '1px solid var(--c-border)', fontSize: 14 }}>
-                        {field.labelA || 'â€”'}
+                      <Box component="td" sx={{ p: 1.5, borderBottom: '1px solid #D8DDE3', fontSize: 14 }}>
+                        {field.labelA || '—'}
                       </Box>
-                      <Box component="td" sx={{ p: 1.5, borderBottom: '1px solid var(--c-border)', fontSize: 14 }}>
-                        {field.labelB || 'â€”'}
+                      <Box component="td" sx={{ p: 1.5, borderBottom: '1px solid #D8DDE3', fontSize: 14 }}>
+                        {field.labelB || '—'}
                       </Box>
-                      <Box component="td" sx={{ p: 1.5, borderBottom: '1px solid var(--c-border)' }}>
+                      <Box component="td" sx={{ p: 1.5, borderBottom: '1px solid #D8DDE3' }}>
                         <StatusChip status={classifyDeviation(field)} />
                       </Box>
                     </Box>
@@ -295,8 +295,8 @@ export function ComparisonDetailPage() {
                 </Box>
               </Box>
             </Box>
-            <Typography variant="caption" sx={{ display: 'block', mt: 2, color: 'var(--c-text-3)', fontStyle: 'italic' }}>
-              Compared against Latest Approved â€” {formatVersionLabel(versionComparison.approvedArtworkVersion)}
+            <Typography variant="caption" sx={{ display: 'block', mt: 2, color: '#9EA4AB', fontStyle: 'italic' }}>
+              Compared against Latest Approved — {formatVersionLabel(versionComparison.approvedArtworkVersion)}
             </Typography>
           </Paper>
         </>
@@ -305,9 +305,9 @@ export function ComparisonDetailPage() {
           <Typography variant="subtitle1" sx={{ fontWeight: 700, mb: 1 }}>
             Version Comparison
           </Typography>
-          <Typography variant="body2" sx={{ color: 'var(--c-text-3)' }}>
+          <Typography variant="body2" sx={{ color: '#9EA4AB' }}>
             No previous approved version was found for this label ({run.candidateArtworkFileName},{' '}
-            {formatVersionLabel(run.candidateArtworkVersion)}) â€” version comparison has been skipped. Proceeding directly to
+            {formatVersionLabel(run.candidateArtworkVersion)}) — version comparison has been skipped. Proceeding directly to
             Cross-Company Comparison below.
           </Typography>
         </Paper>
@@ -317,7 +317,7 @@ export function ComparisonDetailPage() {
         <Typography variant="subtitle1" sx={{ fontWeight: 700, mb: 0.5 }}>
           Cross-Company Comparison
         </Typography>
-        <Typography variant="body2" sx={{ color: 'var(--c-text-3)', mb: 2 }}>
+        <Typography variant="body2" sx={{ color: '#9EA4AB', mb: 2 }}>
           {run.productName} ({run.marketingCompany}) compared against similar labels belonging to other marketing companies.
         </Typography>
         <CrossCompanyResults results={run.crossCompanyResults} />

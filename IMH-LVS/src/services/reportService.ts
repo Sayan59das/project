@@ -51,16 +51,9 @@ function matchesSearch(fields: Array<string | undefined>, search?: string): bool
 }
 
 // ---------------------------------------------------------------------
-// CSV export — the project's existing export pattern (Blob + object URL,
-// see ComparisonPage's report export) reused here as a small generic helper
-// rather than pulling in a CSV/PDF library.
+// CSV export
 // ---------------------------------------------------------------------
 
-// `format` lets a column render its CSV cell the same way its on-screen
-// DataGrid column does (e.g. a date field via formatDateTime) without
-// touching the underlying row value — every report row's date fields are
-// also used for range filtering/sorting (see inDateRange, .sort() calls
-// above), so those raw ISO/date-only strings must never be mutated.
 export type ReportColumn<T> = { key: keyof T; header: string; format?: (value: T[keyof T]) => string };
 
 function escapeCsvCell(value: unknown): string {
@@ -113,9 +106,10 @@ export type ComparisonReportRow = {
   updatedDate: string;
 };
 
-export function getComparisonReport(filters: ReportFilters): ComparisonReportRow[] {
-  const products = getProducts();
-  return getComparisons()
+export async function getComparisonReport(filters: ReportFilters): Promise<ComparisonReportRow[]> {
+  const products = await getProducts();
+  const comparisons = await getComparisons();
+  return comparisons
     .map((comparison) => {
       const product = products.find((p) => p.id === comparison.productId);
       return {
@@ -174,18 +168,14 @@ const PENDING_STAGE_MAP: Partial<Record<ComparisonStatus, { stage: string; role:
   'Pending Manager Approval': { stage: 'Manager', role: 'Manager' }
 };
 
-export function getPendingVerificationReport(filters: ReportFilters): PendingVerificationRow[] {
-  const products = getProducts();
-  return getComparisons()
+export async function getPendingVerificationReport(filters: ReportFilters): Promise<PendingVerificationRow[]> {
+  const products = await getProducts();
+  const comparisons = await getComparisons();
+  return comparisons
     .filter((comparison) => Boolean(PENDING_STAGE_MAP[comparison.status]))
     .map((comparison) => {
       const product = products.find((p) => p.id === comparison.productId);
       const stageInfo = PENDING_STAGE_MAP[comparison.status]!;
-      // The date this comparison entered its current stage: the last
-      // history entry's date if one exists, otherwise the comparison's own
-      // updatedDate (set by sendComparisonForReview when it first entered
-      // Pending Label Final with no history yet) — same date field, applied
-      // consistently for every row.
       const enteredAt = comparison.history.length > 0 ? comparison.history[comparison.history.length - 1].date : comparison.updatedDate;
       const daysPending = Math.max(0, Math.floor((Date.now() - new Date(enteredAt).getTime()) / (24 * 60 * 60 * 1000)));
       return {
@@ -216,7 +206,7 @@ export function getPendingVerificationReport(filters: ReportFilters): PendingVer
 }
 
 // ---------------------------------------------------------------------
-// 3. Approved Labels Report — Final Approved comparisons only.
+// 3. Approved Labels Report
 // ---------------------------------------------------------------------
 
 export type ApprovedLabelRow = {
@@ -232,9 +222,10 @@ export type ApprovedLabelRow = {
   status: ComparisonStatus;
 };
 
-export function getApprovedLabelsReport(filters: ReportFilters): ApprovedLabelRow[] {
-  const products = getProducts();
-  return getComparisons()
+export async function getApprovedLabelsReport(filters: ReportFilters): Promise<ApprovedLabelRow[]> {
+  const products = await getProducts();
+  const comparisons = await getComparisons();
+  return comparisons
     .filter((comparison) => comparison.status === 'Final Approved')
     .map((comparison) => {
       const product = products.find((p) => p.id === comparison.productId);
@@ -286,10 +277,11 @@ export type RevisionReportRow = {
   date: string;
 };
 
-export function getRevisionRejectionReport(filters: ReportFilters, scope: RevisionScope = 'Both'): RevisionReportRow[] {
-  const products = getProducts();
+export async function getRevisionRejectionReport(filters: ReportFilters, scope: RevisionScope = 'Both'): Promise<RevisionReportRow[]> {
+  const products = await getProducts();
+  const comparisons = await getComparisons();
   const statuses: ComparisonStatus[] = scope === 'Both' ? ['Rejected', 'Revision Required'] : [scope];
-  return getComparisons()
+  return comparisons
     .filter((comparison) => statuses.includes(comparison.status))
     .map((comparison) => {
       const product = products.find((p) => p.id === comparison.productId);
@@ -338,8 +330,8 @@ export type ArtworkHistoryRow = {
   isLatestVersion: boolean;
 };
 
-export function getArtworkHistoryReport(filters: ReportFilters): ArtworkHistoryRow[] {
-  const artworks = getArtworks();
+export async function getArtworkHistoryReport(filters: ReportFilters): Promise<ArtworkHistoryRow[]> {
+  const artworks = await getArtworks();
   const groupKey = (artwork: Artwork) => `${artwork.productId}|${artwork.marketingCompany}|${artwork.artworkType}`;
   const latestVersionByGroup = new Map<string, number>();
   artworks.forEach((artwork) => {
@@ -378,8 +370,7 @@ export function getArtworkHistoryReport(filters: ReportFilters): ArtworkHistoryR
 }
 
 // ---------------------------------------------------------------------
-// 6. Approval Workflow History Report — the raw Comparison.history feed,
-// filterable, never mutated (getAllWorkflowHistory only reads).
+// 6. Approval Workflow History Report
 // ---------------------------------------------------------------------
 
 export type ApprovalHistoryRow = {
@@ -389,10 +380,6 @@ export type ApprovalHistoryRow = {
   stage: WorkflowStage;
   action: WorkflowAction;
   resultingStatus: ComparisonStatus;
-  // Who was responsible for this stage when the decision was made (blank if
-  // unassigned) vs. who actually performed it — kept distinct per the
-  // Approval User ID requirement; an authorized override (e.g. Manager
-  // acting on someone else's assigned stage) shows up as these two differing.
   approvalUserId: string;
   actorId: string;
   actorName: string;
@@ -401,9 +388,11 @@ export type ApprovalHistoryRow = {
   remarks: string;
 };
 
-export function getApprovalHistoryReport(filters: ReportFilters): ApprovalHistoryRow[] {
-  const productIdByComparison = new Map(getComparisons().map((comparison) => [comparison.id, comparison.productId]));
-  return getAllWorkflowHistory()
+export async function getApprovalHistoryReport(filters: ReportFilters): Promise<ApprovalHistoryRow[]> {
+  const comparisons = await getComparisons();
+  const productIdByComparison = new Map(comparisons.map((comparison) => [comparison.id, comparison.productId]));
+  const history = await getAllWorkflowHistory();
+  return history
     .map((item) => ({
       comparisonId: item.comparisonId,
       productId: productIdByComparison.get(item.comparisonId) ?? '',
@@ -426,19 +415,11 @@ export function getApprovalHistoryReport(filters: ReportFilters): ApprovalHistor
         (!filters.user || textIncludes(row.actorName, filters.user)) &&
         matchesSearch([row.comparisonId, row.productName, row.actorName, row.approvalUserId, row.actorId], filters.search)
     )
-    // Chronological (oldest first) rather than getAllWorkflowHistory's
-    // newest-first order — a per-comparison workflow trail reads as a
-    // story (Label Final -> Technical -> QA -> Manager), not a feed.
     .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
 }
 
 // ---------------------------------------------------------------------
-// 7. User Activity Report — derived from workflow history plus artwork
-// upload / comparison creation records, since there is no centralized
-// activity log yet. Each event shape below (user/role/action/module/
-// reference/date/status) is intentionally what a future dedicated activity
-// service would return, so swapping the source later is a one-function
-// change here rather than a Reports UI rewrite.
+// 7. User Activity Report
 // ---------------------------------------------------------------------
 
 export type UserActivityRow = {
@@ -449,21 +430,24 @@ export type UserActivityRow = {
   reference: string;
   date: string;
   status: string;
-  // Populated only for workflow-decision events (Artwork Uploaded /
-  // Comparison Created events have no stage assignment concept).
   approvalUserId?: string;
   actorId?: string;
 };
 
-export function getUserActivityReport(filters: ReportFilters): UserActivityRow[] {
-  const roleByName = new Map(getUsers().map((user) => [user.fullName, user.role]));
+export async function getUserActivityReport(filters: ReportFilters): Promise<UserActivityRow[]> {
+  const users = await getUsers();
+  const artworks = await getArtworks();
+  const comparisons = await getComparisons();
+  const history = await getAllWorkflowHistory();
+
+  const roleByName = new Map(users.map((user) => [user.fullName, user.role]));
   const roleLabel = (name: string): string => {
     const role = roleByName.get(name);
     return role ? ROLE_LABELS[role] : '—';
   };
   const workflowRoleLabel = (role: string): string => ROLE_LABELS[role as RoleId] ?? role;
 
-  const artworkEvents: UserActivityRow[] = getArtworks().map((artwork) => ({
+  const artworkEvents: UserActivityRow[] = artworks.map((artwork) => ({
     user: artwork.uploadedBy,
     role: roleLabel(artwork.uploadedBy),
     action: 'Artwork Uploaded',
@@ -473,7 +457,7 @@ export function getUserActivityReport(filters: ReportFilters): UserActivityRow[]
     status: artwork.status
   }));
 
-  const comparisonEvents: UserActivityRow[] = getComparisons().map((comparison) => ({
+  const comparisonEvents: UserActivityRow[] = comparisons.map((comparison) => ({
     user: comparison.comparedBy,
     role: roleLabel(comparison.comparedBy),
     action: 'Comparison Created',
@@ -483,7 +467,7 @@ export function getUserActivityReport(filters: ReportFilters): UserActivityRow[]
     status: comparison.status
   }));
 
-  const workflowEvents: UserActivityRow[] = getAllWorkflowHistory().map((item) => ({
+  const workflowEvents: UserActivityRow[] = history.map((item) => ({
     user: item.actorName,
     role: workflowRoleLabel(item.actorRole),
     action: `${item.stage}: ${item.action}`,

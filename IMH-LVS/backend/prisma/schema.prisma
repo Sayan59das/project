@@ -1,0 +1,161 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id          String   @id @default(cuid())
+  email       String   @unique
+  name        String
+  role        String   // "Manager", "QA", "Technical", "Label Final"
+  createdDate DateTime @default(now())
+  updatedDate DateTime @updatedAt
+  status      String   @default("Active")
+}
+
+model MarketingCompany {
+  id          String   @id // e.g. MKT-0001
+  companyName String   @unique
+  shortCode   String
+  status      String   @default("Active")
+  createdDate DateTime @default(now())
+  updatedDate DateTime @updatedAt
+  createdBy   String
+  updatedBy   String
+}
+
+model ManufacturingCompany {
+  id          String   @id // e.g. MFG-0001
+  companyName String   @unique
+  shortCode   String
+  status      String   @default("Active")
+  createdDate DateTime @default(now())
+  updatedDate DateTime @updatedAt
+  createdBy   String
+  updatedBy   String
+}
+
+model Brand {
+  id               String   @id // e.g. BRD-0001
+  brandName        String
+  marketingCompany String
+  status           String   @default("Active")
+  createdDate      DateTime @default(now())
+  updatedDate      DateTime @updatedAt
+  createdBy        String
+  updatedBy        String
+}
+
+model Flavour {
+  id          String   @id // e.g. FLV-0001
+  flavourName String   @unique
+  status      String   @default("Active")
+  createdDate DateTime @default(now())
+  updatedDate DateTime @updatedAt
+  createdBy   String
+  updatedBy   String
+}
+
+model Claim {
+  id          String   @id // e.g. CLM-0001
+  claimText   String   @unique
+  description String
+  status      String   @default("Active")
+  createdDate DateTime @default(now())
+  updatedDate DateTime @updatedAt
+  createdBy   String
+  updatedBy   String
+}
+
+model ProductCategory {
+  id           String   @id // e.g. CAT-0001
+  categoryName String   @unique
+  description  String
+  status       String   @default("Active")
+  createdDate  DateTime @default(now())
+  updatedDate  DateTime @updatedAt
+  createdBy    String
+  updatedBy    String
+}
+
+model Product {
+  id                   String   @id // e.g. PRD-0001
+  productName          String
+  brandName            String
+  marketingCompany     String
+  manufacturingCompany String
+  flavour              String
+  fssaiNumber          String
+  packageSize          String?
+  status               String   @default("Active")
+  origin               String?
+  sourceArtworkId      String?
+  createdDate          DateTime @default(now())
+  updatedDate          DateTime @updatedAt
+  createdBy            String
+  updatedBy            String
+}
+
+model Artwork {
+  id                   String   @id // e.g. ART-0001
+  productId            String
+  productName          String
+  brand                String
+  marketingCompany     String
+  manufacturingCompany String
+  version              String
+  artworkType          String
+  fileName             String
+  fileType             String
+  fileSize             Int
+  filePath             String
+  status               String
+  remarks              String?
+  uploadedBy           String
+  uploadDate           DateTime @default(now())
+  updatedBy            String
+  updatedDate          DateTime @updatedAt
+}
+
+model Comparison {
+  id                      String   @id // e.g. CMP-0001
+  productId               String
+  productName             String
+  stage                   String
+  newArtworkId            String
+  newArtworkVersion       String
+  newArtworkCompany       String
+  referenceArtworkId      String
+  referenceArtworkVersion String
+  referenceArtworkCompany String
+  parameters              Json     // Array of ParameterComparison
+  overallSimilarity       Float
+  overallResult           String
+  status                  String
+  qaRemarks               String?
+  history                 Json     // Array of WorkflowHistoryEntry
+  approvalAssignments     Json     // Object of assignments
+  comparedBy              String
+  comparisonDate          DateTime @default(now())
+  updatedBy               String
+  updatedDate             DateTime @updatedAt
+}
+
+model LabelComparisonRun {
+  id                       String   @id // e.g. LC-00001
+  productId                String
+  productName              String
+  brandName                String
+  marketingCompany         String
+  comparedBy               String
+  comparisonDate           DateTime @default(now())
+  candidateArtworkId       String
+  candidateArtworkVersion  String
+  candidateArtworkFileName String
+  versionComparison        Json?
+  crossCompanyResults      Json
+}
