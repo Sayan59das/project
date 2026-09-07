@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import {
+  Alert,
   Box,
   Button,
   Dialog,
@@ -48,7 +49,7 @@ import { PageHeader } from '../components/PageHeader';
 import { StatusChip } from '../components/StatusChip';
 import { useAuth } from '../auth/AuthContext';
 import { deactivateProduct, getProducts, updateProduct } from '../services/productService';
-import { getBrands, getFlavours, getMarketingCompanies } from '../services/masterService';
+import { useBrands, useFlavours, useMarketingCompanies } from '../hooks/useMasterData';
 import { getArtworksByProduct } from '../services/artworkService';
 import { getComparisonsByProduct } from '../services/comparisonService';
 import { getSettings } from '../services/settingsService';
@@ -91,6 +92,9 @@ type FormErrors = Partial<Record<'productName' | 'brandName' | 'marketingCompany
 
 export function ProductsPage() {
   const { currentUser, hasPermission } = useAuth();
+  const marketingCompanies = useMarketingCompanies();
+  const brands = useBrands();
+  const flavours = useFlavours();
   const canEdit = hasPermission('EDIT');
   const actor = currentUser?.fullName ?? 'Unknown User';
   const defaultPageSize = getSettings(currentUser?.id ?? '').pageSize;
@@ -126,11 +130,27 @@ export function ProductsPage() {
   // selections, but always keep the record's current saved value selectable
   // even if that master has since gone inactive â€” so editing a product never
   // silently blanks out its historical value.
-  const activeMarketingCompanies = useMemo(() => getMarketingCompanies().filter((company) => company.status === 'Active').map((company) => company.companyName), []);
-  const activeBrands = useMemo(() => getBrands().filter((brand) => brand.status === 'Active').map((brand) => brand.brandName), []);
-  const activeFlavours = useMemo(() => getFlavours().filter((flavour) => flavour.status === 'Active').map((flavour) => flavour.flavourName), []);
+  const activeMarketingCompanies = useMemo(
+    () => marketingCompanies.items.filter((company) => company.status === 'Active').map((company) => company.companyName),
+    [marketingCompanies.items]
+  );
+  const activeBrands = useMemo(
+    () => brands.items.filter((brand) => brand.status === 'Active').map((brand) => brand.brandName),
+    [brands.items]
+  );
+  const activeFlavours = useMemo(
+    () => flavours.items.filter((flavour) => flavour.status === 'Active').map((flavour) => flavour.flavourName),
+    [flavours.items]
+  );
+
+  // Masters are fetched now, so a form opened during an outage would offer
+  // three empty dropdowns and look like a system with no brands in it. Say so
+  // instead — the form still opens, and a typed value is still savable.
+  const mastersFailed = marketingCompanies.isError || brands.isError || flavours.isError;
 
   const withCurrentValue = (options: string[], current: string) => (current && !options.includes(current) ? [...options, current] : options);
+
+  const mastersError = [marketingCompanies, brands, flavours].find((query) => query.isError)?.error;
 
   const marketingCompanyFormOptions = withCurrentValue(activeMarketingCompanies, formState.marketingCompany);
   const brandFormOptions = withCurrentValue(activeBrands, formState.brandName);
@@ -456,6 +476,13 @@ export function ProductsPage() {
               <MdClose />
             </IconButton>
           </Box>
+
+          {mastersFailed && (
+            <Alert severity="warning" sx={{ mb: 2 }}>
+              {mastersError instanceof Error ? mastersError.message : 'Could not load master data.'} The dropdowns below are
+              incomplete — an empty list here means the lookup failed, not that there are no records.
+            </Alert>
+          )}
 
           <Stack spacing={2}>
             <TextField

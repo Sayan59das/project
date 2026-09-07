@@ -56,7 +56,7 @@ import { PageHeader } from '../components/PageHeader';
 import { StatusChip } from '../components/StatusChip';
 import { ArtworkPreview } from '../components/ArtworkPreview';
 import { useAuth } from '../auth/AuthContext';
-import { getBrands, getFlavours, getMarketingCompanies } from '../services/masterService';
+import { useBrands, useFlavours, useMarketingCompanies } from '../hooks/useMasterData';
 import { getSettings } from '../services/settingsService';
 import { extractLabelData, LabelExtractionError } from '../services/extractionService';
 import {
@@ -203,6 +203,9 @@ const NEW_PRODUCT_CHOICE = '__new__';
 
 export function ArtworkPage() {
   const { currentUser, hasPermission } = useAuth();
+  const marketingCompanies = useMarketingCompanies();
+  const brands = useBrands();
+  const flavours = useFlavours();
   const canUpload = hasPermission('UPLOAD');
   const canEdit = hasPermission('EDIT');
   const canSendForComparison = hasPermission('INITIATE');
@@ -250,18 +253,32 @@ export function ArtworkPage() {
   const [viewArtwork, setViewArtwork] = useState<Artwork | null>(null);
   const [viewFullscreen, setViewFullscreen] = useState(false);
   const [archiveTarget, setArchiveTarget] = useState<Artwork | null>(null);
+  // Saving an upload is a round trip now (it reuses master records over the
+  // API before writing), so the button has to say it is working — otherwise a
+  // slow save looks like a click that did nothing and people click again,
+  // which is how you get two artworks for one file.
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   const refresh = () => setArtworks(getArtworks());
 
-  const marketingCompanyOptions = useMemo(() => getMarketingCompanies().map((company) => company.companyName), []);
+  const marketingCompanyOptions = useMemo(
+    () => marketingCompanies.items.map((company) => company.companyName),
+    [marketingCompanies.items]
+  );
   const brandOptions = useMemo(() => {
-    const all = getBrands();
+    const all = brands.items;
     const scoped = labelForm.marketingCompanyName
       ? all.filter((brand) => brand.marketingCompany.trim().toLowerCase() === labelForm.marketingCompanyName.trim().toLowerCase())
       : all;
     return Array.from(new Set(scoped.map((brand) => brand.brandName)));
-  }, [labelForm.marketingCompanyName]);
-  const flavourOptions = useMemo(() => getFlavours().map((flavour) => flavour.flavourName), []);
+  }, [brands.items, labelForm.marketingCompanyName]);
+  const flavourOptions = useMemo(() => flavours.items.map((flavour) => flavour.flavourName), [flavours.items]);
+  const mastersError = [marketingCompanies, brands, flavours].find((query) => query.isError)?.error;
+
+  // An outage must not look like a company with no brands: the upload form
+  // reads these three lists, and empty dropdowns with no explanation is how
+  // somebody retypes a brand that already exists.
+  const mastersFailed = marketingCompanies.isError || brands.isError || flavours.isError;
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const exactProductMatch = useMemo(() => findExactProductMatch(labelForm), [labelForm.productName, labelForm.brand, labelForm.marketingCompanyName]);
@@ -507,7 +524,7 @@ export function ArtworkPage() {
     return Object.keys(errors).length === 0;
   };
 
-  const persist = () => {
+  const persist = async () => {
     if (editingId) {
       updateArtwork(editingId, { artworkType: formState.artworkType, status: formState.status, remarks: formState.remarks }, actor);
       refresh();
@@ -517,8 +534,9 @@ export function ArtworkPage() {
     }
 
     if (!selectedFile) return;
+    setIsSubmitting(true);
     try {
-      const result = submitLabelIntake(
+      const result = await submitLabelIntake(
         {
           extracted: labelForm,
           artworkType: uploadArtworkType,
@@ -534,14 +552,19 @@ export function ArtworkPage() {
       setDuplicateMatch(null);
       setIntakeResult(result);
     } catch (err) {
+      // The intake reuses master records over the network before it writes
+      // anything, so this now also catches "the server is unreachable" — which
+      // is why the message is shown rather than the upload appearing to work.
       setUploadErrors((prev) => ({ ...prev, submit: err instanceof Error ? err.message : 'Failed to save label information.' }));
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
   const handleSave = () => {
     if (editingId) {
       if (!validate()) return;
-      persist();
+      void persist();
       return;
     }
 
@@ -553,7 +576,7 @@ export function ArtworkPage() {
         return;
       }
     }
-    persist();
+    void persist();
   };
 
   // ---------------------------------------------------------------------
@@ -854,6 +877,13 @@ export function ArtworkPage() {
               <MdClose />
             </IconButton>
           </Box>
+
+          {mastersFailed && (
+            <Alert severity="warning" sx={{ mb: 2 }}>
+              {mastersError instanceof Error ? mastersError.message : 'Could not load master data.'} The dropdowns below are
+              incomplete — an empty list here means the lookup failed, not that there are no records.
+            </Alert>
+          )}
 
           {editingId ? (
             <Stack spacing={2}>
@@ -1189,7 +1219,12 @@ export function ArtworkPage() {
             <Button onClick={handleCloseForm} sx={{ textTransform: 'none' }}>
               Cancel
             </Button>
-            <Button variant="contained" sx={{ textTransform: 'none' }} onClick={handleSave} disabled={!editingId && !selectedFile}>
+            <Button
+              variant="contained"
+              sx={{ textTransform: 'none' }}
+              onClick={handleSave}
+              disabled={isSubmitting || (!editingId && !selectedFile)}
+            >
               {editingId ? 'Save Changes' : 'Save Label & Product'}
             </Button>
           </Box>

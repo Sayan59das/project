@@ -9,9 +9,18 @@
 // point the deployed site at the *visitor's own* localhost, which is what
 // caused label extraction to silently fail on Vercel until this was
 // caught), so a missing value is logged loudly instead of failing quietly.
-const rawApiBaseUrl = import.meta.env.VITE_API_BASE_URL;
+// Read through a guarded alias rather than `import.meta.env.X` directly.
+// Vite replaces `import.meta.env` with a real object at build time, so the
+// browser build is unchanged — but the unit tests run this module under plain
+// node (services that talk to the API are now imported by code under test),
+// where `import.meta.env` does not exist and a direct property read throws
+// before any test can run.
+type ViteEnv = { VITE_API_BASE_URL?: string; PROD?: boolean };
+const env: ViteEnv = (import.meta as ImportMeta & { env?: ViteEnv }).env ?? {};
 
-if (!rawApiBaseUrl && import.meta.env.PROD) {
+const rawApiBaseUrl = env.VITE_API_BASE_URL;
+
+if (!rawApiBaseUrl && env.PROD) {
   // eslint-disable-next-line no-console
   console.error(
     '[apiConfig] VITE_API_BASE_URL is not set in this production build — ' +

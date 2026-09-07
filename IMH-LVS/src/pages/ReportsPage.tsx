@@ -21,7 +21,7 @@ import { StatusChip } from '../components/StatusChip';
 import { useAuth } from '../auth/AuthContext';
 import { getProducts } from '../services/productService';
 import { getArtworks, parseVersionNumber } from '../services/artworkService';
-import { getBrands, getManufacturingCompanies, getMarketingCompanies } from '../services/masterService';
+import { useBrands, useManufacturingCompanies, useMarketingCompanies } from '../hooks/useMasterData';
 import { useUserDirectory } from '../hooks/useUserDirectory';
 import { getSettings } from '../services/settingsService';
 import { COMPARISON_STATUS_OPTIONS } from '../types/comparison';
@@ -339,6 +339,9 @@ export function ReportsPage() {
   const navigate = useNavigate();
   const { currentUser, hasPermission } = useAuth();
   const { users: directoryUsers } = useUserDirectory();
+  const brands = useBrands();
+  const marketingCompanies = useMarketingCompanies();
+  const manufacturingCompanies = useManufacturingCompanies();
   const canExport = hasPermission('EXPORT');
   const defaultPageSize = getSettings(currentUser?.id ?? '').pageSize;
 
@@ -355,9 +358,9 @@ export function ReportsPage() {
     try {
       return {
         products: getProducts(),
-        brands: Array.from(new Set(getBrands().map((b) => b.brandName))).sort(),
-        marketingCompanies: Array.from(new Set(getMarketingCompanies().map((c) => c.companyName))).sort(),
-        manufacturingCompanies: Array.from(new Set(getManufacturingCompanies().map((c) => c.companyName))).sort(),
+        brands: Array.from(new Set(brands.items.map((b) => b.brandName))).sort(),
+        marketingCompanies: Array.from(new Set(marketingCompanies.items.map((c) => c.companyName))).sort(),
+        manufacturingCompanies: Array.from(new Set(manufacturingCompanies.items.map((c) => c.companyName))).sort(),
         artworkVersions: Array.from(new Set(getArtworks().map((a) => a.version))).sort((a, b) => parseVersionNumber(a) - parseVersionNumber(b)),
         users: directoryUsers
           .map((u) => u.fullName)
@@ -367,9 +370,10 @@ export function ReportsPage() {
       setLoadError(true);
       return { products: [], brands: [], marketingCompanies: [], manufacturingCompanies: [], artworkVersions: [], users: [] };
     }
-    // Recomputed when the directory arrives: it is fetched, so the first pass
-    // runs with an empty list and the User filter would stay empty otherwise.
-  }, [directoryUsers]);
+    // Recomputed as each fetched list arrives: masters and the user directory
+    // are requests now, so the first pass runs with empty lists and the filter
+    // dropdowns would stay empty otherwise.
+  }, [directoryUsers, brands.items, marketingCompanies.items, manufacturingCompanies.items]);
 
   const visibility = FILTER_VISIBILITY[activeReport];
   const statusOptions = STATUS_OPTIONS_BY_TYPE[activeReport];

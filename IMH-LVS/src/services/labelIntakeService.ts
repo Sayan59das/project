@@ -103,7 +103,12 @@ export function findPossibleProductMatches(extracted: LabelIntakeExtractedFields
   return getProductsByBrandAndCompany(extracted.brand, extracted.marketingCompanyName).filter((product) => product.id !== exact?.id);
 }
 
-export function submitLabelIntake(input: LabelIntakeInput, actor: Actor): LabelIntakeResult {
+// Async because the masters it reuses live in the database now. Everything
+// after that step is still synchronous localStorage (products, artworks) and is
+// the next thing to move; the await is deliberately at the top so a masters
+// failure aborts BEFORE any product or artwork row is written, rather than
+// leaving an artwork pointing at a brand that was never created.
+export async function submitLabelIntake(input: LabelIntakeInput, actor: Actor): Promise<LabelIntakeResult> {
   const { extracted } = input;
 
   const missing = REQUIRED_FIELD_LABELS.filter(([key]) => !extracted[key].trim()).map(([, label]) => label);
@@ -111,12 +116,18 @@ export function submitLabelIntake(input: LabelIntakeInput, actor: Actor): LabelI
     throw new Error(`Cannot save — the following label fields are missing or unverified: ${missing.join(', ')}.`);
   }
 
-  // Reuse existing Masters wherever possible; only create a new master
-  // record when the extracted name genuinely doesn't exist yet.
-  getOrCreateManufacturingCompany(FIXED_MANUFACTURING_COMPANY, actor.name);
-  getOrCreateMarketingCompany(extracted.marketingCompanyName, actor.name);
-  getOrCreateBrand(extracted.brand, extracted.marketingCompanyName, actor.name);
-  getOrCreateFlavour(extracted.flavour, actor.name);
+  // Reuse existing Masters wherever possible; only create a new master record
+  // when the extracted name genuinely doesn't exist yet. No actor argument —
+  // the server records who did this from the session.
+  //
+  // Sequential, not Promise.all: the brand's marketing company must exist
+  // before the brand referencing it by name can be inserted (that reference is
+  // a foreign key onto marketing_companies.company_name), and running them
+  // together loses that ordering.
+  await getOrCreateManufacturingCompany(FIXED_MANUFACTURING_COMPANY);
+  await getOrCreateMarketingCompany(extracted.marketingCompanyName);
+  await getOrCreateBrand(extracted.brand, extracted.marketingCompanyName);
+  await getOrCreateFlavour(extracted.flavour);
 
   let product: Product | undefined;
   let isNewProduct = false;
