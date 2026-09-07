@@ -12,9 +12,15 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { extractLabelFields } from '../services/labelFieldExtractor.service';
 
+// The module has no built-in flavour list (it must stay generic — see the
+// service's own comment on this). The two anchor-less tiers below only ever
+// fire when a caller supplies candidates, so these tests supply their own
+// fixture list rather than relying on any production data.
+const KNOWN_FLAVOURS_FIXTURE = ['Strawberry', 'Mint', 'Mixed Berry', 'Apple', 'Orange', 'Mango'];
+
 test('compound flavour joined by "&" is captured whole, not just the trailing word', () => {
   const text = 'Strawberry & Mint';
-  assert.equal(extractLabelFields(text).flavour, 'Strawberry & Mint');
+  assert.equal(extractLabelFields(text, { knownFlavours: KNOWN_FLAVOURS_FIXTURE }).flavour, 'Strawberry & Mint');
 });
 
 test('compound flavour joined by "&" with the "Flavour" anchor keeps both parts, trailing "Flavour" stripped', () => {
@@ -29,17 +35,22 @@ test('two-word descriptive flavour keeps both words when anchored by "Flavour"',
 
 test('a single-word flavour with no "Flavour" wording at all still resolves via the known-flavour fallback', () => {
   const text = 'Apple';
-  assert.equal(extractLabelFields(text).flavour, 'Apple');
+  assert.equal(extractLabelFields(text, { knownFlavours: KNOWN_FLAVOURS_FIXTURE }).flavour, 'Apple');
+});
+
+test('with no known-flavour candidates supplied, the anchor-less fallback does not fire at all', () => {
+  const text = 'Apple';
+  assert.equal(extractLabelFields(text).flavour, '');
 });
 
 test('"Flavouring" (an ingredient description) is never mistaken for a "<Name> Flavour" statement', () => {
   const text = 'Natural Mint Flavouring';
-  assert.notEqual(extractLabelFields(text).flavour, 'Mint');
+  assert.notEqual(extractLabelFields(text, { knownFlavours: KNOWN_FLAVOURS_FIXTURE }).flavour, 'Mint');
 });
 
 test('a "free from" disclaimer naming a flavour is never read as the product\'s own flavour', () => {
   const text = 'Free from Artificial Flavours';
-  assert.notEqual(extractLabelFields(text).flavour, 'Artificial');
+  assert.notEqual(extractLabelFields(text, { knownFlavours: KNOWN_FLAVOURS_FIXTURE }).flavour, 'Artificial');
 });
 
 test('a three-part flavour joined by comma and "&" is captured whole', () => {

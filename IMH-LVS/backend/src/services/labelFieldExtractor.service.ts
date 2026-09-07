@@ -575,34 +575,18 @@ function extractCustomerCareNumber(text: string): string {
 // ---------------------------------------------------------------------
 // Flavour
 // ---------------------------------------------------------------------
-const KNOWN_FLAVOURS = [
-  'orange',
-  'strawberry',
-  'mango',
-  'mixed berry',
-  'mixed fruit',
-  'lemon',
-  'lime',
-  'grape',
-  'apple',
-  'pineapple',
-  'vanilla',
-  'chocolate',
-  'blueberry',
-  'raspberry',
-  'watermelon',
-  'guava',
-  'litchi',
-  'lychee',
-  'peach',
-  'banana',
-  'kiwi',
-  'mint',
-  'coffee',
-  'butterscotch',
-  'cardamom'
-];
-
+// No built-in flavour list here — this module must stay generic, not
+// product- or deployment-specific (per the AI module brief: "do not
+// hardcode ... flavours"). The two anchor-less tiers below (a bare
+// compound callout with no "Flavour" wording, and the last-resort
+// single-word scan) only fire when the CALLER supplies candidate names —
+// see extractFlavour's `knownFlavours` parameter and extractLabelFields'
+// `options.knownFlavours`. A caller with access to the deployment's own
+// master data (e.g. the frontend's Flavours list) passes real, current
+// candidates; a caller with none (or /labels/extract running with no
+// database configured at all — see routes/index.ts) passes none, and
+// these two tiers simply don't fire, which is the correct "leave it
+// blank rather than guess" outcome, not a degraded one.
 function titleCase(value: string): string {
   return value.toLowerCase().replace(/\b\w/g, (c) => c.toUpperCase());
 }
@@ -636,14 +620,19 @@ const FLAVOUR_WORD_JOIN = '(?:[ \\t]+(?:and[ \\t]+)?|[ \\t]*(?:&|\\+|/|,)[ \\t]*
 // preceding text.
 const MAX_ADDITIONAL_FLAVOUR_WORDS = 3;
 
-// Case-insensitive alternation of every known flavour word, longest-first so
-// a multi-word entry ("mixed berry") wins over accidentally matching just
-// its first word via a shorter alternative later in the list.
-const KNOWN_FLAVOUR_ALTERNATION = KNOWN_FLAVOURS
-  .slice()
-  .sort((a, b) => b.length - a.length)
-  .map(escapeRegExp)
-  .join('|');
+// Case-insensitive alternation of every candidate flavour word, longest-first
+// so a multi-word entry ("mixed berry") wins over accidentally matching just
+// its first word via a shorter alternative later in the list. Built per-call
+// from the caller-supplied list rather than once at module load, since that
+// list is no longer a fixed constant — see the note above extractFlavour.
+function buildKnownFlavourAlternation(knownFlavours: readonly string[]): string {
+  return knownFlavours
+    .map((flavour) => flavour.trim().toLowerCase())
+    .filter(Boolean)
+    .sort((a, b) => b.length - a.length)
+    .map(escapeRegExp)
+    .join('|');
+}
 
 // A compound flavour with NO "Flavour" wording anywhere near it ("Strawberry
 // & Mint" printed as a bare front-of-pack callout, with no anchor word for
@@ -654,11 +643,16 @@ const KNOWN_FLAVOUR_ALTERNATION = KNOWN_FLAVOURS
 // unfamiliar word is part of a flavour name at all. Requires at least TWO
 // known-flavour words joined by a connector — a single known-flavour word
 // with no connector is left to the plain keyword-scan fallback tier below,
-// which already handles that case.
-const COMPOUND_KNOWN_FLAVOUR_PATTERN = new RegExp(
-  `\\b(?:${KNOWN_FLAVOUR_ALTERNATION})(?:${FLAVOUR_WORD_JOIN}(?:${KNOWN_FLAVOUR_ALTERNATION})){1,${MAX_ADDITIONAL_FLAVOUR_WORDS}}\\b`,
-  'gi'
-);
+// which already handles that case. Returns null when the caller supplied no
+// candidates at all, since an empty alternation would otherwise compile into
+// a regex matching everywhere.
+function buildCompoundKnownFlavourPattern(alternation: string): RegExp | null {
+  if (!alternation) return null;
+  return new RegExp(
+    `\\b(?:${alternation})(?:${FLAVOUR_WORD_JOIN}(?:${alternation})){1,${MAX_ADDITIONAL_FLAVOUR_WORDS}}\\b`,
+    'gi'
+  );
+}
 
 // "<Name(s)> Flavour" (e.g. "Apple Flavour", "Mixed Berry Flavour",
 // "Strawberry & Mint Flavour") is the dominant on-label wording — checked
@@ -808,7 +802,7 @@ function bestNonNegatedMatch(text: string, pattern: RegExp): RegExpExecArray | n
   );
 }
 
-function extractFlavour(text: string): string {
+function extractFlavour(text: string, knownFlavours: readonly string[]): string {
   // Only affects the two anchor-based tiers below — a compound flavour
   // phrase split across a dangling-connector line break needs to read as
   // one contiguous run for them to see it as a single name. The
@@ -834,38 +828,44 @@ function extractFlavour(text: string): string {
   // Still no "Flavour" anchor anywhere — but a compound flavour can be
   // printed as a bare front-of-pack callout with no anchor word at all
   // ("Strawberry & Mint", no trailing "Flavour"). This tier chains together
-  // two-or-more KNOWN flavour words joined by the same connectors as the
-  // anchored tiers above (see COMPOUND_KNOWN_FLAVOUR_PATTERN) — reusing the
+  // two-or-more of the CALLER-SUPPLIED candidate flavour words joined by
+  // the same connectors as the anchored tiers above — reusing the
   // dangling-connector line join for the same reason the anchored tiers
   // need it, and the same "Ingredients:" cutoff and "Flavouring"-adjacency
   // guard as the plain single-word scan below, since it is exactly as
-  // exposed to both false-positive sources.
-  const joinedIngredientsLabelIndex = textWithJoinedFlavourLines.search(/\bingredients\s*:/i);
-  const joinedPreIngredientsText =
-    joinedIngredientsLabelIndex >= 0 ? textWithJoinedFlavourLines.slice(0, joinedIngredientsLabelIndex) : textWithJoinedFlavourLines;
-  const compoundKnownFlavour = bestNonNegatedMatch(joinedPreIngredientsText, COMPOUND_KNOWN_FLAVOUR_PATTERN);
-  if (
-    compoundKnownFlavour &&
-    !isAdjacentToFlavouringMention(joinedPreIngredientsText.toLowerCase(), compoundKnownFlavour.index, compoundKnownFlavour[0].length)
-  ) {
-    const value = titleCase(compoundKnownFlavour[0].trim());
-    debugLog(`flavour: matched "${value}" via compound known-flavour keyword scan (no explicit "Flavour" wording found).`);
-    return value;
+  // exposed to both false-positive sources. A no-op when the caller
+  // supplied no candidates (knownFlavourAlternation is '').
+  const knownFlavourAlternation = buildKnownFlavourAlternation(knownFlavours);
+  const compoundKnownFlavourPattern = buildCompoundKnownFlavourPattern(knownFlavourAlternation);
+  if (compoundKnownFlavourPattern) {
+    const joinedIngredientsLabelIndex = textWithJoinedFlavourLines.search(/\bingredients\s*:/i);
+    const joinedPreIngredientsText =
+      joinedIngredientsLabelIndex >= 0 ? textWithJoinedFlavourLines.slice(0, joinedIngredientsLabelIndex) : textWithJoinedFlavourLines;
+    const compoundKnownFlavour = bestNonNegatedMatch(joinedPreIngredientsText, compoundKnownFlavourPattern);
+    if (
+      compoundKnownFlavour &&
+      !isAdjacentToFlavouringMention(joinedPreIngredientsText.toLowerCase(), compoundKnownFlavour.index, compoundKnownFlavour[0].length)
+    ) {
+      const value = titleCase(compoundKnownFlavour[0].trim());
+      debugLog(`flavour: matched "${value}" via compound known-flavour keyword scan (no explicit "Flavour" wording found).`);
+      return value;
+    }
   }
 
   // This last-resort tier has no anchor at all — it just scans for any
-  // known flavour word appearing anywhere — so it must not scan past an
-  // "Ingredients:" label: several known flavour words (cardamom, mint,
-  // ginger, etc.) are also common herbal/ingredient names, and a
-  // multi-item ingredient list is exactly where one is likely to appear
-  // without actually being the product's stated flavour (seen in practice:
-  // a Chyawanprash herbal-blend ingredient list mentioning "Cardamom
-  // (Elettaria cardamomum) Seed Extract", on a label with no flavour of
-  // its own at all).
+  // caller-supplied candidate flavour word appearing anywhere — so it must
+  // not scan past an "Ingredients:" label: several common flavour words
+  // (cardamom, mint, ginger, etc.) are also common herbal/ingredient
+  // names, and a multi-item ingredient list is exactly where one is likely
+  // to appear without actually being the product's stated flavour (seen in
+  // practice: a Chyawanprash herbal-blend ingredient list mentioning
+  // "Cardamom (Elettaria cardamomum) Seed Extract", on a label with no
+  // flavour of its own at all).
   const ingredientsLabelIndex = text.search(/\bingredients\s*:/i);
   const preIngredientsText = ingredientsLabelIndex >= 0 ? text.slice(0, ingredientsLabelIndex) : text;
   const lower = preIngredientsText.toLowerCase();
-  for (const flavour of KNOWN_FLAVOURS) {
+  const normalizedKnownFlavours = knownFlavours.map((flavour) => flavour.trim().toLowerCase()).filter(Boolean);
+  for (const flavour of normalizedKnownFlavours) {
     const matchIndex = lower.indexOf(flavour);
     // A known-flavour word sitting next to "Flavouring" ("Natural Mint
     // Flavouring") is naming what a flavouring AGENT is made from — an
@@ -1226,7 +1226,16 @@ function extractBrandFallback(lines: string[], marketingCompany: string): string
   return '';
 }
 
-export function extractLabelFields(rawText: string): ExtractedLabelFields {
+export type ExtractLabelFieldsOptions = {
+  // Candidate flavour names the caller wants the anchor-less fallback tiers
+  // to recognise (e.g. the deployment's real Flavours master data) — see
+  // the note above extractFlavour. Omitted or empty disables those two
+  // tiers entirely rather than falling back to any built-in list; this
+  // module has none, by design.
+  knownFlavours?: readonly string[];
+};
+
+export function extractLabelFields(rawText: string, options: ExtractLabelFieldsOptions = {}): ExtractedLabelFields {
   const text = rawText ?? '';
   if (!text.trim()) return emptyFields();
 
@@ -1242,7 +1251,7 @@ export function extractLabelFields(rawText: string): ExtractedLabelFields {
     email: extractEmail(text),
     customerCareNumber: extractCustomerCareNumber(text),
     brand,
-    flavour: extractFlavour(text),
+    flavour: extractFlavour(text, options.knownFlavours ?? []),
     productName: titleBlock.productName,
     packageSize: extractPackageSize(text)
   };

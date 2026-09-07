@@ -7,17 +7,15 @@
 // existing extractLabelFromFile() pipeline. It has no knowledge of files,
 // requests, or HTTP.
 //
-// Scope note: the task that introduced this only lists fields the
-// extraction pipeline actually produces today (see
-// labelFieldExtractor.service.ts's ExtractedLabelFields and this module's
-// LabelExtractionResult). Claims, ingredients, logo, layout, and nutrition
-// are NOT compared here because nothing currently extracts them — adding
-// those would mean extending the OCR pipeline itself, which is out of
-// scope for this comparison feature and risks the extraction behavior
-// every existing test and regression fixture depends on. When/if those
-// fields are extracted in a later version, add them to FIELD_CONFIG below
-// and everything else (weighting, status, summary) picks them up
-// automatically.
+// Scope note: this compares every field LabelExtractionResult actually
+// carries — see labelExtraction.service.ts's own comment on that type.
+// Logo and Label Design/Layout are the two still genuinely missing: both
+// are visual properties that want an image-level same/different verdict
+// rather than a text description, so they don't belong in this text-based
+// engine at all (see the AI module brief's §9 Visual Comparison) — adding
+// them means a different comparison mechanism, not a FIELD_CONFIG entry.
+// Any field LabelExtractionResult gains in the future needs only an entry
+// below; weighting, status, and the summary all pick it up automatically.
 import type { LabelExtractionResult } from './labelExtraction.service';
 
 export type FieldComparisonStatus = 'MATCH' | 'DIFFERENT' | 'MISSING' | 'NOT_COMPARED';
@@ -25,6 +23,22 @@ export type FieldComparisonStatus = 'MATCH' | 'DIFFERENT' | 'MISSING' | 'NOT_COM
 export type FieldImportance = 'HIGH' | 'MEDIUM' | 'LOW';
 
 export type LabelComparisonField = keyof LabelExtractionResult;
+
+/**
+ * Which comparison this is — see the AI module brief's section 7. Two labels from
+ * the SAME marketing company (a new version vs. its latest approved
+ * baseline) share one company's own contact details by construction, so a
+ * mismatch there is a data-entry error, not a signal the labels are
+ * different products — these fields are excluded from that comparison
+ * entirely rather than scored. A CROSS-company comparison is exactly the
+ * opposite case: two different companies' contact details are expected to
+ * differ, and confirming they do (or flagging when they don't, which can
+ * indicate a copied/misattributed label) is part of the point.
+ */
+export type ComparisonStage = 'same_company' | 'cross_company';
+
+// Compared only for a cross_company comparison — see ComparisonStage above.
+const CROSS_COMPANY_ONLY_FIELDS: ReadonlySet<LabelComparisonField> = new Set(['address', 'customerCareNumber', 'email']);
 
 export type FieldComparisonResult = {
   field: LabelComparisonField;
@@ -69,6 +83,14 @@ export type LabelComparisonResult = {
 // completeness/transparency (so the field list is honest about what was
 // checked) but weighted lowest since it has no power to distinguish two
 // labels from each other in this system.
+//
+// colourTheme/claims/ingredients/nutritionTableFormat are compared as
+// plain strings, same as every other field here — this engine is
+// deliberately non-fuzzy (see normalizeForComparison below), so a claims
+// list that differs only in item order, or a nutrition format string
+// classified slightly differently, reports DIFFERENT rather than SIMILAR.
+// That is the same tradeoff every other field already makes, not a special
+// case for these four.
 // ---------------------------------------------------------------------
 const FIELD_CONFIG: { field: LabelComparisonField; label: string; weight: number; importance: FieldImportance }[] = [
   { field: 'brand', label: 'Brand', weight: 3, importance: 'HIGH' },
@@ -77,6 +99,10 @@ const FIELD_CONFIG: { field: LabelComparisonField; label: string; weight: number
   { field: 'fssaiNumber', label: 'FSSAI Number', weight: 3, importance: 'HIGH' },
   { field: 'flavour', label: 'Flavour', weight: 2, importance: 'MEDIUM' },
   { field: 'packageSize', label: 'Package Size', weight: 2, importance: 'MEDIUM' },
+  { field: 'colourTheme', label: 'Colour Theme', weight: 2, importance: 'MEDIUM' },
+  { field: 'claims', label: 'Claims', weight: 2, importance: 'MEDIUM' },
+  { field: 'ingredients', label: 'Ingredients', weight: 2, importance: 'MEDIUM' },
+  { field: 'nutritionTableFormat', label: 'Nutrition Table Format', weight: 2, importance: 'MEDIUM' },
   { field: 'address', label: 'Address', weight: 2, importance: 'MEDIUM' },
   { field: 'customerCareNumber', label: 'Customer Care Number', weight: 2, importance: 'MEDIUM' },
   { field: 'email', label: 'Email', weight: 2, importance: 'MEDIUM' },
@@ -140,8 +166,18 @@ function compareField(field: LabelComparisonField, label: string, weight: number
 // Compares two already-extracted labels field by field and produces a
 // weighted overall result. Pure and synchronous — no I/O, no OCR, so it's
 // trivially unit-testable and safe to call from any controller.
-export function compareLabels(labelA: LabelExtractionResult, labelB: LabelExtractionResult): LabelComparisonResult {
-  const fields = FIELD_CONFIG.map(({ field, label, weight, importance }) =>
+//
+// `stage` defaults to 'cross_company' (the full field set) rather than
+// making callers pass it: the raw two-file /compare endpoint has no concept
+// of same-vs-cross-company at all, and comparing everything is the correct,
+// conservative behavior for an ad-hoc "just diff these two files" request.
+export function compareLabels(
+  labelA: LabelExtractionResult,
+  labelB: LabelExtractionResult,
+  stage: ComparisonStage = 'cross_company'
+): LabelComparisonResult {
+  const fieldConfig = stage === 'same_company' ? FIELD_CONFIG.filter((entry) => !CROSS_COMPANY_ONLY_FIELDS.has(entry.field)) : FIELD_CONFIG;
+  const fields = fieldConfig.map(({ field, label, weight, importance }) =>
     compareField(field, label, weight, importance, labelA[field], labelB[field])
   );
 

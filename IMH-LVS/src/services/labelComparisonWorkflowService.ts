@@ -133,7 +133,7 @@ async function compareCandidate(subjectExtraction: LabelExtractionApiResult, can
   if (!candidateArtwork) return { ...base, outcome: { status: 'file_unavailable' } };
   const candidateExtraction = await extractArtwork(candidateArtwork);
   if (!candidateExtraction) return { ...base, outcome: { status: 'file_unavailable' } };
-  const result = await compareExtractedLabels(subjectExtraction, candidateExtraction);
+  const result = await compareExtractedLabels(subjectExtraction, candidateExtraction, 'cross_company');
   return { ...base, outcome: { status: 'success', result } };
 }
 
@@ -154,7 +154,7 @@ export async function runComparisonWorkflow(plan: ComparisonPlan, actor: string)
   if (plan.status === 'ready') {
     const approvedExtraction = await extractArtwork(plan.approvedArtwork);
     if (!approvedExtraction) return { status: 'file_unavailable', artwork: plan.approvedArtwork };
-    const result = await compareExtractedLabels(candidateExtraction, approvedExtraction);
+    const result = await compareExtractedLabels(candidateExtraction, approvedExtraction, 'same_company');
     versionComparison = {
       candidateArtworkId: candidateArtwork.id,
       candidateArtworkVersion: candidateArtwork.version,

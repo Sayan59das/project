@@ -38,18 +38,36 @@ class ExtractionService:
         self.processor = None
 
     def _load_model(self):
-        """Lazy load the Qwen2-VL-2B model to stay within 6GB VRAM limit. 
-        Only loads when an actual inference request is made."""
+        """Lazy load the Qwen2-VL-2B model to stay within 6GB VRAM limit.
+        Only loads when an actual inference request is made.
+
+        This deployment only ever runs on this machine's own GPU — never
+        silently on CPU. device_map="auto" would otherwise let accelerate
+        quietly place the model on CPU (or split it CPU/GPU) whenever CUDA
+        isn't available, which already happened once from a CPU-only torch
+        build and made inference unusably slow without any visible error.
+        Failing loudly here surfaces that misconfiguration immediately
+        instead of degrading silently."""
         if self.model is None and not self.use_mock:
-            print("Lazy loading Qwen2-VL-2B model into GPU... This will use HF_HOME cache.")
+            if not torch.cuda.is_available():
+                raise RuntimeError(
+                    "CUDA GPU not available — refusing to fall back to CPU inference. "
+                    "Install the CUDA build of torch (e.g. `pip install torch --index-url "
+                    "https://download.pytorch.org/whl/cu128`) and verify with "
+                    "`torch.cuda.is_available()` before retrying."
+                )
+            print(f"Lazy loading Qwen2-VL-2B model into GPU ({torch.cuda.get_device_name(0)})... This will use HF_HOME cache.")
             model_path = "Qwen/Qwen2-VL-2B-Instruct"
             self.processor = AutoProcessor.from_pretrained(model_path)
-            
-            # Using bfloat16 or float16 to fit in 6GB VRAM
+
+            # Using float16 to fit in 6GB VRAM. Pinned to the single local GPU
+            # (device_map={"": 0}) rather than "auto" — "auto" is meant for
+            # multi-GPU/CPU-offload setups and can silently split the model
+            # onto CPU under VRAM pressure instead of erroring.
             self.model = Qwen2VLForConditionalGeneration.from_pretrained(
-                model_path, 
+                model_path,
                 torch_dtype=torch.float16,
-                device_map="auto"
+                device_map={"": 0}
             )
 
     def extract_from_image(self, image: Image.Image) -> ExtractedLabel:

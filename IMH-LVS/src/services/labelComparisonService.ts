@@ -114,7 +114,8 @@ export async function compareLabels(labelAFile: File, labelBFile: File): Promise
 // service compareLabels() above already uses.
 export async function compareExtractedLabels(
   labelA: LabelExtractionApiResult,
-  labelB: LabelExtractionApiResult
+  labelB: LabelExtractionApiResult,
+  stage: 'same_company' | 'cross_company' = 'cross_company'
 ): Promise<LabelComparisonApiResult> {
   const compareUrl = `${API_BASE_URL}/api/labels/compare-extracted`;
 
@@ -123,7 +124,7 @@ export async function compareExtractedLabels(
     response = await fetch(compareUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ labelA, labelB })
+      body: JSON.stringify({ labelA, labelB, stage })
     });
   } catch (err) {
     console.error(`[labelComparisonService] Request to ${compareUrl} failed:`, err);

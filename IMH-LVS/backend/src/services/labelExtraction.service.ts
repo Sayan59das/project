@@ -234,12 +234,16 @@ function fillBlanks(fields: ExtractedLabelFields, patch: Partial<ExtractedLabelF
 // for marketing company/address. Returns the combined raw text (folded
 // into the caller's running text for the other fields) and the fields
 // parsed from everything gathered for this image.
-async function ocrImageWithEnhancement(imageBuffer: Buffer, priorText: string): Promise<{ text: string; fields: ExtractedLabelFields }> {
+async function ocrImageWithEnhancement(
+  imageBuffer: Buffer,
+  priorText: string,
+  knownFlavours: readonly string[]
+): Promise<{ text: string; fields: ExtractedLabelFields }> {
   const primaryProcessed = await preprocessForOcr(imageBuffer);
   const { text: primaryText, words } = await recognizePageWithWords(primaryProcessed);
 
   let combinedText = [priorText, primaryText].filter((part) => part.trim().length > 0).join('\n');
-  let fields = extractLabelFields(combinedText);
+  let fields = extractLabelFields(combinedText, { knownFlavours });
 
   // Tracks every pass's own (image, words) pairing for the title-region
   // escalation below. The brand can end up findable in ONE pass's word
@@ -254,7 +258,7 @@ async function ocrImageWithEnhancement(imageBuffer: Buffer, priorText: string): 
     const altProcessed = await preprocessForOcrAlt(imageBuffer);
     const { text: altText, words: altWords } = await recognizePageWithWords(altProcessed);
     combinedText = [combinedText, altText].filter((part) => part.trim().length > 0).join('\n');
-    fields = extractLabelFields(combinedText);
+    fields = extractLabelFields(combinedText, { knownFlavours });
     ocrSources.push({ image: altProcessed, words: altWords });
   }
 
@@ -315,12 +319,12 @@ type FieldPass = {
   pageImages: Buffer[];
 };
 
-async function extractFieldsFromPdf(pdfBuffer: Buffer): Promise<FieldPass> {
+async function extractFieldsFromPdf(pdfBuffer: Buffer, knownFlavours: readonly string[]): Promise<FieldPass> {
   const { text: textLayerText } = await extractPdfText(pdfBuffer);
   debugLog(`PDF text layer (${textLayerText.length} chars):\n${textLayerText}`);
 
   const textLayerUsable = hasUsablePdfText(textLayerText);
-  const textLayerFields = textLayerUsable ? extractLabelFields(textLayerText) : null;
+  const textLayerFields = textLayerUsable ? extractLabelFields(textLayerText, { knownFlavours }) : null;
 
   if (textLayerFields && isComplete(textLayerFields)) {
     // Fast path: nothing was rasterized, so pageImages is empty and the caller
@@ -337,14 +341,14 @@ async function extractFieldsFromPdf(pdfBuffer: Buffer): Promise<FieldPass> {
   const pageImages = await rasterizePdfPages(pdfBuffer);
   if (pageImages.length === 0) {
     console.warn('[labelExtraction] No pages could be rasterized for OCR — using text-layer result as-is.');
-    return { fields: textLayerFields ?? extractLabelFields(''), text: textLayerText, pageImages: [] };
+    return { fields: textLayerFields ?? extractLabelFields('', { knownFlavours }), text: textLayerText, pageImages: [] };
   }
 
   let combinedText = textLayerText;
-  let fields = textLayerFields ?? extractLabelFields('');
+  let fields = textLayerFields ?? extractLabelFields('', { knownFlavours });
   for (const pageImage of pageImages) {
     if (isComplete(fields)) break;
-    const result = await ocrImageWithEnhancement(pageImage, combinedText);
+    const result = await ocrImageWithEnhancement(pageImage, combinedText, knownFlavours);
     combinedText = result.text;
     fields = fillBlanks(fields, result.fields);
   }
@@ -353,8 +357,8 @@ async function extractFieldsFromPdf(pdfBuffer: Buffer): Promise<FieldPass> {
   return { fields, text: combinedText, pageImages };
 }
 
-async function extractFieldsFromImage(imageBuffer: Buffer): Promise<FieldPass> {
-  const { text, fields } = await ocrImageWithEnhancement(imageBuffer, '');
+async function extractFieldsFromImage(imageBuffer: Buffer, knownFlavours: readonly string[]): Promise<FieldPass> {
+  const { text, fields } = await ocrImageWithEnhancement(imageBuffer, '', knownFlavours);
   debugLog(`OCR text (${text.length} chars):\n${text}`);
   // The upload IS the page image, so colour reads straight off it.
   return { fields, text, pageImages: [imageBuffer] };
@@ -370,30 +374,35 @@ async function extractFieldsFromImage(imageBuffer: Buffer): Promise<FieldPass> {
 export async function extractLabelFromFile(
   filePath: string,
   mimeType: string,
-  knownClaims: readonly string[] = []
+  knownClaims: readonly string[] = [],
+  knownFlavours: readonly string[] = []
 ): Promise<LabelExtractionResult> {
-  return (await extractLabelReportFromFile(filePath, mimeType, knownClaims)).result;
+  return (await extractLabelReportFromFile(filePath, mimeType, knownClaims, knownFlavours)).result;
 }
 
 /**
  * The same extraction, plus the claims the Claims master does not know about.
  *
- * `knownClaims` is passed in rather than read from the database here, on
- * purpose: this module stays stateless and works with no DATABASE_URL at all
- * (see src/db/pool.ts). A caller that has a database supplies the master; one
- * that does not still gets every other field, with badge claims recognised and
- * all of them reported as unknown.
+ * `knownClaims` and `knownFlavours` are passed in rather than read from the
+ * database here, on purpose: this module stays stateless and works with no
+ * DATABASE_URL at all (see src/db/pool.ts). A caller that has a database
+ * supplies the masters; one that does not still gets every other field —
+ * with badge claims recognised and all of them reported as unknown, and the
+ * flavour field simply left blank rather than guessed (see
+ * labelFieldExtractor.service.ts's own note on why it carries no built-in
+ * flavour list).
  */
 export async function extractLabelReportFromFile(
   filePath: string,
   mimeType: string,
-  knownClaims: readonly string[] = []
+  knownClaims: readonly string[] = [],
+  knownFlavours: readonly string[] = []
 ): Promise<LabelExtractionReport> {
   try {
     const fileBuffer = fs.readFileSync(filePath);
     const isPdf = mimeType === 'application/pdf';
 
-    const pass = isPdf ? await extractFieldsFromPdf(fileBuffer) : await extractFieldsFromImage(fileBuffer);
+    const pass = isPdf ? await extractFieldsFromPdf(fileBuffer, knownFlavours) : await extractFieldsFromImage(fileBuffer, knownFlavours);
 
     debugLog(`Parsed fields: ${JSON.stringify(pass.fields)}`);
 

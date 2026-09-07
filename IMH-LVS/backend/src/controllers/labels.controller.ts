@@ -1,7 +1,35 @@
 import fs from 'fs';
 import { Request, Response } from 'express';
 import { buildPlaceholderExtraction, extractLabelFromFile, LabelExtractionResult } from '../services/labelExtraction.service';
-import { compareLabels as compareLabelData } from '../services/labelComparison.service';
+import { compareLabels as compareLabelData, ComparisonStage } from '../services/labelComparison.service';
+import { claims as claimsMaster, flavours as flavoursMaster } from '../repositories/masters.repository';
+
+/**
+ * The Claims/Flavours master lists, if a database is reachable — never
+ * required. extractLabelFromFile stays stateless and works with no
+ * DATABASE_URL at all (see its own comment); this only makes the two
+ * anchor-less fallback tiers that need candidate names smarter when a
+ * database happens to be configured, by supplying this deployment's own
+ * real master data instead of anything baked into the OCR module. A
+ * missing/unreachable database is not an error here — the extraction is
+ * still complete, just without those two tiers.
+ */
+async function loadKnownMasterNames(): Promise<{ knownClaims: string[]; knownFlavours: string[] }> {
+  try {
+    const [claimRecords, flavourRecords] = await Promise.all([claimsMaster.list(), flavoursMaster.list()]);
+    return {
+      knownClaims: claimRecords.map((claim) => claim.claimText),
+      knownFlavours: flavourRecords.map((flavour) => flavour.flavourName)
+    };
+  } catch (error) {
+    console.warn(
+      '[labels.controller] Could not load Claims/Flavours master data (no database configured, or unreachable) — ' +
+        'continuing with OCR-only extraction for those fields.',
+      error instanceof Error ? error.message : error
+    );
+    return { knownClaims: [], knownFlavours: [] };
+  }
+}
 
 const EXTRACTION_RESULT_KEYS: (keyof LabelExtractionResult)[] = [
   'marketingCompany',
@@ -13,7 +41,11 @@ const EXTRACTION_RESULT_KEYS: (keyof LabelExtractionResult)[] = [
   'flavour',
   'productName',
   'packageSize',
-  'manufacturingCompany'
+  'manufacturingCompany',
+  'colourTheme',
+  'claims',
+  'ingredients',
+  'nutritionTableFormat'
 ];
 
 // Accepts only a plain object whose extraction-result fields are all
@@ -50,7 +82,8 @@ export async function extractLabel(req: Request, res: Response) {
   }
 
   try {
-    const data = await extractLabelFromFile(file.path, file.mimetype);
+    const { knownClaims, knownFlavours } = await loadKnownMasterNames();
+    const data = await extractLabelFromFile(file.path, file.mimetype, knownClaims, knownFlavours);
     res.status(200).json({ success: true, data });
   } catch (error) {
     console.error('[labels.controller] Unexpected failure building the extraction result:', error instanceof Error ? error.message : error);
@@ -93,9 +126,10 @@ export async function compareLabels(req: Request, res: Response) {
   }
 
   try {
+    const { knownClaims, knownFlavours } = await loadKnownMasterNames();
     const [labelA, labelB] = await Promise.all([
-      extractLabelFromFile(fileA.path, fileA.mimetype),
-      extractLabelFromFile(fileB.path, fileB.mimetype)
+      extractLabelFromFile(fileA.path, fileA.mimetype, knownClaims, knownFlavours),
+      extractLabelFromFile(fileB.path, fileB.mimetype, knownClaims, knownFlavours)
     ]);
     const comparison = compareLabelData(labelA, labelB);
     res.status(200).json({ success: true, data: { labelA, labelB, comparison } });
@@ -118,8 +152,18 @@ export async function compareLabels(req: Request, res: Response) {
 // wrapper around the exact same compareLabelData() used by /compare, so
 // the weighted comparison logic is never duplicated — only OCR is skipped
 // here because it was already done.
+// Same-company (a new version vs. its own latest approved baseline) excludes
+// Address/Customer Care Number/Email from the comparison — see
+// labelComparison.service.ts's ComparisonStage and the AI module brief's §7.
+// An absent or unrecognised value defaults to 'cross_company' (the full
+// field set) rather than rejecting the request, matching compareLabels' own
+// default for callers with no stage concept.
+function parseComparisonStage(value: unknown): ComparisonStage {
+  return value === 'same_company' ? 'same_company' : 'cross_company';
+}
+
 export function compareExtractedLabels(req: Request, res: Response) {
-  const body = req.body as { labelA?: unknown; labelB?: unknown } | undefined;
+  const body = req.body as { labelA?: unknown; labelB?: unknown; stage?: unknown } | undefined;
   const labelA = parseExtractionResult(body?.labelA);
   const labelB = parseExtractionResult(body?.labelB);
 
@@ -128,6 +172,6 @@ export function compareExtractedLabels(req: Request, res: Response) {
     return;
   }
 
-  const comparison = compareLabelData(labelA, labelB);
+  const comparison = compareLabelData(labelA, labelB, parseComparisonStage(body?.stage));
   res.status(200).json({ success: true, data: { labelA, labelB, comparison } });
 }

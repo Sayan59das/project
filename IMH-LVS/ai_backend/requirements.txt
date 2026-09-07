@@ -6,6 +6,7 @@ pillow
 transformers>=4.40.0
 sentence-transformers
 torch
+accelerate
 reportlab
 pydantic
 pyngrok

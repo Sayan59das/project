@@ -46,6 +46,10 @@ function extraction(overrides: Partial<Record<string, string>> = {}) {
     productName: 'Apple Cider Vinegar Gummies',
     packageSize: '60 Gummies',
     manufacturingCompany: 'IM Healthcare Pvt. Ltd.',
+    colourTheme: 'Green & Orange',
+    claims: 'Supports Immunity',
+    ingredients: 'Apple Cider Vinegar, Pectin, Sugar',
+    nutritionTableFormat: 'Standard (per 2 gummies)',
     ...overrides
   };
 }
@@ -72,7 +76,7 @@ test('Compares two already-extracted labels: identical inputs report a 100% matc
   assert.equal(body.data.comparison.overallPercentage, 100);
   assert.equal(body.data.comparison.differentFields, 0);
   assert.equal(body.data.comparison.missingFields, 0);
-  assert.equal(body.data.comparison.fields.length, 10);
+  assert.equal(body.data.comparison.fields.length, 14);
 });
 
 test('Reports DIFFERENT for a genuinely conflicting field between the new artwork and the approved baseline', { skip: SKIP }, async () => {

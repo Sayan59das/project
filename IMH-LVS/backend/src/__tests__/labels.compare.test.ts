@@ -76,7 +76,7 @@ test('Compare two different real label PDFs: MATCH/DIFFERENT/MISSING all correct
 
   const comparison = body.data.comparison;
   assert.ok(Array.isArray(comparison.fields));
-  assert.equal(comparison.fields.length, 10);
+  assert.equal(comparison.fields.length, 14);
 
   // Same manufacturer/marketing company/party details on both real labels.
   assert.equal(fieldResult(body, 'brand').status, 'MATCH');
