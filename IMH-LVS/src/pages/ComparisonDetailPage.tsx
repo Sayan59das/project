@@ -6,6 +6,7 @@
 // business workflow: Select Label -> Version Comparison (or skip) ->
 // Cross-Company Comparison -> Final Result. See components/labelComparison/*
 // for the individual pieces this composes.
+import { useEffect, useState } from 'react';
 import { Link as RouterLink, useParams } from 'react-router-dom';
 import { Box, Button, Paper, Typography } from '@mui/material';
 import { MdArrowBack, MdFileDownload } from 'react-icons/md';
@@ -17,6 +18,7 @@ import { getLabelComparisonById } from '../services/labelComparisonHistoryServic
 import { getArtworkById } from '../services/artworkService';
 import { formatDateTime } from '../utils/dateFormat';
 import { generateComparisonPDF } from '../utils/pdfGenerator';
+import type { Artwork } from '../types/artwork';
 import type { LabelComparisonFieldResult } from '../types/labelComparison';
 import type { VersionComparisonResult } from '../types/labelComparisonRecord';
 
@@ -52,8 +54,18 @@ export function ComparisonDetailPage() {
   const { id } = useParams<{ id: string }>();
   const run = id ? getLabelComparisonById(id) : undefined;
 
-  const candidateArtwork = run ? getArtworkById(run.candidateArtworkId) : undefined;
-  const approvedArtwork = run?.versionComparison ? getArtworkById(run.versionComparison.approvedArtworkId) : undefined;
+  const [candidateArtwork, setCandidateArtwork] = useState<Artwork | undefined>(undefined);
+  const [approvedArtwork, setApprovedArtwork] = useState<Artwork | undefined>(undefined);
+  useEffect(() => {
+    if (!run) return;
+    getArtworkById(run.candidateArtworkId).then(setCandidateArtwork);
+    if (run.versionComparison) {
+      getArtworkById(run.versionComparison.approvedArtworkId).then(setApprovedArtwork);
+    } else {
+      setApprovedArtwork(undefined);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [run?.id]);
   const summary = run?.versionComparison ? summarizeFields(run.versionComparison.result.comparison.fields) : null;
 
   if (!run) {

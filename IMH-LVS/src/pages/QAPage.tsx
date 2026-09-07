@@ -112,16 +112,16 @@ export function QAPage() {
     setChecked(false);
   };
 
-  const handleVerify = () => {
+  const handleVerify = async () => {
     if (!selectedItem) return;
-    qaVerifyComparison(selectedItem.id, remarks, actor);
+    await qaVerifyComparison(selectedItem.id, remarks, actor);
     refresh();
     handleBack();
   };
 
-  const handleSendBack = () => {
+  const handleSendBack = async () => {
     if (!selectedItem) return;
-    qaRejectComparison(selectedItem.id, remarks, actor);
+    await qaRejectComparison(selectedItem.id, remarks, actor);
     refresh();
     handleBack();
   };

@@ -15,6 +15,8 @@ import {
   getComparisons,
   getComparisonsByStatus,
   recordWorkflowDecision,
+  submitComparisonForReview,
+  unassignApprovalStage,
   type ComparisonInput,
   type WorkflowDecision
 } from '../repositories/comparison.repository';
@@ -70,6 +72,19 @@ router.post(
 );
 
 /**
+ * Hands a completed comparison off to the Label Final queue — the Account
+ * Manager's own entry point into the pipeline, not a decision at one of its
+ * four gated stages, so it is its own endpoint rather than a /decisions call.
+ */
+router.post(
+  '/:id/submit',
+  asyncHandler(async (req, res) => {
+    const updated = await submitComparisonForReview(req.params.id, requireActor(req));
+    sendData(res, orNotFound(updated, `Comparison "${req.params.id}"`));
+  })
+);
+
+/**
  * Records one approval decision: status, audit entry and artwork status
  * together, in one transaction.
  *
@@ -105,6 +120,16 @@ router.put(
       userId,
       requireActor(req)
     );
+    sendData(res, orNotFound(updated, `Comparison "${req.params.id}"`));
+  })
+);
+
+// Clears a stage's assignment back to "unassigned" — the symmetric complement
+// to the PUT above, not a general-purpose stage edit.
+router.delete(
+  '/:id/assignments/:stage',
+  asyncHandler(async (req, res) => {
+    const updated = await unassignApprovalStage(req.params.id, req.params.stage as WorkflowStage);
     sendData(res, orNotFound(updated, `Comparison "${req.params.id}"`));
   })
 );

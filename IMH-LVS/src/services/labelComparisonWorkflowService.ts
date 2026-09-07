@@ -1,8 +1,6 @@
 import { extractLabel, LabelExtractionError, type LabelExtractionApiResult } from './labelExtractionService';
 import { compareExtractedLabels, LabelComparisonError } from './labelComparisonService';
-import { getArtworkById, getArtworksByProduct, parseVersionNumber } from './artworkService';
-// In the future this should be exposed from artworkService async. Let's add it.
-import { getCrossCompanyCandidates } from './comparisonService';
+import { getArtworkById, getArtworksByProduct, getLatestApprovedArtworkForProduct, parseVersionNumber } from './artworkService';
 import { getProductById, getProducts } from './productService';
 import { saveLabelComparisonRun } from './labelComparisonHistoryService';
 import type { Product } from '../types/product';
@@ -34,14 +32,6 @@ export type ComparisonPlan =
   | { status: 'up_to_date'; product: Product; approvedArtwork: Artwork }
   | { status: 'no_approved_baseline'; product: Product; candidateArtwork: Artwork }
   | { status: 'ready'; product: Product; candidateArtwork: Artwork; approvedArtwork: Artwork };
-
-// Helper we'll include here since it wasn't moved to the async artworkService rewrite yet
-async function getLatestApprovedArtworkForProduct(productId: string, marketingCompany: string): Promise<Artwork | undefined> {
-  const artworks = await getArtworksByProduct(productId);
-  const approved = artworks.filter((a) => a.marketingCompany === marketingCompany && (a.status === 'Approved' || a.status === 'Final Approved'));
-  if (approved.length === 0) return undefined;
-  return approved.sort((a, b) => parseVersionNumber(b.version) - parseVersionNumber(a.version))[0];
-}
 
 export async function identifyComparisonPlan(productId: string): Promise<ComparisonPlan | undefined> {
   const product = await getProductById(productId);

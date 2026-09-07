@@ -9,12 +9,12 @@
 // reported as "not found" rather than guessed.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { installMemoryLocalStorage } from './testLocalStorage';
 
-installMemoryLocalStorage();
-
+// findExactProductMatch reads products via productService.getProducts(), which
+// now calls the backend over apiClient rather than localStorage — so tests
+// seed the mocked HTTP layer instead of localStorage.
+const { default: apiClient } = await import('../apiClient');
 const { findExactProductMatch } = await import('../labelIntakeService');
-const PRODUCTS_KEY = 'imh_lvs_products';
 
 type ProductLike = {
   id: string;
@@ -48,7 +48,11 @@ function product(overrides: Partial<ProductLike> & Pick<ProductLike, 'id' | 'pro
 }
 
 function seed(products: ProductLike[]) {
-  (globalThis.localStorage as any).setItem(PRODUCTS_KEY, JSON.stringify(products));
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  (apiClient.get as any) = async (url: string) => {
+    assert.equal(url, '/products');
+    return { data: products };
+  };
 }
 
 function extractedFields(overrides: Partial<Record<string, string>> = {}) {
@@ -66,37 +70,37 @@ function extractedFields(overrides: Partial<Record<string, string>> = {}) {
   };
 }
 
-test('Finds the product when Product Name + Brand + Marketing Company match exactly', () => {
+test('Finds the product when Product Name + Brand + Marketing Company match exactly', async () => {
   seed([product({ id: 'PRD-0001', productName: 'Apple Cider Vinegar Gummies', brandName: 'Nutrinol', marketingCompany: 'Knoll Pharmaceuticals Ltd.' })]);
 
-  const match = findExactProductMatch(extractedFields());
+  const match = await findExactProductMatch(extractedFields());
   assert.equal(match?.id, 'PRD-0001');
 });
 
-test('Matching is case/whitespace-insensitive but not fuzzy', () => {
+test('Matching is case/whitespace-insensitive but not fuzzy', async () => {
   seed([product({ id: 'PRD-0001', productName: 'apple cider vinegar gummies', brandName: '  Nutrinol  ', marketingCompany: 'KNOLL PHARMACEUTICALS LTD.' })]);
 
-  const match = findExactProductMatch(extractedFields());
+  const match = await findExactProductMatch(extractedFields());
   assert.equal(match?.id, 'PRD-0001');
 });
 
-test('Returns undefined when no product matches the extracted Marketing Company', () => {
+test('Returns undefined when no product matches the extracted Marketing Company', async () => {
   seed([product({ id: 'PRD-0001', productName: 'Apple Cider Vinegar Gummies', brandName: 'Nutrinol', marketingCompany: 'A Totally Different Company' })]);
 
-  const match = findExactProductMatch(extractedFields());
+  const match = await findExactProductMatch(extractedFields());
   assert.equal(match, undefined);
 });
 
-test('Returns undefined when no product matches the extracted Product Name', () => {
+test('Returns undefined when no product matches the extracted Product Name', async () => {
   seed([product({ id: 'PRD-0001', productName: 'Chyawanprash Gummies', brandName: 'Nutrinol', marketingCompany: 'Knoll Pharmaceuticals Ltd.' })]);
 
-  const match = findExactProductMatch(extractedFields());
+  const match = await findExactProductMatch(extractedFields());
   assert.equal(match, undefined);
 });
 
-test('Returns undefined (never guesses) when required identity fields were not read from the label', () => {
+test('Returns undefined (never guesses) when required identity fields were not read from the label', async () => {
   seed([product({ id: 'PRD-0001', productName: 'Apple Cider Vinegar Gummies', brandName: 'Nutrinol', marketingCompany: 'Knoll Pharmaceuticals Ltd.' })]);
 
-  const match = findExactProductMatch(extractedFields({ brand: '' }));
+  const match = await findExactProductMatch(extractedFields({ brand: '' }));
   assert.equal(match, undefined);
 });

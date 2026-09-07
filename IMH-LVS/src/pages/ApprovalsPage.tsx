@@ -30,9 +30,6 @@ import { getUserById, getUsersByRole } from '../data/usersStore';
 import {
   Actor,
   assignApprovalStage,
-  getApprovalSummary,
-  getArtworkVersionsForSelection,
-  getComparisons,
   submitLabelFinalDecision,
   submitManagerDecision,
   submitTechnicalDecision
@@ -115,14 +112,26 @@ export function ApprovalsPage() {
     role: role ?? 'account_manager'
   };
 
-  const { comparisons, refetchComparisons } = useMasterData();
+  const { comparisons, artworks, refetchComparisons } = useMasterData();
   const refresh = () => refetchComparisons();
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [remarks, setRemarks] = useState('');
 
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  const summary = useMemo(() => getApprovalSummary(), [comparisons]);
+  // Derived from the already-loaded comparisons list rather than a second
+  // fetch through getApprovalSummary() — same counts, no extra round trip.
+  const summary = useMemo(() => {
+    const count = (status: ComparisonStatus) => comparisons.filter((comparison) => comparison.status === status).length;
+    return {
+      pendingLabelFinal: count('Pending Label Final'),
+      pendingTechnical: count('Pending Technical'),
+      pendingQA: count('Pending QA'),
+      pendingManagerApproval: count('Pending Manager Approval'),
+      finalApproved: count('Final Approved'),
+      revisionRequired: count('Revision Required'),
+      rejected: count('Rejected')
+    };
+  }, [comparisons]);
 
   // Scoped strictly to what this role is meant to act on. Label Final sees
   // Pending Label Final, Technical sees Pending Technical, QA sees Pending
@@ -140,13 +149,19 @@ export function ApprovalsPage() {
   const selectedItem = comparisons.find((comparison) => comparison.id === selectedId) ?? null;
 
   const referenceArtwork = selectedItem
-    ? getArtworkVersionsForSelection(selectedItem.productId, selectedItem.referenceArtworkCompany).find(
-        (artwork) => artwork.id === selectedItem.referenceArtworkId
+    ? artworks.find(
+        (artwork) =>
+          artwork.productId === selectedItem.productId &&
+          artwork.marketingCompany === selectedItem.referenceArtworkCompany &&
+          artwork.id === selectedItem.referenceArtworkId
       )
     : undefined;
   const newArtwork = selectedItem
-    ? getArtworkVersionsForSelection(selectedItem.productId, selectedItem.newArtworkCompany).find(
-        (artwork) => artwork.id === selectedItem.newArtworkId
+    ? artworks.find(
+        (artwork) =>
+          artwork.productId === selectedItem.productId &&
+          artwork.marketingCompany === selectedItem.newArtworkCompany &&
+          artwork.id === selectedItem.newArtworkId
       )
     : undefined;
 
@@ -160,8 +175,8 @@ export function ApprovalsPage() {
     setRemarks('');
   };
 
-  const runDecision = (fn: () => void) => {
-    fn();
+  const runDecision = async (fn: () => Promise<unknown>) => {
+    await fn();
     refresh();
     handleBack();
   };
@@ -174,9 +189,9 @@ export function ApprovalsPage() {
     () => Object.fromEntries(APPROVAL_STAGES.map((stage) => [stage.key, getUsersByRole(stage.role)])) as Record<ApprovalStageKey, ReturnType<typeof getUsersByRole>>,
     []
   );
-  const handleAssign = (stageKey: ApprovalStageKey, userId: string) => {
+  const handleAssign = async (stageKey: ApprovalStageKey, userId: string) => {
     if (!selectedItem) return;
-    assignApprovalStage(selectedItem.id, stageKey, userId || undefined, actor);
+    await assignApprovalStage(selectedItem.id, stageKey, userId || undefined, actor);
     refresh();
   };
 

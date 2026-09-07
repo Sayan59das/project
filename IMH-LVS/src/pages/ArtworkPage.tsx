@@ -254,7 +254,7 @@ export function ArtworkPage() {
   const [viewFullscreen, setViewFullscreen] = useState(false);
   const [archiveTarget, setArchiveTarget] = useState<Artwork | null>(null);
 
-  const refresh = () => setArtworks(artworks);
+  const refresh = () => refetchArtworks();
 
   const marketingCompanyOptions = useMemo(() => marketingCompanies.map((company) => company.companyName), []);
   const brandOptions = useMemo(() => {
@@ -295,7 +295,7 @@ export function ArtworkPage() {
   useEffect(() => {
     if (versionTouched || !selectedFile) return;
     if (targetProductId && labelForm.marketingCompanyName) {
-      setUploadVersion(suggestNextArtworkVersion(targetProductId, labelForm.marketingCompanyName, uploadArtworkType));
+      suggestNextArtworkVersion(targetProductId, labelForm.marketingCompanyName, uploadArtworkType).then(setUploadVersion);
     } else {
       setUploadVersion('V1');
     }
@@ -425,10 +425,6 @@ export function ArtworkPage() {
     setDuplicateMatch(null);
   };
 
-  const handleArtworkTypeChange = (event: SelectChangeEvent) => {
-    setFormState((prev) => ({ ...prev, artworkType: event.target.value as ArtworkType }));
-  };
-
   // Runs OCR extraction for the given file and populates labelForm from the
   // result. Never throws to its caller — a request-level failure (backend
   // unreachable, backend rejected the file, unexpected response) is caught
@@ -518,7 +514,7 @@ export function ArtworkPage() {
 
   const persist = async () => {
     if (editingId) {
-      updateArtwork(editingId, { artworkType: formState.artworkType, status: formState.status, remarks: formState.remarks }, actor);
+      await updateArtwork(editingId, { status: formState.status, remarks: formState.remarks }, actor);
       refresh();
       setFormOpen(false);
       setDuplicateMatch(null);
@@ -547,7 +543,7 @@ export function ArtworkPage() {
     }
   };
 
-  const handleSave = () => {
+  const handleSave = async () => {
     if (editingId) {
       if (!validate()) return;
       persist();
@@ -556,7 +552,7 @@ export function ArtworkPage() {
 
     if (!validateUpload()) return;
     if (targetProductId) {
-      const duplicate = findDuplicateArtworkVersion(targetProductId, labelForm.marketingCompanyName, uploadVersion, uploadArtworkType);
+      const duplicate = await findDuplicateArtworkVersion(targetProductId, labelForm.marketingCompanyName, uploadVersion, uploadArtworkType);
       if (duplicate) {
         setDuplicateMatch(duplicate);
         return;
@@ -581,15 +577,15 @@ export function ArtworkPage() {
     link.click();
   };
 
-  const handleSendForComparison = (artwork: Artwork) => {
-    sendArtworkForComparison(artwork.id, actorInfo);
+  const handleSendForComparison = async (artwork: Artwork) => {
+    await sendArtworkForComparison(artwork.id, actorInfo);
     refresh();
     setViewArtwork((prev) => (prev && prev.id === artwork.id ? { ...prev, status: 'Pending Comparison' } : prev));
   };
 
-  const handleConfirmArchive = () => {
+  const handleConfirmArchive = async () => {
     if (!archiveTarget) return;
-    archiveArtwork(archiveTarget.id, actor);
+    await archiveArtwork(archiveTarget.id, actor);
     refresh();
     setViewArtwork((prev) => (prev && prev.id === archiveTarget.id ? { ...prev, status: 'Archived' } : prev));
     setArchiveTarget(null);
@@ -867,18 +863,11 @@ export function ArtworkPage() {
           {editingId ? (
             <Stack spacing={2}>
               <Typography variant="body2" sx={{ color: '#9EA4AB' }}>
-                {formState.productName} — {formState.marketingCompany} — {formState.version}
+                {formState.productName} — {formState.marketingCompany} — {formState.version} — {formState.artworkType}
               </Typography>
-              <FormControl error={Boolean(formErrors.artworkType)}>
-                <InputLabel>Artwork Type *</InputLabel>
-                <Select value={formState.artworkType} label="Artwork Type *" onChange={handleArtworkTypeChange}>
-                  {ARTWORK_TYPE_OPTIONS.map((type) => (
-                    <MenuItem key={type} value={type}>
-                      {type}
-                    </MenuItem>
-                  ))}
-                </Select>
-              </FormControl>
+              {/* Artwork Type is not editable — content is immutable once
+                  uploaded, a corrected label is a new version, not an edit
+                  (see backend/src/routes/artworks.routes.ts). */}
               <FormControl>
                 <InputLabel>Status</InputLabel>
                 <Select

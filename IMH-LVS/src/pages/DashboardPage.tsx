@@ -8,6 +8,7 @@ import { StatusChip } from '../components/StatusChip';
 import { useAuth } from '../auth/AuthContext';
 import { ActionId, RoleId } from '../auth/permissions';
 import { getFinalApprovedArtworks } from '../services/artworkService';
+import { Artwork } from '../types/artwork';
 import {
   getDashboardSummary,
   getMyPendingWork,
@@ -93,7 +94,7 @@ function activityIcon(item: RecentActivityItem) {
 
 type DashboardData = {
   summary: DashboardSummary;
-  finalApprovedArtworks: ReturnType<typeof getFinalApprovedArtworks>;
+  finalApprovedArtworks: Artwork[];
   recentActivity: RecentActivityItem[];
   unsubmittedCount: number;
   pendingWork: Comparison[];

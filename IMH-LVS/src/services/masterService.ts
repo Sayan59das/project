@@ -13,59 +13,37 @@ import {
   ProductCategory,
   ProductCategoryInput
 } from '../types/masters';
-import apiClient from './apiClient';
+import apiClient, { actorHeaders } from './apiClient';
 
 type AuditedRecord = { id: string; status: MasterStatus; createdDate: string; updatedDate: string; createdBy: string; updatedBy: string };
 
-function today(): string {
-  return new Date().toISOString().slice(0, 10);
-}
-
-function makeCollection<T extends AuditedRecord, TInput extends object>(modelName: string) {
+// resourcePath is the kebab-case plural segment masters.routes.ts mounts each
+// master under (e.g. 'marketing-companies') — id and every audit field are
+// assigned by the backend, not generated here (see backend/src/types/domain.ts,
+// where every *Input type deliberately excludes them).
+function makeCollection<T extends AuditedRecord, TInput extends object>(resourcePath: string) {
   async function getAll(): Promise<T[]> {
-    const { data } = await apiClient.get(`/data/${modelName}`);
+    const { data } = await apiClient.get(`/masters/${resourcePath}`);
     return data;
   }
 
   async function getById(id: string): Promise<T | undefined> {
     try {
-      const { data } = await apiClient.get(`/data/${modelName}/${id}`);
+      const { data } = await apiClient.get(`/masters/${resourcePath}/${id}`);
       return data;
     } catch {
       return undefined;
     }
   }
 
-  // Helper logic for ID generation might need to move to backend, but we'll do it on frontend for now by reading all
   async function create(input: TInput, actor: string): Promise<T> {
-    // Generate an ID based on existing records
-    const all = await getAll();
-    const idPrefix = modelName.substring(0, 3).toUpperCase();
-    const pattern = new RegExp(`^${idPrefix}-(\\d+)$`);
-    const maxSeq = all.reduce((max, item) => {
-      const match = pattern.exec(item.id);
-      return match ? Math.max(max, Number(match[1])) : max;
-    }, 0);
-    const newId = `${idPrefix}-${String(maxSeq + 1).padStart(4, '0')}`;
-
-    const now = today();
-    const newItem = {
-      ...input,
-      id: newId,
-      createdDate: new Date().toISOString(),
-      updatedDate: new Date().toISOString(),
-      createdBy: actor,
-      updatedBy: actor
-    };
-
-    const { data } = await apiClient.post(`/data/${modelName}`, newItem);
+    const { data } = await apiClient.post(`/masters/${resourcePath}`, input, { headers: actorHeaders(actor) });
     return data;
   }
 
   async function update(id: string, input: Partial<TInput>, actor: string): Promise<T | undefined> {
-    const updatedPayload = { ...input, updatedBy: actor, updatedDate: new Date().toISOString() };
     try {
-      const { data } = await apiClient.put(`/data/${modelName}/${id}`, updatedPayload);
+      const { data } = await apiClient.patch(`/masters/${resourcePath}/${id}`, input, { headers: actorHeaders(actor) });
       return data;
     } catch {
       return undefined;
@@ -84,7 +62,7 @@ const norm = (value: string) => value.trim().toLowerCase();
 // ---------------------------------------------------------------------------
 // Marketing Companies
 // ---------------------------------------------------------------------------
-const marketingCompanyCollection = makeCollection<MarketingCompany, MarketingCompanyInput>('MarketingCompany');
+const marketingCompanyCollection = makeCollection<MarketingCompany, MarketingCompanyInput>('marketing-companies');
 export const getMarketingCompanies = marketingCompanyCollection.getAll;
 export const createMarketingCompany = marketingCompanyCollection.create;
 export const updateMarketingCompany = marketingCompanyCollection.update;
@@ -97,7 +75,7 @@ export async function findDuplicateMarketingCompany(companyName: string, exclude
 // ---------------------------------------------------------------------------
 // Manufacturing Companies
 // ---------------------------------------------------------------------------
-const manufacturingCompanyCollection = makeCollection<ManufacturingCompany, ManufacturingCompanyInput>('ManufacturingCompany');
+const manufacturingCompanyCollection = makeCollection<ManufacturingCompany, ManufacturingCompanyInput>('manufacturing-companies');
 export const getManufacturingCompanies = manufacturingCompanyCollection.getAll;
 export const createManufacturingCompany = manufacturingCompanyCollection.create;
 export const updateManufacturingCompany = manufacturingCompanyCollection.update;
@@ -110,7 +88,7 @@ export async function findDuplicateManufacturingCompany(companyName: string, exc
 // ---------------------------------------------------------------------------
 // Brands
 // ---------------------------------------------------------------------------
-const brandCollection = makeCollection<Brand, BrandInput>('Brand');
+const brandCollection = makeCollection<Brand, BrandInput>('brands');
 export const getBrands = brandCollection.getAll;
 export const createBrand = brandCollection.create;
 export const updateBrand = brandCollection.update;
@@ -130,7 +108,7 @@ export async function findDuplicateBrand(brandName: string, marketingCompany: st
 // ---------------------------------------------------------------------------
 // Flavours
 // ---------------------------------------------------------------------------
-const flavourCollection = makeCollection<Flavour, FlavourInput>('Flavour');
+const flavourCollection = makeCollection<Flavour, FlavourInput>('flavours');
 export const getFlavours = flavourCollection.getAll;
 export const createFlavour = flavourCollection.create;
 export const updateFlavour = flavourCollection.update;
@@ -143,7 +121,7 @@ export async function findDuplicateFlavour(flavourName: string, excludeId?: stri
 // ---------------------------------------------------------------------------
 // Claims
 // ---------------------------------------------------------------------------
-const claimCollection = makeCollection<Claim, ClaimInput>('Claim');
+const claimCollection = makeCollection<Claim, ClaimInput>('claims');
 export const getClaims = claimCollection.getAll;
 export const createClaim = claimCollection.create;
 export const updateClaim = claimCollection.update;
@@ -156,7 +134,7 @@ export async function findDuplicateClaim(claimText: string, excludeId?: string):
 // ---------------------------------------------------------------------------
 // Product Categories
 // ---------------------------------------------------------------------------
-const productCategoryCollection = makeCollection<ProductCategory, ProductCategoryInput>('ProductCategory');
+const productCategoryCollection = makeCollection<ProductCategory, ProductCategoryInput>('product-categories');
 export const getProductCategories = productCategoryCollection.getAll;
 export const createProductCategory = productCategoryCollection.create;
 export const updateProductCategory = productCategoryCollection.update;

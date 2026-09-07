@@ -518,3 +518,59 @@ export async function assignApprovalStage(
 
   return getComparisonById(comparisonId, db);
 }
+
+/**
+ * Clears a stage's assignment, returning it to "unassigned" — any user with
+ * the matching role may act on it, rather than only the one previously named.
+ *
+ * A no-op delete (the stage had no assignment) is not an error: clearing an
+ * already-unassigned stage is a valid outcome, not a failed one, which is why
+ * this doesn't branch on rowCount the way assignApprovalStage does.
+ */
+export async function unassignApprovalStage(
+  comparisonId: string,
+  stage: WorkflowStage,
+  db: Queryable = getPool()
+): Promise<Comparison | undefined> {
+  await db.query('DELETE FROM comparison_approval_assignments WHERE comparison_id = $1 AND stage = $2', [comparisonId, stage]);
+  return getComparisonById(comparisonId, db);
+}
+
+/**
+ * Hands a completed comparison off to the Label Final queue.
+ *
+ * This is the Account Manager's own action — entering the pipeline, not a
+ * decision at one of its four stages — so it deliberately does not go through
+ * recordWorkflowDecision: workflow_stage has exactly the four reviewer stages
+ * ('Label Final', 'Technical', 'QA', 'Manager'), and there is no fifth value
+ * for who submits into the first of them. No history entry is written for the
+ * same reason; the comparison's own status change is the record of it.
+ *
+ * Same shape as recordWorkflowDecision otherwise: the comparison's status and
+ * the artwork's status move together, in one transaction.
+ */
+export async function submitComparisonForReview(
+  id: string,
+  actor: string,
+  db: Queryable = getPool()
+): Promise<Comparison | undefined> {
+  return inTransaction(db, async (client) => {
+    const { rows } = await client.query<{ new_artwork_id: string }>(
+      `UPDATE comparisons
+          SET status = 'Pending Label Final',
+              updated_by = $2,
+              updated_at = now()
+        WHERE id = $1
+        RETURNING new_artwork_id`,
+      [id, actor]
+    );
+    if (rows.length === 0) return undefined;
+
+    await client.query(
+      "UPDATE artworks SET status = 'Under Review', updated_by = $2, updated_at = now() WHERE id = $1",
+      [rows[0].new_artwork_id, actor]
+    );
+
+    return getComparisonById(id, client);
+  });
+}

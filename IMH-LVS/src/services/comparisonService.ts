@@ -25,7 +25,6 @@ import { Artwork, ArtworkStatus } from '../types/artwork';
 import { Product } from '../types/product';
 import { RoleId } from '../auth/permissions';
 import {
-  ApprovalAssignments,
   ApprovalStageKey,
   COMPARISON_PARAMETERS,
   Comparison,
@@ -38,110 +37,51 @@ import {
   ParameterComparison,
   ParameterResult,
   WorkflowAction,
-  WorkflowHistoryEntry,
   WorkflowStage
 } from '../types/comparison';
-import { SEED_COMPARISONS, SEED_LABEL_ATTRIBUTES } from '../data/comparisons';
-import {
-  getArtworks,
-  getLatestApprovedArtwork as getLatestApprovedArtworkFromArtworkService,
-  updateArtwork as updateArtworkStatus
-} from './artworkService';
+import { getArtworks, getLatestApprovedArtwork as getLatestApprovedArtworkFromArtworkService } from './artworkService';
 import { getProducts } from './productService';
-import apiClient from './apiClient';
+import apiClient, { actorHeaders, workflowActorHeaders } from './apiClient';
 
 // The acting user for every approval-stage decision — id/name for the audit
 // trail, role for the service-layer permission check (see canActAtStage).
 // UI button visibility is a courtesy; this is the actual gate.
 export type Actor = { id: string; name: string; role: RoleId };
 
-const STORAGE_KEY = 'imh_lvs_comparisons';
-
 const SIMILAR_THRESHOLD = 0.6;
 const MATCH_SCORE = 100;
 const SIMILAR_SCORE = 65;
 const CONFLICT_SCORE = 0;
 
-// Backfills fields added to the Comparison shape after some browsers already
-// had comparisons persisted in localStorage, so older stored records don't
-// crash consumers that assume the field is always present.
-function withDefaults(comparison: Comparison): Comparison {
-  return {
-    ...comparison,
-    history: comparison.history ?? [],
-    approvalAssignments: comparison.approvalAssignments ?? {}
-  };
-}
-
 async function readAll(): Promise<Comparison[]> {
-  try {
-    const { data } = await apiClient.get('/data/Comparison');
-    return data;
-  } catch (err) {
-    return SEED_COMPARISONS;
-  }
-}
-
-async function writeAll(comparisons: Comparison[]) {
-  // no-op, use direct put/post
-}
-
-function nextComparisonId(existing: Comparison[]): string {
-  const maxSeq = existing.reduce((max, comparison) => {
-    const match = /^CMP-(\d+)$/.exec(comparison.id);
-    return match ? Math.max(max, Number(match[1])) : max;
-  }, 0);
-  return `CMP-${String(maxSeq + 1).padStart(4, '0')}`;
-}
-
-function today(): string {
-  return new Date().toISOString().slice(0, 10);
-}
-
-function nowTimestamp(): string {
-  return new Date().toISOString();
+  const { data } = await apiClient.get('/comparisons');
+  return data;
 }
 
 // ---------------------------------------------------------------------
 // Label attributes (structured "extracted" label content)
 // ---------------------------------------------------------------------
 
-const LABEL_ATTRIBUTES_STORAGE_KEY = 'imh_lvs_label_attributes';
-
-async function readCustomLabelAttributes(): Promise<LabelAttributes[]> {
-  try {
-    const { data } = await apiClient.get('/data/LabelAttribute');
-    return data;
-  } catch (err) {
-    return [];
-  }
-}
-
-async function writeCustomLabelAttributes(attributes: LabelAttributes[]) {
-}
-
 // Persists the structured label content captured during label upload (see
 // labelIntakeService.submitLabelIntake) against its artwork, so the
 // comparison engine reads the actual values the user verified instead of
-// falling back to "Not specified". Overwrites any prior record for the same
-// artworkId.
+// falling back to "Not specified". Replaces any prior record for the same
+// artwork wholesale — see backend/src/repositories/artwork.repository.ts's
+// upsertLabelAttributes.
 export async function saveLabelAttributes(attributes: LabelAttributes): Promise<void> {
-  const existing = (await readCustomLabelAttributes()).filter((item) => item.artworkId !== attributes.artworkId);
-  await apiClient.post('/data/LabelAttribute', attributes);
+  const { artworkId, ...values } = attributes;
+  await apiClient.put(`/artworks/${artworkId}/label-attributes`, { values, source: 'manual' });
 }
 
-// Returns the artwork's structured label content: label-upload-captured
-// data first (see saveLabelAttributes above), then hand-authored seed data,
-// and only then a synthesized record built from Product/Artwork fields for
-// artworks that have neither (e.g. artwork created via the legacy Edit
-// path) — those fallback fields read "Not specified" rather than guessing,
-// since there is no OCR step yet to actually read the file.
+// Returns the artwork's structured label content: what was actually
+// extracted/recorded for it (see saveLabelAttributes above and the OCR
+// extraction pipeline), or — for an artwork that has never been extracted
+// (e.g. one created via the legacy Edit path) — a synthesized record built
+// from Product/Artwork fields. Those fallback fields read "Not specified"
+// rather than guessing, since there is no reading to fall back on.
 export async function getLabelAttributes(artwork: Artwork, product?: Product): Promise<LabelAttributes> {
-  const custom = (await readCustomLabelAttributes()).find((attributes) => attributes.artworkId === artwork.id);
-  if (custom) return custom;
-
-  const seeded = SEED_LABEL_ATTRIBUTES.find((attributes) => attributes.artworkId === artwork.id);
-  if (seeded) return seeded;
+  const { data } = await apiClient.get(`/artworks/${artwork.id}/label-attributes`);
+  if (data) return data as LabelAttributes;
 
   return {
     artworkId: artwork.id,
@@ -313,7 +253,7 @@ export async function getCrossCompanyCandidates(productId: string): Promise<Cros
       };
     })
   );
-  
+
   return candidates.filter((candidate): candidate is CrossCompanyCandidate => Boolean(candidate));
 }
 
@@ -326,7 +266,12 @@ export async function getComparisons(): Promise<Comparison[]> {
 }
 
 export async function getComparisonById(id: string): Promise<Comparison | undefined> {
-  return (await readAll()).find((comparison) => comparison.id === id);
+  try {
+    const { data } = await apiClient.get(`/comparisons/${id}`);
+    return data;
+  } catch {
+    return undefined;
+  }
 }
 
 export async function getComparisonsByProduct(productId: string): Promise<Comparison[]> {
@@ -342,7 +287,9 @@ export type CreateComparisonInput = {
 };
 
 // Runs the engine against the two artworks and persists the result as a
-// new Comparison record.
+// new Comparison record. id, version/company display fields, history and
+// approvalAssignments are all assigned/joined by the backend — see
+// backend/src/repositories/comparison.repository.ts's ComparisonInput.
 export async function createComparison(input: CreateComparisonInput, actor: string, productLookup?: Product): Promise<Comparison> {
   const referenceAttributes = await getLabelAttributes(input.referenceArtwork, productLookup);
   const newAttributes = await getLabelAttributes(input.newArtwork, productLookup);
@@ -350,32 +297,23 @@ export async function createComparison(input: CreateComparisonInput, actor: stri
   const overallSimilarity = calculateSimilarity(parameters);
   const overallResult = await generateComparisonResult(parameters);
 
-  const comparisons = (await readAll());
-  const now = today();
-  const newComparison: Comparison = {
-    id: nextComparisonId(comparisons),
-    productId: input.productId,
-    productName: input.productName,
-    stage: input.stage,
-    newArtworkId: input.newArtwork.id,
-    newArtworkVersion: input.newArtwork.version,
-    newArtworkCompany: input.newArtwork.marketingCompany,
-    referenceArtworkId: input.referenceArtwork.id,
-    referenceArtworkVersion: input.referenceArtwork.version,
-    referenceArtworkCompany: input.referenceArtwork.marketingCompany,
-    parameters,
-    overallSimilarity,
-    overallResult,
-    status: 'Completed',
-    history: [],
-    approvalAssignments: {},
-    comparedBy: actor,
-    comparisonDate: now,
-    updatedBy: actor,
-    updatedDate: now
-  };
-  await apiClient.post('/data/Comparison', newComparison);
-  return newComparison;
+  const { data } = await apiClient.post(
+    '/comparisons',
+    {
+      productId: input.productId,
+      stage: input.stage,
+      newArtworkId: input.newArtwork.id,
+      // '' means a cross-company comparison found no candidate — the backend
+      // wants that absence as a missing field, not an empty string.
+      referenceArtworkId: input.referenceArtwork.id || undefined,
+      parameters,
+      overallSimilarity,
+      overallResult,
+      status: 'Completed'
+    },
+    { headers: actorHeaders(actor) }
+  );
+  return data;
 }
 
 // Hands a completed comparison off to the Label Final queue — the entry
@@ -384,19 +322,19 @@ export async function createComparison(input: CreateComparisonInput, actor: stri
 // action, not a stage reviewer's), so it isn't routed through
 // canActAtStage/transitionComparison — but it still independently validates
 // the actor's role rather than trusting that the UI already hid the button.
+// The backend moves the comparison AND its artwork to their next status
+// together, in one transaction — see comparisons.routes.ts's /:id/submit.
 export async function sendComparisonForReview(id: string, actor: Actor): Promise<Comparison | undefined> {
   if (actor.role !== 'account_manager' && actor.role !== 'manager') {
     throw new Error(`Role "${actor.role}" is not authorized to submit a comparison for review.`);
   }
 
-  const comparisons = (await readAll());
-  const index = comparisons.findIndex((comparison) => comparison.id === id);
-  if (index === -1) return undefined;
-  const updated: Comparison = { ...comparisons[index], status: 'Pending Label Final', updatedBy: actor.name, updatedDate: today() };
-  comparisons[index] = updated;
-  await apiClient.put(`/data/Comparison/${updated.id}`, updated);
-  await updateArtworkStatus(updated.newArtworkId, { status: 'Under Review' }, actor.name);
-  return updated;
+  try {
+    const { data } = await apiClient.post(`/comparisons/${id}/submit`, {}, { headers: actorHeaders(actor.name) });
+    return data;
+  } catch {
+    return undefined;
+  }
 }
 
 // ---------------------------------------------------------------------
@@ -433,6 +371,16 @@ const STAGE_KEY_BY_WORKFLOW_STAGE: Record<WorkflowStage, ApprovalStageKey> = {
   Manager: 'manager'
 };
 
+const WORKFLOW_STAGE_BY_KEY: Record<ApprovalStageKey, WorkflowStage> = {
+  labelFinal: 'Label Final',
+  technical: 'Technical',
+  qa: 'QA',
+  manager: 'Manager'
+};
+
+// Records one approval-workflow decision: status, history entry and artwork
+// status together, in one backend transaction — see
+// comparison.repository.ts's recordWorkflowDecision.
 async function transitionComparison(
   id: string,
   actor: Actor,
@@ -447,41 +395,23 @@ async function transitionComparison(
     throw new Error(`Role "${actor.role}" is not authorized to record a ${stage} decision.`);
   }
 
-  const comparisons = (await readAll());
-  const index = comparisons.findIndex((comparison) => comparison.id === id);
-  if (index === -1) return undefined;
+  // Who was assigned to this stage at the moment of the decision — kept even
+  // when a Manager override means the actual actor (the header identity) is
+  // a different person.
+  const current = await getComparisonById(id);
+  if (!current) return undefined;
+  const approvalUserId = current.approvalAssignments[STAGE_KEY_BY_WORKFLOW_STAGE[stage]];
 
-  // Snapshot who was assigned to this stage at the moment of the decision —
-  // kept even when a Manager override means the actual actor (below) is a
-  // different person. The assignment itself is never mutated by acting on
-  // it; only assignApprovalStage() changes it.
-  const approvalUserId = comparisons[index].approvalAssignments[STAGE_KEY_BY_WORKFLOW_STAGE[stage]];
-
-  const entry: WorkflowHistoryEntry = {
-    stage,
-    action,
-    resultingStatus,
-    approvalUserId,
-    actorId: actor.id,
-    actorName: actor.name,
-    actorRole: actor.role,
-    date: nowTimestamp(),
-    remarks
-  };
-
-  const updated: Comparison = {
-    ...comparisons[index],
-    status: resultingStatus,
-    qaRemarks: remarks,
-    history: [...comparisons[index].history, entry],
-    updatedBy: actor.name,
-    updatedDate: today()
-  };
-  comparisons[index] = updated;
-  await apiClient.put(`/data/Comparison/${updated.id}`, updated);
-
-  if (artworkStatus) await updateArtworkStatus(updated.newArtworkId, { status: artworkStatus }, actor.name);
-  return updated;
+  try {
+    const { data } = await apiClient.post(
+      `/comparisons/${id}/decisions`,
+      { stage, action, resultingStatus, remarks, approvalUserId, artworkStatus, qaRemarks: remarks },
+      { headers: workflowActorHeaders(actor) }
+    );
+    return data;
+  } catch {
+    return undefined;
+  }
 }
 
 export async function getLabelFinalQueue(): Promise<Comparison[]> {
@@ -608,19 +538,17 @@ export async function assignApprovalStage(id: string, stageKey: ApprovalStageKey
   if (actor.role !== 'manager') {
     throw new Error(`Role "${actor.role}" is not authorized to assign approval stages.`);
   }
-  const comparisons = (await readAll());
-  const index = comparisons.findIndex((comparison) => comparison.id === id);
-  if (index === -1) return undefined;
-
-  const updated: Comparison = {
-    ...comparisons[index],
-    approvalAssignments: { ...comparisons[index].approvalAssignments, [stageKey]: userId },
-    updatedBy: actor.name,
-    updatedDate: today()
-  };
-  comparisons[index] = updated;
-  await apiClient.put(`/data/Comparison/${updated.id}`, updated);
-  return updated;
+  const stage = WORKFLOW_STAGE_BY_KEY[stageKey];
+  try {
+    if (userId) {
+      const { data } = await apiClient.put(`/comparisons/${id}/assignments/${stage}`, { userId }, { headers: actorHeaders(actor.name) });
+      return data;
+    }
+    const { data } = await apiClient.delete(`/comparisons/${id}/assignments/${stage}`, { headers: actorHeaders(actor.name) });
+    return data;
+  } catch {
+    return undefined;
+  }
 }
 
 const PENDING_STAGE_BY_ROLE: Partial<Record<RoleId, { status: ComparisonStatus; key: ApprovalStageKey }>> = {

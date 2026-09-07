@@ -13,11 +13,12 @@ import {
   getProductById,
   getProducts,
   getProductsByBrandAndCompany,
+  setProductSourceArtwork,
   updateProduct
 } from '../repositories/product.repository';
 import { getArtworksByProduct } from '../repositories/artwork.repository';
 import { getComparisonsByProduct } from '../repositories/comparison.repository';
-import { asyncHandler, orNotFound, requireActor, sendData } from '../controllers/http';
+import { asyncHandler, orNotFound, requireActor, requireString, sendData } from '../controllers/http';
 import { ProductInput } from '../types/domain';
 
 const router = Router();
@@ -106,6 +107,18 @@ router.patch(
   '/:id',
   asyncHandler(async (req, res) => {
     const updated = await updateProduct(req.params.id, req.body as Partial<ProductInput>, requireActor(req));
+    sendData(res, orNotFound(updated, `Product "${req.params.id}"`));
+  })
+);
+
+// Provenance only, not a user edit — see product.repository.ts's
+// setProductSourceArtwork for why this deliberately does not touch
+// updated_by/updated_at the way the general PATCH above does.
+router.patch(
+  '/:id/source-artwork',
+  asyncHandler(async (req, res) => {
+    const artworkId = requireString(req.body, 'artworkId');
+    const updated = await setProductSourceArtwork(req.params.id, artworkId);
     sendData(res, orNotFound(updated, `Product "${req.params.id}"`));
   })
 );

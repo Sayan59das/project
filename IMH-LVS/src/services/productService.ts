@@ -1,18 +1,14 @@
 import { Product, ProductInput, ProductOrigin } from '../types/product';
-import apiClient from './apiClient';
-
-function today(): string {
-  return new Date().toISOString().slice(0, 10);
-}
+import apiClient, { actorHeaders } from './apiClient';
 
 export async function getProducts(): Promise<Product[]> {
-  const { data } = await apiClient.get('/data/Product');
+  const { data } = await apiClient.get('/products');
   return data;
 }
 
 export async function getProductById(id: string): Promise<Product | undefined> {
   try {
-    const { data } = await apiClient.get(`/data/Product/${id}`);
+    const { data } = await apiClient.get(`/products/${id}`);
     return data;
   } catch {
     return undefined;
@@ -40,34 +36,20 @@ export async function getProductsByBrandAndCompany(brandName: string, marketingC
 
 export type ProductOriginMeta = { origin: ProductOrigin; sourceArtworkId?: string };
 
+// id and every audit field (createdDate/updatedDate/createdBy/updatedBy) are
+// assigned by the backend, not the client — see backend/src/types/domain.ts
+// ProductInput, which deliberately excludes them.
 export async function createProduct(input: ProductInput, actor: string, meta?: ProductOriginMeta): Promise<Product> {
-  const all = await getProducts();
-  const maxSeq = all.reduce((max, product) => {
-    const match = /^PRD-(\d+)$/.exec(product.id);
-    if (!match) return max;
-    return Math.max(max, Number(match[1]));
-  }, 0);
-  const newId = `PRD-${String(maxSeq + 1).padStart(4, '0')}`;
-  
-  const now = today();
-  const newProduct = {
-    id: newId,
-    ...input,
-    origin: meta?.origin,
-    sourceArtworkId: meta?.sourceArtworkId,
-    createdDate: new Date().toISOString(),
-    updatedDate: new Date().toISOString(),
-    createdBy: actor,
-    updatedBy: actor
-  };
-
-  const { data } = await apiClient.post('/data/Product', newProduct);
+  const payload = { ...input, origin: meta?.origin, sourceArtworkId: meta?.sourceArtworkId };
+  const { data } = await apiClient.post('/products', payload, { headers: actorHeaders(actor) });
   return data;
 }
 
+// Provenance only, not a user edit — see product.repository.ts's
+// setProductSourceArtwork, which this route wraps.
 export async function setProductSourceArtwork(id: string, artworkId: string): Promise<Product | undefined> {
   try {
-    const { data } = await apiClient.put(`/data/Product/${id}`, { sourceArtworkId: artworkId });
+    const { data } = await apiClient.patch(`/products/${id}/source-artwork`, { artworkId });
     return data;
   } catch {
     return undefined;
@@ -75,9 +57,8 @@ export async function setProductSourceArtwork(id: string, artworkId: string): Pr
 }
 
 export async function updateProduct(id: string, input: Partial<ProductInput>, actor: string): Promise<Product | undefined> {
-  const updatedPayload = { ...input, updatedBy: actor, updatedDate: new Date().toISOString() };
   try {
-    const { data } = await apiClient.put(`/data/Product/${id}`, updatedPayload);
+    const { data } = await apiClient.patch(`/products/${id}`, input, { headers: actorHeaders(actor) });
     return data;
   } catch {
     return undefined;
@@ -85,5 +66,10 @@ export async function updateProduct(id: string, input: Partial<ProductInput>, ac
 }
 
 export async function deactivateProduct(id: string, actor: string): Promise<Product | undefined> {
-  return updateProduct(id, { status: 'Inactive' }, actor);
+  try {
+    const { data } = await apiClient.delete(`/products/${id}`, { headers: actorHeaders(actor) });
+    return data;
+  } catch {
+    return undefined;
+  }
 }

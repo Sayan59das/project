@@ -18,7 +18,7 @@ import { Artwork, ArtworkType } from '../types/artwork';
 import { Product, ProductInput } from '../types/product';
 import { LabelAttributes } from '../types/comparison';
 import { FIXED_MANUFACTURING_COMPANY } from '../types/extraction';
-import { createArtwork, getArtworksByProduct } from './artworkService';
+import { createArtwork, suggestNextArtworkVersion } from './artworkService';
 import {
   createProduct,
   findPossibleDuplicate,
@@ -93,13 +93,6 @@ export async function findPossibleProductMatches(extracted: LabelIntakeExtracted
   const exact = await findExactProductMatch(extracted);
   const byBrandAndCompany = await getProductsByBrandAndCompany(extracted.brand, extracted.marketingCompanyName);
   return byBrandAndCompany.filter((product) => product.id !== exact?.id);
-}
-
-// Temporary mock for suggestNextArtworkVersion since we moved it out of artworkService.ts rewrite
-export async function suggestNextArtworkVersion(productId: string, marketingCompany: string, type: ArtworkType): Promise<string> {
-  const existing = await getArtworksByProduct(productId);
-  const byType = existing.filter((a) => a.artworkType === type);
-  return `V${byType.length + 1}.0`;
 }
 
 export async function submitLabelIntake(input: LabelIntakeInput, actor: Actor): Promise<LabelIntakeResult> {

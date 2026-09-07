@@ -22,9 +22,7 @@ import { DataGrid, GridColDef, GridRowParams } from '@mui/x-data-grid';
 import { PageHeader } from '../components/PageHeader';
 import { StatusChip } from '../components/StatusChip';
 import { useAuth } from '../auth/AuthContext';
-import { getProducts } from '../services/productService';
-import { getArtworks, parseVersionNumber } from '../services/artworkService';
-import { getBrands, getManufacturingCompanies, getMarketingCompanies } from '../services/masterService';
+import { parseVersionNumber } from '../services/artworkService';
 import { getUsers } from '../data/usersStore';
 import { getSettings } from '../services/settingsService';
 import { COMPARISON_STATUS_OPTIONS } from '../types/comparison';
@@ -344,6 +342,7 @@ export function ReportsPage() {
   const { currentUser, hasPermission } = useAuth();
   const canExport = hasPermission('EXPORT');
   const defaultPageSize = getSettings(currentUser?.id ?? '').pageSize;
+  const { products, brands, marketingCompanies, manufacturingCompanies, artworks } = useMasterData();
 
   const [activeReport, setActiveReport] = useState<ReportTypeKey>('comparison');
   const [search, setSearch] = useState('');
@@ -370,7 +369,7 @@ export function ReportsPage() {
       setLoadError(true);
       return { products: [], brands: [], marketingCompanies: [], manufacturingCompanies: [], artworkVersions: [], users: [] };
     }
-  }, []);
+  }, [products, brands, marketingCompanies, manufacturingCompanies, artworks]);
 
   const visibility = FILTER_VISIBILITY[activeReport];
   const statusOptions = STATUS_OPTIONS_BY_TYPE[activeReport];
