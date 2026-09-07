@@ -21,7 +21,8 @@ import { StatusChip } from '../components/StatusChip';
 import { ArtworkPreview } from '../components/ArtworkPreview';
 import { useAuth } from '../auth/AuthContext';
 import { useUserDirectory } from '../hooks/useUserDirectory';
-import { Actor, getArtworkVersionsForSelection, getComparisons, qaRejectComparison, qaVerifyComparison } from '../services/comparisonService';
+import { useArtworks } from '../hooks/useArtworks';
+import { Actor, getComparisons, qaRejectComparison, qaVerifyComparison } from '../services/comparisonService';
 import { Comparison, ParameterResult } from '../types/comparison';
 import { formatDateTime } from '../utils/dateFormat';
 
@@ -92,16 +93,11 @@ export function QAPage() {
 
   const selectedItem = comparisons.find((comparison) => comparison.id === selectedId) ?? null;
 
-  const referenceArtwork = selectedItem
-    ? getArtworkVersionsForSelection(selectedItem.productId, selectedItem.referenceArtworkCompany).find(
-        (artwork) => artwork.id === selectedItem.referenceArtworkId
-      )
-    : undefined;
-  const newArtwork = selectedItem
-    ? getArtworkVersionsForSelection(selectedItem.productId, selectedItem.newArtworkCompany).find(
-        (artwork) => artwork.id === selectedItem.newArtworkId
-      )
-    : undefined;
+  // By id out of the cached list, rather than fetching every version for the
+  // product and company to find the one row already named on the comparison.
+  const { byId: artworkById } = useArtworks();
+  const referenceArtwork = artworkById(selectedItem?.referenceArtworkId);
+  const newArtwork = artworkById(selectedItem?.newArtworkId);
 
   const handleOpenItem = (comparison: Comparison) => {
     setSelectedId(comparison.id);

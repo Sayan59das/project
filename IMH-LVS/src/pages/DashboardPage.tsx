@@ -7,7 +7,8 @@ import { StatCard, DashboardStatCard } from '../components/StatCard';
 import { StatusChip } from '../components/StatusChip';
 import { useAuth } from '../auth/AuthContext';
 import { ActionId, RoleId } from '../auth/permissions';
-import { getFinalApprovedArtworks } from '../services/artworkService';
+import { getArtworks, selectFinalApprovedArtworks } from '../services/artworkService';
+import type { Artwork } from '../types/artwork';
 import {
   getDashboardSummary,
   getMyPendingWork,
@@ -92,7 +93,7 @@ function activityIcon(item: RecentActivityItem) {
 
 type DashboardData = {
   summary: DashboardSummary;
-  finalApprovedArtworks: ReturnType<typeof getFinalApprovedArtworks>;
+  finalApprovedArtworks: Artwork[];
   recentActivity: RecentActivityItem[];
   unsubmittedCount: number;
   pendingWork: Comparison[];
@@ -104,7 +105,7 @@ type DashboardData = {
 async function loadDashboardData(role: RoleId, userId: string): Promise<DashboardData> {
   return {
     summary: await getDashboardSummary(),
-    finalApprovedArtworks: getFinalApprovedArtworks(),
+    finalApprovedArtworks: selectFinalApprovedArtworks(await getArtworks()),
     recentActivity: getRecentActivity(8),
     unsubmittedCount: getUnsubmittedComparisons().length,
     pendingWork: getPendingWorkForRole(role, userId)

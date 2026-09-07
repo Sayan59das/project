@@ -20,7 +20,8 @@ import { PageHeader } from '../components/PageHeader';
 import { StatusChip } from '../components/StatusChip';
 import { useAuth } from '../auth/AuthContext';
 import { useProducts } from '../hooks/useProducts';
-import { getArtworks, parseVersionNumber } from '../services/artworkService';
+import { parseVersionNumber } from '../services/artworkService';
+import { useArtworks } from '../hooks/useArtworks';
 import { useBrands, useManufacturingCompanies, useMarketingCompanies } from '../hooks/useMasterData';
 import { useUserDirectory } from '../hooks/useUserDirectory';
 import { getSettings } from '../services/settingsService';
@@ -340,6 +341,7 @@ export function ReportsPage() {
   const { currentUser, hasPermission } = useAuth();
   const { users: directoryUsers } = useUserDirectory();
   const { products } = useProducts();
+  const { artworks } = useArtworks();
   const brands = useBrands();
   const marketingCompanies = useMarketingCompanies();
   const manufacturingCompanies = useManufacturingCompanies();
@@ -362,7 +364,7 @@ export function ReportsPage() {
         brands: Array.from(new Set(brands.items.map((b) => b.brandName))).sort(),
         marketingCompanies: Array.from(new Set(marketingCompanies.items.map((c) => c.companyName))).sort(),
         manufacturingCompanies: Array.from(new Set(manufacturingCompanies.items.map((c) => c.companyName))).sort(),
-        artworkVersions: Array.from(new Set(getArtworks().map((a) => a.version))).sort((a, b) => parseVersionNumber(a) - parseVersionNumber(b)),
+        artworkVersions: Array.from(new Set(artworks.map((a) => a.version))).sort((a, b) => parseVersionNumber(a) - parseVersionNumber(b)),
         users: directoryUsers
           .map((u) => u.fullName)
           .sort()
@@ -374,7 +376,7 @@ export function ReportsPage() {
     // Recomputed as each fetched list arrives: masters and the user directory
     // are requests now, so the first pass runs with empty lists and the filter
     // dropdowns would stay empty otherwise.
-  }, [directoryUsers, products, brands.items, marketingCompanies.items, manufacturingCompanies.items]);
+  }, [directoryUsers, products, artworks, brands.items, marketingCompanies.items, manufacturingCompanies.items]);
 
   const visibility = FILTER_VISIBILITY[activeReport];
   const statusOptions = STATUS_OPTIONS_BY_TYPE[activeReport];
@@ -392,11 +394,11 @@ export function ReportsPage() {
         case 'revision':
           return getRevisionRejectionReport(effectiveFilters, products, revisionScope) as unknown as Record<string, unknown>[];
         case 'artwork':
-          return getArtworkHistoryReport(effectiveFilters) as unknown as Record<string, unknown>[];
+          return getArtworkHistoryReport(effectiveFilters, artworks) as unknown as Record<string, unknown>[];
         case 'approvalHistory':
           return getApprovalHistoryReport(effectiveFilters) as unknown as Record<string, unknown>[];
         case 'userActivity':
-          return getUserActivityReport(effectiveFilters, directoryUsers) as unknown as Record<string, unknown>[];
+          return getUserActivityReport(effectiveFilters, directoryUsers, artworks) as unknown as Record<string, unknown>[];
         default:
           return [];
       }
@@ -404,7 +406,7 @@ export function ReportsPage() {
       setLoadError(true);
       return [];
     }
-  }, [activeReport, effectiveFilters, revisionScope, directoryUsers, products]);
+  }, [activeReport, effectiveFilters, revisionScope, directoryUsers, products, artworks]);
 
   const gridRows = useMemo(() => rows.map((row, index) => ({ id: index, ...row })), [rows]);
   const columns = useMemo(() => columnsFor(activeReport), [activeReport]);

@@ -14,7 +14,7 @@ import { ArtworkCompareViewer } from '../components/labelComparison/ArtworkCompa
 import { DeviationsPanel, classifyDeviation } from '../components/labelComparison/DeviationsPanel';
 import { CrossCompanyResults } from '../components/labelComparison/CrossCompanyResults';
 import { getLabelComparisonById } from '../services/labelComparisonHistoryService';
-import { getArtworkById } from '../services/artworkService';
+import { useArtworks } from '../hooks/useArtworks';
 import { formatDateTime } from '../utils/dateFormat';
 import type { LabelComparisonFieldResult } from '../types/labelComparison';
 import type { VersionComparisonResult } from '../types/labelComparisonRecord';
@@ -61,8 +61,12 @@ export function ComparisonDetailPage() {
   const { id } = useParams<{ id: string }>();
   const run = id ? getLabelComparisonById(id) : undefined;
 
-  const candidateArtwork = run ? getArtworkById(run.candidateArtworkId) : undefined;
-  const approvedArtwork = run?.versionComparison ? getArtworkById(run.versionComparison.approvedArtworkId) : undefined;
+  // Both artworks are reads now, and this page only needs them for the preview
+  // panel — so it renders without them and fills the previews in when they
+  // arrive, rather than blocking the comparison result behind two requests.
+  const { byId: artworkById } = useArtworks();
+  const candidateArtwork = artworkById(run?.candidateArtworkId);
+  const approvedArtwork = artworkById(run?.versionComparison?.approvedArtworkId);
   const summary = run?.versionComparison ? summarizeFields(run.versionComparison.result.comparison.fields) : null;
 
   if (!run) {

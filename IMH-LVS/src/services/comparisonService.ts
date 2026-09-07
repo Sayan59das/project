@@ -44,8 +44,9 @@ import {
 import { SEED_COMPARISONS, SEED_LABEL_ATTRIBUTES } from '../data/comparisons';
 import {
   getArtworks,
+  getArtworksByProduct,
   getLatestApprovedArtwork as getLatestApprovedArtworkFromArtworkService,
-  updateArtwork as updateArtworkStatus
+  updateArtworkStatus
 } from './artworkService';
 import { getProducts } from './productService';
 
@@ -347,9 +348,12 @@ export async function getCrossCompanyCandidates(productId: string): Promise<Cros
       product.productName.trim().toLowerCase() === sourceProduct.productName.trim().toLowerCase()
   );
 
-  return otherProducts
-    .map((product) => {
-      const artwork = getLatestApprovedArtwork(product.id, product.marketingCompany, 'Full Label');
+  // One baseline lookup per candidate product, in parallel: each is a separate
+  // query and they do not depend on each other. A product with no approved Full
+  // Label simply is not a candidate.
+  const candidates = await Promise.all(
+    otherProducts.map(async (product) => {
+      const artwork = await getLatestApprovedArtwork(product.id, product.marketingCompany, 'Full Label');
       if (!artwork) return undefined;
       return {
         productId: product.id,
@@ -359,7 +363,9 @@ export async function getCrossCompanyCandidates(productId: string): Promise<Cros
         artworkVersion: artwork.version
       };
     })
-    .filter((candidate): candidate is CrossCompanyCandidate => Boolean(candidate));
+  );
+
+  return candidates.filter((candidate): candidate is CrossCompanyCandidate => Boolean(candidate));
 }
 
 // ---------------------------------------------------------------------
@@ -440,7 +446,12 @@ export function sendComparisonForReview(id: string, actor: Actor): Comparison | 
   const updated: Comparison = { ...comparisons[index], status: 'Pending Label Final', updatedBy: actor.name, updatedDate: today() };
   comparisons[index] = updated;
   writeAll(comparisons);
-  updateArtworkStatus(updated.newArtworkId, { status: 'Under Review' }, actor.name);
+  // Fire-and-report: the comparison record is already written, and a failure to
+  // move the artwork's status must not be reported as a failed submission. It is
+  // logged so a stuck artwork is traceable rather than silent.
+  void updateArtworkStatus(updated.newArtworkId, 'Under Review').catch((error: unknown) => {
+    console.error('[comparison] Could not move the artwork to Under Review:', error);
+  });
   return updated;
 }
 
@@ -525,7 +536,11 @@ function transitionComparison(
   comparisons[index] = updated;
   writeAll(comparisons);
 
-  if (artworkStatus) updateArtworkStatus(updated.newArtworkId, { status: artworkStatus }, actor.name);
+  if (artworkStatus) {
+    void updateArtworkStatus(updated.newArtworkId, artworkStatus).catch((error: unknown) => {
+      console.error('[comparison] Could not apply the decision to the artwork:', error);
+    });
+  }
   return updated;
 }
 
@@ -629,8 +644,8 @@ export function getApprovalSummary(): ApprovalSummary {
 
 // Convenience: all artwork versions (any status) for a product + company,
 // used by the "New Comparison" wizard's version picker.
-export function getArtworkVersionsForSelection(productId: string, marketingCompany: string): Artwork[] {
-  return getArtworks().filter((artwork) => artwork.productId === productId && artwork.marketingCompany === marketingCompany);
+export async function getArtworkVersionsForSelection(productId: string, marketingCompany: string): Promise<Artwork[]> {
+  return (await getArtworksByProduct(productId)).filter((artwork) => artwork.marketingCompany === marketingCompany);
 }
 
 // Comparisons the engine has run against but that Account Manager hasn't
@@ -717,7 +732,7 @@ export type DashboardSummary = {
 // Dashboard.tsx should never need to filter raw records itself.
 export async function getDashboardSummary(): Promise<DashboardSummary> {
   const approval = getApprovalSummary();
-  const artworks = getArtworks();
+  const artworks = await getArtworks();
   // The only awaited read here: products moved to the API, artworks and
   // comparisons have not yet. When they do, this whole function becomes one
   // request rather than three.

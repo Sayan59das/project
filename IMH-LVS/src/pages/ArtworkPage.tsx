@@ -70,11 +70,11 @@ import {
 import {
   archiveArtwork,
   findDuplicateArtworkVersion,
-  getArtworks,
   sendArtworkForComparison,
   suggestNextArtworkVersion,
-  updateArtwork
+  updateArtworkStatus
 } from '../services/artworkService';
+import { useArtworks, useInvalidateArtworks } from '../hooks/useArtworks';
 import {
   ARTWORK_STATUS_OPTIONS,
   ARTWORK_TYPE_OPTIONS,
@@ -212,7 +212,6 @@ export function ArtworkPage() {
   const canUpload = hasPermission('UPLOAD');
   const canEdit = hasPermission('EDIT');
   const canSendForComparison = hasPermission('INITIATE');
-  const actor = currentUser?.fullName ?? 'Unknown User';
   const actorInfo = {
     id: currentUser?.id ?? '',
     name: currentUser?.fullName ?? 'Unknown User',
@@ -220,7 +219,8 @@ export function ArtworkPage() {
   };
   const defaultPageSize = getSettings(currentUser?.id ?? '').pageSize;
 
-  const [artworks, setArtworks] = useState<Artwork[]>(() => getArtworks());
+  const { artworks, isError: artworksFailed, error: artworksError } = useArtworks();
+  const invalidateArtworks = useInvalidateArtworks();
   const [search, setSearch] = useState('');
   const [filterDraft, setFilterDraft] = useState<FilterState>(EMPTY_FILTERS);
   const [appliedFilters, setAppliedFilters] = useState<FilterState>(EMPTY_FILTERS);
@@ -261,8 +261,11 @@ export function ArtworkPage() {
   // slow save looks like a click that did nothing and people click again,
   // which is how you get two artworks for one file.
   const [isSubmitting, setIsSubmitting] = useState(false);
+  // Failures from the two status actions in the details panel, which have no
+  // form of their own to report into.
+  const [actionError, setActionError] = useState<string | null>(null);
 
-  const refresh = () => setArtworks(getArtworks());
+  const refresh = () => invalidateArtworks();
 
   const marketingCompanyOptions = useMemo(
     () => marketingCompanies.items.map((company) => company.companyName),
@@ -316,7 +319,9 @@ export function ArtworkPage() {
   useEffect(() => {
     if (versionTouched || !selectedFile) return;
     if (targetProductId && labelForm.marketingCompanyName) {
-      setUploadVersion(suggestNextArtworkVersion(targetProductId, labelForm.marketingCompanyName, uploadArtworkType));
+      // A suggestion only — the server issues the version the artwork is
+      // actually saved with.
+      setUploadVersion(suggestNextArtworkVersion(artworks, targetProductId, labelForm.marketingCompanyName, uploadArtworkType));
     } else {
       setUploadVersion('V1');
     }
@@ -539,10 +544,21 @@ export function ArtworkPage() {
 
   const persist = async () => {
     if (editingId) {
-      updateArtwork(editingId, { artworkType: formState.artworkType, status: formState.status, remarks: formState.remarks }, actor);
-      refresh();
-      setFormOpen(false);
-      setDuplicateMatch(null);
+      // Status and remarks only. An artwork's content — including which type of
+      // artwork it is — is immutable once uploaded: a correction is a new
+      // version, not an edit, and the API offers no general PATCH for that
+      // reason. The Artwork Type control in this drawer is read-only.
+      setIsSubmitting(true);
+      try {
+        await updateArtworkStatus(editingId, formState.status, formState.remarks);
+        refresh();
+        setFormOpen(false);
+        setDuplicateMatch(null);
+      } catch (err) {
+        setUploadErrors((prev) => ({ ...prev, submit: err instanceof Error ? err.message : 'Could not save this artwork.' }));
+      } finally {
+        setIsSubmitting(false);
+      }
       return;
     }
 
@@ -553,12 +569,10 @@ export function ArtworkPage() {
         {
           extracted: labelForm,
           artworkType: uploadArtworkType,
-          version: uploadVersion,
           remarks: uploadRemarks,
           file: { fileName: selectedFile.name, fileType: selectedFile.type, fileSize: selectedFile.size, filePath },
           linkToProductId: resolvedLinkProductId
-        },
-        actorInfo
+        }
       );
       refresh();
       setFormOpen(false);
@@ -586,7 +600,13 @@ export function ArtworkPage() {
 
     if (!validateUpload()) return;
     if (targetProductId) {
-      const duplicate = findDuplicateArtworkVersion(targetProductId, labelForm.marketingCompanyName, uploadVersion, uploadArtworkType);
+      const duplicate = findDuplicateArtworkVersion(
+        artworks,
+        targetProductId,
+        labelForm.marketingCompanyName,
+        uploadVersion,
+        uploadArtworkType
+      );
       if (duplicate) {
         setDuplicateMatch(duplicate);
         return;
@@ -611,23 +631,36 @@ export function ArtworkPage() {
     link.click();
   };
 
-  const handleSendForComparison = (artwork: Artwork) => {
-    sendArtworkForComparison(artwork.id, actorInfo);
-    refresh();
-    setViewArtwork((prev) => (prev && prev.id === artwork.id ? { ...prev, status: 'Pending Comparison' } : prev));
+  // Both of these show the new status only after the server has accepted it.
+  // Flipping the panel optimistically and refetching would show 'Archived' for
+  // a moment on a request that failed, which is the one thing an audit-trail
+  // screen must not do.
+  const handleSendForComparison = async (artwork: Artwork) => {
+    try {
+      await sendArtworkForComparison(artwork.id, actorInfo);
+      refresh();
+      setViewArtwork((prev) => (prev && prev.id === artwork.id ? { ...prev, status: 'Pending Comparison' } : prev));
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : 'Could not send this artwork for comparison.');
+    }
   };
 
-  const handleConfirmArchive = () => {
+  const handleConfirmArchive = async () => {
     if (!archiveTarget) return;
-    archiveArtwork(archiveTarget.id, actor);
-    refresh();
-    setViewArtwork((prev) => (prev && prev.id === archiveTarget.id ? { ...prev, status: 'Archived' } : prev));
+    const target = archiveTarget;
     setArchiveTarget(null);
+    try {
+      await archiveArtwork(target.id);
+      refresh();
+      setViewArtwork((prev) => (prev && prev.id === target.id ? { ...prev, status: 'Archived' } : prev));
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : 'Could not archive this artwork.');
+    }
   };
 
   const versionHistory = useMemo(() => {
     if (!viewArtwork) return [];
-    return getArtworks()
+    return artworks
       .filter(
         (artwork) =>
           artwork.productId === viewArtwork.productId &&
@@ -701,6 +734,19 @@ export function ArtworkPage() {
   return (
     <Box>
       <PageHeader title="Artwork Management" />
+
+      {/* An artwork table that is empty because the fetch failed must not read
+          as "nothing is waiting for review". */}
+      {artworksFailed && (
+        <Alert severity="error" sx={{ mb: 2 }}>
+          {artworksError instanceof Error ? artworksError.message : 'Could not load artwork.'}
+        </Alert>
+      )}
+      {actionError && (
+        <Alert severity="error" sx={{ mb: 2 }} onClose={() => setActionError(null)}>
+          {actionError}
+        </Alert>
+      )}
 
       <Box sx={{ display: 'grid', gap: 2, gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', mb: 3 }}>
         {[
@@ -906,9 +952,13 @@ export function ArtworkPage() {
               <Typography variant="body2" sx={{ color: 'var(--c-text-3)' }}>
                 {formState.productName} â€” {formState.marketingCompany} â€” {formState.version}
               </Typography>
-              <FormControl error={Boolean(formErrors.artworkType)}>
-                <InputLabel>Artwork Type *</InputLabel>
-                <Select value={formState.artworkType} label="Artwork Type *" onChange={handleArtworkTypeChange}>
+              {/* Read-only: a correction is a new version, not an edit, so the
+                  API accepts only a status/remarks change here. Shown rather
+                  than hidden because which type this is matters when deciding
+                  the status. */}
+              <FormControl error={Boolean(formErrors.artworkType)} disabled>
+                <InputLabel>Artwork Type</InputLabel>
+                <Select value={formState.artworkType} label="Artwork Type" onChange={handleArtworkTypeChange}>
                   {ARTWORK_TYPE_OPTIONS.map((type) => (
                     <MenuItem key={type} value={type}>
                       {type}

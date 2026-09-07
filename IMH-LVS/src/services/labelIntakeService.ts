@@ -18,7 +18,7 @@ import { Artwork, ArtworkType } from '../types/artwork';
 import { Product, ProductInput } from '../types/product';
 import { LabelAttributes } from '../types/comparison';
 import { FIXED_MANUFACTURING_COMPANY } from '../types/extraction';
-import { createArtwork, suggestNextArtworkVersion } from './artworkService';
+import { createArtwork } from './artworkService';
 import {
   createProduct,
   findPossibleDuplicate,
@@ -53,7 +53,6 @@ export type LabelIntakeFile = {
 export type LabelIntakeInput = {
   extracted: LabelIntakeExtractedFields;
   artworkType: ArtworkType;
-  version?: string;
   remarks: string;
   file: LabelIntakeFile;
   // Set when the caller (ArtworkPage) already had the user resolve which
@@ -116,7 +115,7 @@ export function findPossibleProductMatches(products: Product[], extracted: Label
 // the next thing to move; the await is deliberately at the top so a masters
 // failure aborts BEFORE any product or artwork row is written, rather than
 // leaving an artwork pointing at a brand that was never created.
-export async function submitLabelIntake(input: LabelIntakeInput, actor: Actor): Promise<LabelIntakeResult> {
+export async function submitLabelIntake(input: LabelIntakeInput): Promise<LabelIntakeResult> {
   const { extracted } = input;
 
   const missing = REQUIRED_FIELD_LABELS.filter(([key]) => !extracted[key].trim()).map(([, label]) => label);
@@ -181,16 +180,20 @@ export async function submitLabelIntake(input: LabelIntakeInput, actor: Actor): 
     isNewProduct = true;
   }
 
-  const version = input.version?.trim() || suggestNextArtworkVersion(product.id, extracted.marketingCompanyName, input.artworkType);
-
-  const artwork = createArtwork(
+  // No version is computed or sent: the server issues it under a lock for this
+  // product+company+type line. The version the upload form displays is a
+  // suggestion for the person looking at it, and is deliberately not passed
+  // through — two uploads racing must not both be recorded as V5.
+  //
+  // No actor either. Every write below records who did it from the session
+  // cookie, so there is nothing left for the caller to tell us.
+  const artwork = await createArtwork(
     {
       productId: product.id,
       productName: product.productName,
       brand: extracted.brand,
       marketingCompany: extracted.marketingCompanyName,
       manufacturingCompany: FIXED_MANUFACTURING_COMPANY,
-      version,
       artworkType: input.artworkType,
       fileName: input.file.fileName,
       fileType: input.file.fileType,
@@ -198,8 +201,7 @@ export async function submitLabelIntake(input: LabelIntakeInput, actor: Actor): 
       filePath: input.file.filePath,
       status: 'Draft',
       remarks: input.remarks
-    },
-    actor.name
+    }
   );
 
   if (isNewProduct) {

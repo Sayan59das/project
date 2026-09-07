@@ -9,7 +9,7 @@ import { ROLE_LABELS, RoleId } from '../auth/permissions';
 import { AppUser } from '../types/user';
 import { Artwork, ArtworkStatus } from '../types/artwork';
 import { Comparison, ComparisonStatus, WorkflowAction, WorkflowStage } from '../types/comparison';
-import { getArtworks, parseVersionNumber } from './artworkService';
+import { parseVersionNumber } from './artworkService';
 import { getAllWorkflowHistory, getComparisons } from './comparisonService';
 import { Product } from '../types/product';
 
@@ -343,8 +343,7 @@ export type ArtworkHistoryRow = {
   isLatestVersion: boolean;
 };
 
-export function getArtworkHistoryReport(filters: ReportFilters): ArtworkHistoryRow[] {
-  const artworks = getArtworks();
+export function getArtworkHistoryReport(filters: ReportFilters, artworks: Artwork[]): ArtworkHistoryRow[] {
   const groupKey = (artwork: Artwork) => `${artwork.productId}|${artwork.marketingCompany}|${artwork.artworkType}`;
   const latestVersionByGroup = new Map<string, number>();
   artworks.forEach((artwork) => {
@@ -470,7 +469,7 @@ export type UserActivityRow = {
  * It is only used to label each actor with their role; an activity row whose
  * user is no longer in the directory still appears, with a blank role.
  */
-export function getUserActivityReport(filters: ReportFilters, users: AppUser[]): UserActivityRow[] {
+export function getUserActivityReport(filters: ReportFilters, users: AppUser[], artworks: Artwork[]): UserActivityRow[] {
   const roleByName = new Map(users.map((user) => [user.fullName, user.role]));
   const roleLabel = (name: string): string => {
     const role = roleByName.get(name);
@@ -478,7 +477,7 @@ export function getUserActivityReport(filters: ReportFilters, users: AppUser[]):
   };
   const workflowRoleLabel = (role: string): string => ROLE_LABELS[role as RoleId] ?? role;
 
-  const artworkEvents: UserActivityRow[] = getArtworks().map((artwork) => ({
+  const artworkEvents: UserActivityRow[] = artworks.map((artwork) => ({
     user: artwork.uploadedBy,
     role: roleLabel(artwork.uploadedBy),
     action: 'Artwork Uploaded',

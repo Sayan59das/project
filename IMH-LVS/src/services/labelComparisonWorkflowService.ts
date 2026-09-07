@@ -77,13 +77,13 @@ export async function identifyComparisonPlan(productId: string): Promise<Compari
   const product = await getProductById(productId);
   if (!product) return undefined;
 
-  const artworks = getArtworksByProduct(productId).filter((artwork) => artwork.status !== 'Archived');
+  const artworks = (await getArtworksByProduct(productId)).filter((artwork) => artwork.status !== 'Archived');
   if (artworks.length === 0) {
     return { status: 'no_artwork', product };
   }
 
   const candidateArtwork = artworks.sort((a, b) => parseVersionNumber(b.version) - parseVersionNumber(a.version))[0];
-  const approvedArtwork = getLatestApprovedArtworkForProduct(productId, product.marketingCompany);
+  const approvedArtwork = await getLatestApprovedArtworkForProduct(productId, product.marketingCompany);
 
   if (!approvedArtwork) {
     return { status: 'no_approved_baseline', product, candidateArtwork };
@@ -129,7 +129,10 @@ async function compareCandidate(subjectExtraction: LabelExtractionApiResult, can
     candidateArtworkId: candidate.artworkId,
     candidateArtworkVersion: candidate.artworkVersion
   };
-  const candidateArtwork = getArtworkById(candidate.artworkId);
+  const candidateArtwork = await getArtworkById(candidate.artworkId);
+  // Also the honest answer when the artwork exists but its file does not: the
+  // rows are shared now, the bytes are not, so a candidate uploaded in somebody
+  // else's session has no file this browser can read.
   if (!candidateArtwork) return { ...base, outcome: { status: 'file_unavailable' } };
   const candidateExtraction = await extractArtwork(candidateArtwork);
   if (!candidateExtraction) return { ...base, outcome: { status: 'file_unavailable' } };

@@ -1,40 +1,29 @@
-// Unit tests for artworkService.getLatestApprovedArtworkForProduct — the
-// function Quick Label Comparison relies on to automatically select the
-// baseline artwork (see labelComparisonWorkflowService.ts). Covers exactly the
-// business rules the corrected workflow depends on: Pending/Rejected/Draft
-// versions must never be selected, and among multiple Approved/Final
-// Approved versions the highest version number wins, never an older one.
+// Unit tests for the artwork rules that stayed on the frontend.
+//
+// The baseline lookup these tests used to cover — "highest Approved version
+// wins, never a Draft or a Rejected one" — is a database query now, and it is
+// tested where it lives, against a real Postgres, in
+// backend/src/__tests__/db.repositories.test.ts. Re-testing it here against a
+// hand-seeded localStorage would be testing a copy of the rule that no longer
+// runs.
+//
+// What IS still frontend logic is what the upload form does while somebody
+// types: the version it suggests, and whether that version already exists.
+// Both are pure functions over a list the page has loaded, which is what makes
+// them testable without a store at all.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { installMemoryLocalStorage } from './testLocalStorage';
+import type { Artwork } from '../../types/artwork';
 
+// artworkService itself no longer touches localStorage, but it is imported
+// alongside modules that still do; this keeps that import harmless under node.
 installMemoryLocalStorage();
 
-const { getLatestApprovedArtworkForProduct } = await import('../artworkService');
-const ARTWORKS_KEY = 'imh_lvs_artworks';
+const { findDuplicateArtworkVersion, parseVersionNumber, selectFinalApprovedArtworks, suggestNextArtworkVersion } =
+  await import('../artworkService');
 
-type ArtworkLike = {
-  id: string;
-  productId: string;
-  productName: string;
-  brand: string;
-  marketingCompany: string;
-  manufacturingCompany: string;
-  version: string;
-  artworkType: string;
-  fileName: string;
-  fileType: string;
-  fileSize: number;
-  filePath: string;
-  status: string;
-  remarks: string;
-  uploadedBy: string;
-  uploadDate: string;
-  updatedBy: string;
-  updatedDate: string;
-};
-
-function artwork(overrides: Partial<ArtworkLike> & Pick<ArtworkLike, 'id' | 'version' | 'status'>): ArtworkLike {
+function artwork(overrides: Partial<Artwork> & Pick<Artwork, 'id' | 'version' | 'status'>): Artwork {
   return {
     productId: 'PRD-0001',
     productName: 'Test Product',
@@ -55,82 +44,70 @@ function artwork(overrides: Partial<ArtworkLike> & Pick<ArtworkLike, 'id' | 'ver
   };
 }
 
-function seed(artworks: ArtworkLike[]) {
-  (globalThis.localStorage as any).setItem(ARTWORKS_KEY, JSON.stringify(artworks));
-}
+test('Suggests V1 for a product+company+type line that has no artwork yet', () => {
+  assert.equal(suggestNextArtworkVersion([], 'PRD-0001', 'Test Marketing Co', 'Full Label'), 'V1');
+});
 
-test('Selects the highest-versioned Approved artwork, ignoring a newer Pending version', () => {
-  // V1, V2, V3 Approved, V4 Pending — must select V3, never V4.
-  seed([
-    artwork({ id: 'ART-0001', version: 'V1', status: 'Approved' }),
+test('Suggests one past the highest existing version, whatever order the list is in', () => {
+  const artworks = [
     artwork({ id: 'ART-0002', version: 'V2', status: 'Approved' }),
-    artwork({ id: 'ART-0003', version: 'V3', status: 'Approved' }),
-    artwork({ id: 'ART-0004', version: 'V4', status: 'Pending Comparison' })
-  ]);
-
-  const result = getLatestApprovedArtworkForProduct('PRD-0001', 'Test Marketing Co');
-  assert.equal(result?.id, 'ART-0003');
-  assert.equal(result?.version, 'V3');
-});
-
-test('Ignores a Rejected version even when it is the highest version number', () => {
-  seed([
     artwork({ id: 'ART-0001', version: 'V1', status: 'Approved' }),
-    artwork({ id: 'ART-0002', version: 'V2', status: 'Rejected' })
-  ]);
+    artwork({ id: 'ART-0003', version: 'V3', status: 'Draft' })
+  ];
 
-  const result = getLatestApprovedArtworkForProduct('PRD-0001', 'Test Marketing Co');
-  assert.equal(result?.id, 'ART-0001');
+  // A Draft counts: it occupies its version number whether or not anyone
+  // approved it, and suggesting V3 again would collide with it.
+  assert.equal(suggestNextArtworkVersion(artworks, 'PRD-0001', 'Test Marketing Co', 'Full Label'), 'V4');
 });
 
-test('Ignores a Draft version even when it is the highest version number', () => {
-  seed([
-    artwork({ id: 'ART-0001', version: 'V1', status: 'Final Approved' }),
-    artwork({ id: 'ART-0002', version: 'V2', status: 'Draft' })
-  ]);
+test('Keeps each artwork type its own version line', () => {
+  const artworks = [
+    artwork({ id: 'ART-0001', version: 'V5', status: 'Approved' }),
+    artwork({ id: 'ART-0002', version: 'V1', status: 'Approved', artworkType: 'Front Artwork' })
+  ];
 
-  const result = getLatestApprovedArtworkForProduct('PRD-0001', 'Test Marketing Co');
-  assert.equal(result?.id, 'ART-0001');
+  assert.equal(suggestNextArtworkVersion(artworks, 'PRD-0001', 'Test Marketing Co', 'Front Artwork'), 'V2');
 });
 
-test('Never selects an older Approved version when a newer Approved version exists', () => {
-  seed([
-    artwork({ id: 'ART-0002', version: 'V2', status: 'Approved' }),
-    artwork({ id: 'ART-0001', version: 'V1', status: 'Approved' }) // deliberately listed out of order
-  ]);
+test('Never counts another product or another marketing company toward a version line', () => {
+  const artworks = [
+    artwork({ id: 'ART-0001', version: 'V9', status: 'Approved', productId: 'PRD-9999' }),
+    artwork({ id: 'ART-0002', version: 'V9', status: 'Approved', marketingCompany: 'A Different Company' })
+  ];
 
-  const result = getLatestApprovedArtworkForProduct('PRD-0001', 'Test Marketing Co');
-  assert.equal(result?.id, 'ART-0002');
-  assert.equal(result?.version, 'V2');
+  assert.equal(suggestNextArtworkVersion(artworks, 'PRD-0001', 'Test Marketing Co', 'Full Label'), 'V1');
 });
 
-test('Treats both "Approved" and "Final Approved" as valid, picking the higher version across either status', () => {
-  seed([
-    artwork({ id: 'ART-0001', version: 'V1', status: 'Approved' }),
-    artwork({ id: 'ART-0002', version: 'V2', status: 'Final Approved' })
-  ]);
+test('Flags an already-used version for the same product+company+type', () => {
+  const artworks = [artwork({ id: 'ART-0001', version: 'V2', status: 'Approved' })];
 
-  const result = getLatestApprovedArtworkForProduct('PRD-0001', 'Test Marketing Co');
-  assert.equal(result?.id, 'ART-0002');
+  const duplicate = findDuplicateArtworkVersion(artworks, 'PRD-0001', 'Test Marketing Co', 'v2', 'Full Label');
+  assert.equal(duplicate?.id, 'ART-0001');
 });
 
-test('Returns undefined when no artwork for the product has an Approved/Final Approved status', () => {
-  seed([
-    artwork({ id: 'ART-0001', version: 'V1', status: 'Draft' }),
-    artwork({ id: 'ART-0002', version: 'V2', status: 'Pending Comparison' }),
-    artwork({ id: 'ART-0003', version: 'V3', status: 'Rejected' })
-  ]);
+test('Does not flag the same version under a different artwork type, or the record being edited', () => {
+  const artworks = [artwork({ id: 'ART-0001', version: 'V2', status: 'Approved' })];
 
-  const result = getLatestApprovedArtworkForProduct('PRD-0001', 'Test Marketing Co');
-  assert.equal(result, undefined);
+  assert.equal(findDuplicateArtworkVersion(artworks, 'PRD-0001', 'Test Marketing Co', 'V2', 'Front Artwork'), undefined);
+  assert.equal(findDuplicateArtworkVersion(artworks, 'PRD-0001', 'Test Marketing Co', 'V2', 'Full Label', 'ART-0001'), undefined);
 });
 
-test('Never matches artwork belonging to a different product or a different marketing company', () => {
-  seed([
-    artwork({ id: 'ART-0001', version: 'V5', status: 'Approved', productId: 'PRD-9999' }),
-    artwork({ id: 'ART-0002', version: 'V5', status: 'Approved', marketingCompany: 'A Different Company' })
-  ]);
+test('parseVersionNumber reads the number out of a version label, and 0 when there is none', () => {
+  assert.equal(parseVersionNumber('V12'), 12);
+  assert.equal(parseVersionNumber('draft'), 0);
+});
 
-  const result = getLatestApprovedArtworkForProduct('PRD-0001', 'Test Marketing Co');
-  assert.equal(result, undefined);
+test('The Final Approved repository holds only Final Approved artwork, newest change first', () => {
+  const artworks = [
+    artwork({ id: 'ART-0001', version: 'V1', status: 'Final Approved', updatedDate: '2026-01-05' }),
+    artwork({ id: 'ART-0002', version: 'V2', status: 'Approved', updatedDate: '2026-06-01' }),
+    artwork({ id: 'ART-0003', version: 'V3', status: 'Final Approved', updatedDate: '2026-03-20' })
+  ];
+
+  // 'Approved' is the legacy terminal status and is NOT the same thing: this
+  // list is what the Manager-approval stage produced, and nothing else.
+  assert.deepEqual(
+    selectFinalApprovedArtworks(artworks).map((entry) => entry.id),
+    ['ART-0003', 'ART-0001']
+  );
 });

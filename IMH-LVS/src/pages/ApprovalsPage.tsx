@@ -27,11 +27,11 @@ import { useAuth } from '../auth/AuthContext';
 import { RoleId } from '../auth/permissions';
 import { AppUser } from '../types/user';
 import { useUserDirectory } from '../hooks/useUserDirectory';
+import { useArtworks } from '../hooks/useArtworks';
 import {
   Actor,
   assignApprovalStage,
   getApprovalSummary,
-  getArtworkVersionsForSelection,
   getComparisons,
   submitLabelFinalDecision,
   submitManagerDecision,
@@ -141,16 +141,12 @@ export function ApprovalsPage() {
 
   const selectedItem = comparisons.find((comparison) => comparison.id === selectedId) ?? null;
 
-  const referenceArtwork = selectedItem
-    ? getArtworkVersionsForSelection(selectedItem.productId, selectedItem.referenceArtworkCompany).find(
-        (artwork) => artwork.id === selectedItem.referenceArtworkId
-      )
-    : undefined;
-  const newArtwork = selectedItem
-    ? getArtworkVersionsForSelection(selectedItem.productId, selectedItem.newArtworkCompany).find(
-        (artwork) => artwork.id === selectedItem.newArtworkId
-      )
-    : undefined;
+  // Straight out of the cached artwork list by id. The previous version fetched
+  // every version for the product and company just to find one row by its id,
+  // which was free against localStorage and is two requests against the API.
+  const { byId: artworkById } = useArtworks();
+  const referenceArtwork = artworkById(selectedItem?.referenceArtworkId);
+  const newArtwork = artworkById(selectedItem?.newArtworkId);
 
   const handleOpenItem = (comparison: Comparison) => {
     setSelectedId(comparison.id);
