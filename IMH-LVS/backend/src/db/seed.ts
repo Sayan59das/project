@@ -190,7 +190,7 @@ const PRODUCT_CATEGORIES: readonly (MasterSeed & { categoryName: string; descrip
 ];
 
 // ---------------------------------------------------------------------
-// Users — src/data/usersStore.ts
+// Users — the directory the frontend reads through src/services/userService.ts
 // ---------------------------------------------------------------------
 
 // Ids keep the app's 'U-001' shape rather than being renumbered to the

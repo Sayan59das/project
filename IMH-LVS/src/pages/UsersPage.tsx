@@ -1,10 +1,12 @@
 import { useMemo, useState } from 'react';
 import {
+  Alert,
   Box,
   Button,
   Card,
   CardContent,
   Checkbox,
+  CircularProgress,
   Dialog,
   DialogActions,
   DialogContent,
@@ -34,7 +36,9 @@ import { MdClose, MdSearch } from 'react-icons/md';
 import { PageHeader } from '../components/PageHeader';
 import { StatusChip } from '../components/StatusChip';
 import { MODULES, ModuleId, ROLES, ROLE_LABELS, RoleId, getDefaultPermissionsForRole } from '../auth/permissions';
-import { AppUser, UserStatus, createUser, getUserByEmail, getUsers, updateUser } from '../data/usersStore';
+import { AppUser, UserStatus } from '../types/user';
+import { createUser, updateUser } from '../services/userService';
+import { useInvalidateUserDirectory, useUserDirectory } from '../hooks/useUserDirectory';
 import { formatDateTime } from '../utils/dateFormat';
 
 const STATUS_OPTIONS: UserStatus[] = ['Active', 'Inactive', 'Pending', 'Restricted'];
@@ -60,7 +64,9 @@ function emptyForm(): FormState {
 }
 
 export function UsersPage() {
-  const [users, setUsers] = useState<AppUser[]>(() => getUsers());
+  const { users, isLoading, error: loadError, byId } = useUserDirectory();
+  const invalidateUserDirectory = useInvalidateUserDirectory();
+
   const [search, setSearch] = useState('');
   const [roleFilter, setRoleFilter] = useState<RoleId | 'all'>('all');
   const [statusFilter, setStatusFilter] = useState<UserStatus | 'all'>('all');
@@ -68,10 +74,17 @@ export function UsersPage() {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [detailOpen, setDetailOpen] = useState(false);
   const [editingUserId, setEditingUserId] = useState<string | null>(null);
-  const [selectedUser, setSelectedUser] = useState<AppUser | null>(null);
+  // An id, not a copy of the row: the details panel stays open across a save,
+  // and holding a snapshot would leave it showing the values from before the
+  // edit until somebody closed and reopened it.
+  const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
   const [formState, setFormState] = useState<FormState>(emptyForm());
   const [formErrors, setFormErrors] = useState<{ fullName?: string; email?: string }>({});
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
   const [deactivateTarget, setDeactivateTarget] = useState<AppUser | null>(null);
+
+  const selectedUser = byId(selectedUserId ?? undefined) ?? null;
 
   const filteredUsers = useMemo(() => {
     const term = search.trim().toLowerCase();
@@ -98,6 +111,7 @@ export function UsersPage() {
     setEditingUserId(null);
     setFormState(emptyForm());
     setFormErrors({});
+    setSaveError(null);
     setDrawerOpen(true);
   };
 
@@ -112,12 +126,13 @@ export function UsersPage() {
       moduleAccess: { ...user.permissions.modules }
     });
     setFormErrors({});
+    setSaveError(null);
     setDetailOpen(false);
     setDrawerOpen(true);
   };
 
   const handleOpenDetails = (user: AppUser) => {
-    setSelectedUser(user);
+    setSelectedUserId(user.id);
     setDetailOpen(true);
   };
 
@@ -152,14 +167,18 @@ export function UsersPage() {
     } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
       errors.email = 'Enter a valid email address.';
     } else {
-      const existing = getUserByEmail(email);
+      // Checked against the directory already on screen rather than with a
+      // lookup request. The database's UNIQUE constraint is the actual rule
+      // and its 409 is surfaced by handleSave; this only saves a round trip
+      // for the duplicate that is visible in the table right here.
+      const existing = users.find((user) => user.email.toLowerCase() === email.toLowerCase());
       if (existing && existing.id !== editingUserId) errors.email = 'A user with this email already exists.';
     }
     setFormErrors(errors);
     return Object.keys(errors).length === 0;
   };
 
-  const handleSave = () => {
+  const handleSave = async () => {
     if (!validate()) return;
 
     const permissions = {
@@ -167,35 +186,45 @@ export function UsersPage() {
       actions: getDefaultPermissionsForRole(formState.role).actions
     };
 
-    if (editingUserId) {
-      updateUser(editingUserId, {
-        fullName: formState.fullName,
-        email: formState.email,
-        role: formState.role,
-        department: formState.department,
-        status: formState.status,
-        permissions
-      });
-    } else {
-      createUser({
-        fullName: formState.fullName,
-        email: formState.email,
-        role: formState.role,
-        department: formState.department,
-        status: formState.status,
-        permissions
-      });
-    }
+    const input = {
+      fullName: formState.fullName,
+      email: formState.email,
+      role: formState.role,
+      department: formState.department,
+      status: formState.status,
+      permissions
+    };
 
-    setUsers(getUsers());
-    handleClose();
+    setSaveError(null);
+    setIsSaving(true);
+    try {
+      if (editingUserId) {
+        await updateUser(editingUserId, input);
+      } else {
+        await createUser(input);
+      }
+      invalidateUserDirectory();
+      handleClose();
+    } catch (error) {
+      // The drawer stays open with the form as typed. The backend's message is
+      // shown as written — a duplicate email comes back naming the address,
+      // which is more use than "save failed".
+      setSaveError(error instanceof Error ? error.message : 'Could not save the user.');
+    } finally {
+      setIsSaving(false);
+    }
   };
 
-  const applyStatusToggle = (user: AppUser) => {
-    updateUser(user.id, { status: user.status === 'Active' ? 'Inactive' : 'Active' });
-    const refreshed = getUsers();
-    setUsers(refreshed);
-    setSelectedUser(refreshed.find((u) => u.id === user.id) ?? null);
+  const applyStatusToggle = async (user: AppUser) => {
+    try {
+      await updateUser(user.id, { status: user.status === 'Active' ? 'Inactive' : 'Active' });
+      // The details panel reads the user out of the directory by id, so
+      // invalidating is all it takes for the panel, the table and the counts
+      // above it to agree.
+      invalidateUserDirectory();
+    } catch (error) {
+      setSaveError(error instanceof Error ? error.message : 'Could not change the user status.');
+    }
   };
 
   // Deactivating a user removes their access, so it goes through a
@@ -204,13 +233,13 @@ export function UsersPage() {
     if (user.status === 'Active') {
       setDeactivateTarget(user);
     } else {
-      applyStatusToggle(user);
+      void applyStatusToggle(user);
     }
   };
 
   const handleConfirmDeactivateUser = () => {
     if (!deactivateTarget) return;
-    applyStatusToggle(deactivateTarget);
+    void applyStatusToggle(deactivateTarget);
     setDeactivateTarget(null);
   };
 
@@ -356,6 +385,7 @@ export function UsersPage() {
                         color={user.status === 'Active' ? 'error' : 'success'}
                         sx={{ textTransform: 'none' }}
                         onClick={() => handleToggleActive(user)}
+                        disabled={isLoading}
                       >
                         {user.status === 'Active' ? 'Deactivate' : 'Activate'}
                       </Button>
@@ -366,9 +396,22 @@ export function UsersPage() {
               {filteredUsers.length === 0 && (
                 <TableRow>
                   <TableCell colSpan={8}>
-                    <Typography variant="body2" sx={{ color: 'var(--c-text-3)', textAlign: 'center', py: 3 }}>
-                      No users match the current filters.
-                    </Typography>
+                    {/* Three different empty tables that used to look alike:
+                        still fetching, the fetch failed, and a filter that
+                        matches nobody. Only the last one is the user's doing. */}
+                    {isLoading ? (
+                      <Box sx={{ display: 'grid', placeItems: 'center', py: 3 }}>
+                        <CircularProgress size={28} aria-label="Loading users" />
+                      </Box>
+                    ) : loadError ? (
+                      <Alert severity="error" sx={{ my: 2 }}>
+                        {loadError instanceof Error ? loadError.message : 'Could not load the user directory.'}
+                      </Alert>
+                    ) : (
+                      <Typography variant="body2" sx={{ color: 'var(--c-text-3)', textAlign: 'center', py: 3 }}>
+                        No users match the current filters.
+                      </Typography>
+                    )}
                   </TableCell>
                 </TableRow>
               )}
@@ -444,12 +487,18 @@ export function UsersPage() {
             ))}
           </Box>
 
+          {saveError && (
+            <Alert severity="error" sx={{ mt: 3 }}>
+              {saveError}
+            </Alert>
+          )}
+
           <Box sx={{ display: 'flex', justifyContent: 'flex-end', gap: 1, mt: 4 }}>
-            <Button onClick={handleClose} sx={{ textTransform: 'none' }}>
+            <Button onClick={handleClose} sx={{ textTransform: 'none' }} disabled={isSaving}>
               Cancel
             </Button>
-            <Button variant="contained" sx={{ textTransform: 'none' }} onClick={handleSave}>
-              {editingUserId ? 'Save Changes' : 'Create User'}
+            <Button variant="contained" sx={{ textTransform: 'none' }} onClick={() => void handleSave()} disabled={isSaving}>
+              {isSaving ? 'Saving…' : editingUserId ? 'Save Changes' : 'Create User'}
             </Button>
           </Box>
         </Box>

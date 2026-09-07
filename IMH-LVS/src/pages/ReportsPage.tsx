@@ -22,7 +22,7 @@ import { useAuth } from '../auth/AuthContext';
 import { getProducts } from '../services/productService';
 import { getArtworks, parseVersionNumber } from '../services/artworkService';
 import { getBrands, getManufacturingCompanies, getMarketingCompanies } from '../services/masterService';
-import { getUsers } from '../data/usersStore';
+import { useUserDirectory } from '../hooks/useUserDirectory';
 import { getSettings } from '../services/settingsService';
 import { COMPARISON_STATUS_OPTIONS } from '../types/comparison';
 import { ARTWORK_STATUS_OPTIONS } from '../types/artwork';
@@ -338,6 +338,7 @@ function columnsFor(reportType: ReportTypeKey): GridColDef[] {
 export function ReportsPage() {
   const navigate = useNavigate();
   const { currentUser, hasPermission } = useAuth();
+  const { users: directoryUsers } = useUserDirectory();
   const canExport = hasPermission('EXPORT');
   const defaultPageSize = getSettings(currentUser?.id ?? '').pageSize;
 
@@ -358,7 +359,7 @@ export function ReportsPage() {
         marketingCompanies: Array.from(new Set(getMarketingCompanies().map((c) => c.companyName))).sort(),
         manufacturingCompanies: Array.from(new Set(getManufacturingCompanies().map((c) => c.companyName))).sort(),
         artworkVersions: Array.from(new Set(getArtworks().map((a) => a.version))).sort((a, b) => parseVersionNumber(a) - parseVersionNumber(b)),
-        users: getUsers()
+        users: directoryUsers
           .map((u) => u.fullName)
           .sort()
       };
@@ -366,7 +367,9 @@ export function ReportsPage() {
       setLoadError(true);
       return { products: [], brands: [], marketingCompanies: [], manufacturingCompanies: [], artworkVersions: [], users: [] };
     }
-  }, []);
+    // Recomputed when the directory arrives: it is fetched, so the first pass
+    // runs with an empty list and the User filter would stay empty otherwise.
+  }, [directoryUsers]);
 
   const visibility = FILTER_VISIBILITY[activeReport];
   const statusOptions = STATUS_OPTIONS_BY_TYPE[activeReport];
@@ -388,7 +391,7 @@ export function ReportsPage() {
         case 'approvalHistory':
           return getApprovalHistoryReport(effectiveFilters) as unknown as Record<string, unknown>[];
         case 'userActivity':
-          return getUserActivityReport(effectiveFilters) as unknown as Record<string, unknown>[];
+          return getUserActivityReport(effectiveFilters, directoryUsers) as unknown as Record<string, unknown>[];
         default:
           return [];
       }
@@ -396,7 +399,7 @@ export function ReportsPage() {
       setLoadError(true);
       return [];
     }
-  }, [activeReport, effectiveFilters, revisionScope]);
+  }, [activeReport, effectiveFilters, revisionScope, directoryUsers]);
 
   const gridRows = useMemo(() => rows.map((row, index) => ({ id: index, ...row })), [rows]);
   const columns = useMemo(() => columnsFor(activeReport), [activeReport]);

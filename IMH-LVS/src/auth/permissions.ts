@@ -2,7 +2,7 @@
 // This is the single source of truth for roles, modules and action-level
 // permissions. UI components (Sidebar, Navbar, ProtectedRoute, pages) should
 // always read access decisions from here rather than hardcoding role checks,
-// so a future backend can replace only AuthContext/usersStore without
+// so the backend could replace only AuthContext/userService without
 // touching this contract.
 
 export type RoleId = 'account_manager' | 'label_final' | 'technical' | 'qa' | 'manager';

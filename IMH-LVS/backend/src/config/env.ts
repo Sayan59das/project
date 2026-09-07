@@ -104,7 +104,7 @@ export const env = {
   // nobody asked to be seeded that way is how a demo credential reaches a
   // deployment; leaving it unset means the seeded users simply have no
   // credential and cannot log in until somebody sets one. For local work,
-  // put SEED_USER_PASSWORD=password123 in .env — the same password the
-  // frontend prototype's mock login used (src/auth/mockUsers.ts).
+  // put SEED_USER_PASSWORD=password123 in .env — the password the frontend's
+  // removed mock login used, kept only so existing local databases still open.
   seedUserPassword: process.env.SEED_USER_PASSWORD?.trim() ?? ''
 };

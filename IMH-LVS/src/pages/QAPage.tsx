@@ -20,7 +20,7 @@ import { PageHeader } from '../components/PageHeader';
 import { StatusChip } from '../components/StatusChip';
 import { ArtworkPreview } from '../components/ArtworkPreview';
 import { useAuth } from '../auth/AuthContext';
-import { getUserById } from '../data/usersStore';
+import { useUserDirectory } from '../hooks/useUserDirectory';
 import { Actor, getArtworkVersionsForSelection, getComparisons, qaRejectComparison, qaVerifyComparison } from '../services/comparisonService';
 import { Comparison, ParameterResult } from '../types/comparison';
 import { formatDateTime } from '../utils/dateFormat';
@@ -55,6 +55,9 @@ function qaStatusLabel(comparison: Comparison): string {
 
 export function QAPage() {
   const { currentUser, hasPermission } = useAuth();
+  // Only to put a name to the assigned user id — the id itself is what the
+  // record stores and what is shown beside it.
+  const { byId: userById } = useUserDirectory();
   const canReview = hasPermission('REVIEW');
   const canVerify = hasPermission('VERIFY');
   const canReject = hasPermission('REJECT');
@@ -148,7 +151,7 @@ export function QAPage() {
                   </Typography>
                   <Typography variant="body2" sx={{ color: 'var(--c-text-3)', mt: 0.5 }}>
                     Approval User ID: <strong>{qaAssignedUserId(selectedItem) ?? 'Unassigned'}</strong>
-                    {qaAssignedUserId(selectedItem) && ` (${getUserById(qaAssignedUserId(selectedItem)!)?.fullName ?? 'Unknown User'})`}
+                    {qaAssignedUserId(selectedItem) && ` (${userById(qaAssignedUserId(selectedItem))?.fullName ?? 'Unknown User'})`}
                   </Typography>
                 </Box>
 

@@ -6,7 +6,6 @@ import { MdVisibility, MdVisibilityOff, MdOutlineDarkMode, MdOutlineLightMode } 
 import illustration from '../assets/label-verification-illustration.png';
 import { useColorMode } from '../theme/ColorModeContext';
 import { useAuth } from '../auth/AuthContext';
-import { getUserByEmail } from '../data/usersStore';
 import { getSettings } from '../services/settingsService';
 
 export function LoginPage() {
@@ -33,8 +32,10 @@ export function LoginPage() {
         setError(result.error);
         return;
       }
-      const user = getUserByEmail(email);
-      navigate(user ? getSettings(user.id).defaultLandingPage : '/dashboard');
+      // The user comes from the login response, not a second lookup by email:
+      // the directory is no longer readable synchronously, and the person who
+      // just signed in is exactly who the API answered with.
+      navigate(getSettings(result.user.id).defaultLandingPage);
     } finally {
       setIsSigningIn(false);
     }

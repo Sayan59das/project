@@ -6,7 +6,7 @@
 // artworks) and keeps filtering/joining logic out of the UI layer.
 
 import { ROLE_LABELS, RoleId } from '../auth/permissions';
-import { getUsers } from '../data/usersStore';
+import { AppUser } from '../types/user';
 import { Artwork, ArtworkStatus } from '../types/artwork';
 import { Comparison, ComparisonStatus, WorkflowAction, WorkflowStage } from '../types/comparison';
 import { getArtworks, parseVersionNumber } from './artworkService';
@@ -455,8 +455,18 @@ export type UserActivityRow = {
   actorId?: string;
 };
 
-export function getUserActivityReport(filters: ReportFilters): UserActivityRow[] {
-  const roleByName = new Map(getUsers().map((user) => [user.fullName, user.role]));
+/**
+ * `users` is passed in rather than read here: the directory is an API call now
+ * and this module is deliberately synchronous — every other report is a pure
+ * function of already-loaded data, and making this one alone async would make
+ * the whole switch in ReportsPage await. The caller holds the cached directory
+ * already (useUserDirectory) and hands it over.
+ *
+ * It is only used to label each actor with their role; an activity row whose
+ * user is no longer in the directory still appears, with a blank role.
+ */
+export function getUserActivityReport(filters: ReportFilters, users: AppUser[]): UserActivityRow[] {
+  const roleByName = new Map(users.map((user) => [user.fullName, user.role]));
   const roleLabel = (name: string): string => {
     const role = roleByName.get(name);
     return role ? ROLE_LABELS[role] : '—';

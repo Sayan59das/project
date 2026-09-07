@@ -25,7 +25,8 @@ import { StatusChip } from '../components/StatusChip';
 import { ArtworkPreview } from '../components/ArtworkPreview';
 import { useAuth } from '../auth/AuthContext';
 import { RoleId } from '../auth/permissions';
-import { getUserById, getUsersByRole } from '../data/usersStore';
+import { AppUser } from '../types/user';
+import { useUserDirectory } from '../hooks/useUserDirectory';
 import {
   Actor,
   assignApprovalStage,
@@ -107,6 +108,8 @@ const summaryCardOrder: Array<{ key: keyof ReturnType<typeof getApprovalSummary>
 export function ApprovalsPage() {
   const navigate = useNavigate();
   const { currentUser, hasPermission } = useAuth();
+  const userDirectory = useUserDirectory();
+  const { byRole } = userDirectory;
   const role = currentUser?.role;
   const actor: Actor = {
     id: currentUser?.id ?? '',
@@ -169,9 +172,12 @@ export function ApprovalsPage() {
   // may act) and from the actual actor recorded in history. Manager-only,
   // same authority already gated by assignApprovalStage itself.
   const isManager = role === 'manager';
+  // One fetch of the directory serves both the per-stage assignee lists and
+  // the name shown against the current assignment; byRole already filters to
+  // Active users, so nobody who has been deactivated stays assignable.
   const usersByStage = useMemo(
-    () => Object.fromEntries(APPROVAL_STAGES.map((stage) => [stage.key, getUsersByRole(stage.role)])) as Record<ApprovalStageKey, ReturnType<typeof getUsersByRole>>,
-    []
+    () => Object.fromEntries(APPROVAL_STAGES.map((stage) => [stage.key, byRole(stage.role)])) as Record<ApprovalStageKey, AppUser[]>,
+    [byRole]
   );
   const handleAssign = (stageKey: ApprovalStageKey, userId: string) => {
     if (!selectedItem) return;
@@ -252,7 +258,7 @@ export function ApprovalsPage() {
                   }
                   const currentStage = APPROVAL_STAGES.find((stage) => stage.key === currentStageKey)!;
                   const assignedId = selectedItem.approvalAssignments[currentStageKey];
-                  const assignedUser = assignedId ? getUserById(assignedId) : undefined;
+                  const assignedUser = userDirectory.byId(assignedId);
                   return (
                     <Paper variant="outlined" sx={{ p: 2.5, borderRadius: 3, mb: isManager ? 3 : 0, borderColor: 'var(--c-border)' }}>
                       <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr 1fr', sm: 'repeat(4, 1fr)' }, gap: 2 }}>

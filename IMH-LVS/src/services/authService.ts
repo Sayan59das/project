@@ -10,55 +10,12 @@
 // overrides; the ROLE -> permissions policy stays in src/auth/permissions.ts,
 // which is the single source of it. The backend deliberately keeps no copy
 // (see the backend's 003_user_module_access.sql), so assembling the two is
-// this layer's job.
+// userService.toAppUser's job — shared with the directory so that the user you
+// sign in as and the same user read out of Users are the same object shape.
 
 import { apiRequest } from './apiClient';
-import { AppUser } from '../data/usersStore';
-import { ModuleId, RoleId, UserPermissions, getDefaultPermissionsForRole } from '../auth/permissions';
-
-/** The user shape the API returns — no permissions, overrides as a sparse map. */
-type ApiUser = {
-  id: string;
-  fullName: string;
-  email: string;
-  role: RoleId;
-  department: string;
-  status: AppUser['status'];
-  createdDate: string;
-  phone?: string;
-  lastLogin?: string;
-  moduleAccess?: Partial<Record<ModuleId, boolean>>;
-};
-
-/**
- * Applies a user's stored overrides on top of their role's defaults.
- *
- * Absence means "no override", not "no access" — a user nobody has customised
- * has no rows at all, and reading that as denied would lock every existing
- * user out of every page. That rule is stated in the migration that created
- * the table; this is the other half of it.
- */
-function toAppUser(user: ApiUser): AppUser {
-  const defaults = getDefaultPermissionsForRole(user.role);
-  const permissions: UserPermissions = {
-    modules: { ...defaults.modules, ...(user.moduleAccess ?? {}) },
-    // actions are derived from the role and never stored — see the migration.
-    actions: defaults.actions
-  };
-
-  return {
-    id: user.id,
-    fullName: user.fullName,
-    email: user.email,
-    role: user.role,
-    department: user.department,
-    status: user.status,
-    createdDate: user.createdDate,
-    phone: user.phone,
-    lastLogin: user.lastLogin,
-    permissions
-  };
-}
+import { AppUser } from '../types/user';
+import { ApiUser, toAppUser } from './userService';
 
 export async function login(email: string, password: string): Promise<AppUser> {
   const { user } = await apiRequest<{ user: ApiUser }>('/auth/login', {
