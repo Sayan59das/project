@@ -55,15 +55,18 @@ before(async () => {
 });
 
 after(async () => {
-  if (!SKIP) {
-    // Put the borrowed account back exactly as the seed left it: no
-    // credential, and none of the sessions this suite opened.
-    await getPool().query('DELETE FROM sessions WHERE user_id = $1', [SIGN_IN_AS.id]);
-    await getPool().query(
-      'UPDATE users SET password_hash = NULL, password_updated_at = NULL WHERE id = $1',
-      [SIGN_IN_AS.id]
-    );
-  }
+  // Remove the account this suite created, exactly as every other suite that
+  // calls createTestAccount does (auth, labels.extract, labels.compare,
+  // labels.compareExtracted). This previously ran the cleanup for a BORROWED
+  // seed account instead — clearing a password and sessions on a row it did
+  // not own — left over from before the suite created its own. The account
+  // therefore survived the run, and db.repositories.test.ts's seeded-user
+  // count then failed 6 !== 5 on every subsequent run against the same
+  // database: a suite that poisoned the database it was written to be safe in.
+  //
+  // removeTestAccount deletes the user and cascades its sessions, so no
+  // separate sessions/password cleanup is needed.
+  if (!SKIP) await removeTestAccount(SIGN_IN_AS);
   if (server) await new Promise<void>((resolve) => server.close(() => resolve()));
   await closePool();
 });

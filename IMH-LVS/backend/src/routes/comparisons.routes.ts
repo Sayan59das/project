@@ -15,11 +15,14 @@ import {
   getComparisons,
   getComparisonsByStatus,
   recordWorkflowDecision,
+  submitComparisonForReview,
+  unassignApprovalStage,
   type ComparisonInput,
   type WorkflowDecision
 } from '../repositories/comparison.repository';
 import { asyncHandler, orNotFound, requireActor, requireString, requireWorkflowActor, sendData } from '../controllers/http';
 import { DomainError, ForbiddenError } from '../middleware/domainError';
+import { requireRole } from '../middleware/auth.middleware';
 import { ComparisonStatus, WorkflowStage } from '../types/domain';
 
 const router = Router();
@@ -67,6 +70,26 @@ router.post(
     requireString(req.body, 'productId');
     requireString(req.body, 'newArtworkId');
     sendData(res, await createComparison(req.body as ComparisonInput, requireActor(req)), 201);
+  })
+);
+
+/**
+ * Hands a completed comparison off to the Label Final queue — the Account
+ * Manager's own entry point into the pipeline, not a decision at one of its
+ * four gated stages, so it is its own endpoint rather than a /decisions call.
+ *
+ * Guarded with requireRole() rather than in the handler, unlike the stage rule
+ * below: the role allowed here is fixed by the path, not read out of the body,
+ * so there is nothing to decide at request time. Submitting is what starts the
+ * approval chain, and letting any signed-in user start one would put work into
+ * a reviewer's queue that no Account Manager ever accepted.
+ */
+router.post(
+  '/:id/submit',
+  requireRole('account_manager'),
+  asyncHandler(async (req, res) => {
+    const updated = await submitComparisonForReview(req.params.id, requireActor(req));
+    sendData(res, orNotFound(updated, `Comparison "${req.params.id}"`));
   })
 );
 
@@ -148,6 +171,16 @@ router.put(
       userId,
       requireActor(req)
     );
+    sendData(res, orNotFound(updated, `Comparison "${req.params.id}"`));
+  })
+);
+
+// Clears a stage's assignment back to "unassigned" — the symmetric complement
+// to the PUT above, not a general-purpose stage edit.
+router.delete(
+  '/:id/assignments/:stage',
+  asyncHandler(async (req, res) => {
+    const updated = await unassignApprovalStage(req.params.id, req.params.stage as WorkflowStage);
     sendData(res, orNotFound(updated, `Comparison "${req.params.id}"`));
   })
 );

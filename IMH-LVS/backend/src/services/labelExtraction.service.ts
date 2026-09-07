@@ -47,6 +47,7 @@ import { recoverPackageSizeFromBadge } from './packageSizeOcr.service';
 import { ExtractedLabelFields, extractLabelFields, isGenericProductFormWord, setLabelFieldExtractorDebug } from './labelFieldExtractor.service';
 import { extractColourTheme } from './colourTheme.service';
 import { looksLikeOcrGarbage, scrubPlaceholders } from './placeholderText.service';
+import { applyAiFallback } from './aiExtraction.service';
 import {
   extractClaims,
   extractIngredients,
@@ -449,7 +450,24 @@ export async function extractLabelReportFromFile(
       );
     }
 
-    return { result: scrubbed, unknownClaims: extended.unknownClaims, discardedFields: blanked };
+    // The vision model runs LAST, over the finished result, for the same
+    // reason placeholder scrubbing does: it fills what is still blank after
+    // every other path has had its turn, including the fields the two checks
+    // above just blanked. Running it earlier would have it fill a field that
+    // placeholder text was about to be removed from, and then scrub the
+    // model's answer along with the placeholder.
+    //
+    // A no-op unless AI_EXTRACTION_URL is set, and never throws — see
+    // aiExtraction.service.ts.
+    const ai = await applyAiFallback(scrubbed, { buffer: fileBuffer, mimeType, isPdf });
+    if (ai.filled.length > 0) {
+      console.warn(
+        `[labelExtraction] Filled from the vision model rather than the label's own text: ${ai.filled.join(', ')}. ` +
+          'These values were inferred, not read.'
+      );
+    }
+
+    return { result: ai.result, unknownClaims: extended.unknownClaims, discardedFields: blanked };
   } catch (error) {
     console.error('[labelExtraction] Unexpected error during label extraction:', error instanceof Error ? error.message : error);
     return { result: buildPlaceholderExtraction(), unknownClaims: [], discardedFields: [] };

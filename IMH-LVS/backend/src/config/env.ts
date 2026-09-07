@@ -63,6 +63,21 @@ export const env = {
   // since it logs label file content.
   labelExtractionDebug: process.env.LABEL_EXTRACTION_DEBUG === 'true',
 
+  // The on-prem vision-model service (ai_backend/, FastAPI + Qwen2-VL) that
+  // fills in fields Tesseract could not read. OFF unless a URL is set: the
+  // model is a separate process a deployment may simply not run, and label
+  // extraction must degrade to Tesseract-only rather than fail, so absence
+  // here means "no fallback", never "use the usual address".
+  //
+  // This is the service's ORIGIN. The path is appended by the caller, so a
+  // change to the FastAPI router's prefix is one edit in one place —
+  // previously the full URL was hard-coded at the call site and pointed at a
+  // route (/api/extract) the service has never exposed.
+  aiExtractionUrl: process.env.AI_EXTRACTION_URL?.trim() || undefined,
+  // Local VLM inference is slow and runs inside the upload request. Bounded so
+  // a stalled model cannot hold an upload open indefinitely.
+  aiExtractionTimeoutMs: parsePositiveNumber(process.env.AI_EXTRACTION_TIMEOUT_MS, 45_000),
+
   // How long a session lasts from the moment it is issued. Absolute, not
   // sliding — see 004_auth.sql. Eight hours is one working day: a reviewer
   // signs in once in the morning, and a machine left logged in overnight is

@@ -179,7 +179,14 @@ describe('seed data as the repositories read it', { skip: SKIP }, () => {
   });
 
   it('reads seeded users with no module overrides', async () => {
-    const users = await listUsers();
+    // The SEEDED directory, not "every row in the table". node --test runs
+    // suites from different files concurrently, and the HTTP suites each hold
+    // a signed-in account of their own (testSession.ts) for the length of
+    // their run — so an exact count over the whole table asserts on whichever
+    // other suite happens to be mid-flight, and fails for a reason that has
+    // nothing to do with the seed. Test accounts live under @test.invalid
+    // precisely so they can be told apart here.
+    const users = (await listUsers()).filter((user) => !user.email.endsWith('@test.invalid'));
     assert.equal(users.length, 5);
     // Absence, not an empty object: nobody has customised these users, so the
     // caller applies the role's defaults. See migration 003.
