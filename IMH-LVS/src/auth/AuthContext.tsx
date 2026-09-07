@@ -1,91 +1,135 @@
-import { createContext, ReactNode, useContext, useMemo, useState } from 'react';
+import { ReactNode, createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import { ActionId, ModuleId, RoleId } from './permissions';
-import { verifyMockCredentials } from './mockUsers';
-import { AppUser, getUserByEmail, updateUser } from '../data/usersStore';
-
-const SESSION_KEY = 'imh_lvs_session_email';
-
-// Resolved synchronously (not in an effect) so the very first render already
-// reflects the restored session. Without this, ProtectedRoute would see
-// isAuthenticated=false for one render on every direct URL load/refresh and
-// bounce through /login before the real destination ever shows.
-function restoreSessionUser(): AppUser | null {
-  const sessionEmail = localStorage.getItem(SESSION_KEY);
-  if (!sessionEmail) return null;
-  const user = getUserByEmail(sessionEmail);
-  if (user && user.status === 'Active') return user;
-  localStorage.removeItem(SESSION_KEY);
-  return null;
-}
+import { AppUser } from '../data/usersStore';
+import { ApiError } from '../services/apiClient';
+import { changePassword, getCurrentUser, login as loginRequest, logout as logoutRequest } from '../services/authService';
 
 export type LoginResult = { success: true } | { success: false; error: string };
 
 type AuthContextValue = {
   currentUser: AppUser | null;
   isAuthenticated: boolean;
-  login: (email: string, password: string) => LoginResult;
-  logout: () => void;
+  /**
+   * True until the first /auth/me has answered.
+   *
+   * This exists because the session moved out of localStorage. It used to be
+   * readable synchronously, so the very first render already knew whether
+   * anybody was signed in; now it takes a round trip, and anything that
+   * decides based on isAuthenticated before that answer arrives decides on a
+   * false negative — which is a redirect to /login on every page refresh.
+   * ProtectedRoute waits on this.
+   */
+  isRestoringSession: boolean;
+  login: (email: string, password: string) => Promise<LoginResult>;
+  logout: () => Promise<void>;
+  changeOwnPassword: (currentPassword: string, newPassword: string) => Promise<LoginResult>;
   hasRole: (role: RoleId) => boolean;
   hasPermission: (action: ActionId) => boolean;
   hasModuleAccess: (moduleId: ModuleId) => boolean;
-  refreshCurrentUser: () => void;
+  refreshCurrentUser: () => Promise<void>;
 };
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [currentUser, setCurrentUser] = useState<AppUser | null>(restoreSessionUser);
+  const [currentUser, setCurrentUser] = useState<AppUser | null>(null);
+  const [isRestoringSession, setIsRestoringSession] = useState(true);
 
-  const login = (email: string, password: string): LoginResult => {
-    if (!verifyMockCredentials(email, password)) {
-      return { success: false, error: 'Invalid email or password.' };
+  // The session is an httpOnly cookie, so the page cannot read it and has to
+  // ask who it belongs to. A 401 here is the ordinary "not signed in" answer
+  // and getCurrentUser returns null for it; anything else is a real problem
+  // and is logged rather than swallowed, because a backend that is down must
+  // not look exactly like a visitor who is signed out.
+  useEffect(() => {
+    let cancelled = false;
+
+    getCurrentUser()
+      .then((user) => {
+        if (!cancelled) setCurrentUser(user);
+      })
+      .catch((error: unknown) => {
+        if (!cancelled) {
+          console.error('[auth] Could not restore the session:', error instanceof Error ? error.message : error);
+          setCurrentUser(null);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setIsRestoringSession(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const login = useCallback(async (email: string, password: string): Promise<LoginResult> => {
+    try {
+      setCurrentUser(await loginRequest(email, password));
+      return { success: true };
+    } catch (error) {
+      // The backend's own message is shown as written: it distinguishes a
+      // wrong credential ('Invalid email or password.') from an account that
+      // is not active, and the second one tells somebody to raise a ticket
+      // rather than retype a password they know is right.
+      return { success: false, error: messageFor(error, 'Could not sign in.') };
     }
-    const user = getUserByEmail(email);
-    if (!user) {
-      return { success: false, error: 'No user profile found for this account.' };
+  }, []);
+
+  const logout = useCallback(async () => {
+    try {
+      await logoutRequest();
+    } catch (error) {
+      // Signing out locally has to happen whether or not the server was
+      // reachable — leaving somebody looking at an authenticated UI because
+      // the network blipped is the worse failure of the two.
+      console.error('[auth] Sign-out request failed:', error instanceof Error ? error.message : error);
+    } finally {
+      setCurrentUser(null);
     }
-    if (user.status !== 'Active') {
-      return { success: false, error: 'This account is not active. Contact your administrator.' };
+  }, []);
+
+  const changeOwnPassword = useCallback(
+    async (currentPassword: string, newPassword: string): Promise<LoginResult> => {
+      try {
+        await changePassword(currentPassword, newPassword);
+        return { success: true };
+      } catch (error) {
+        return { success: false, error: messageFor(error, 'Could not change the password.') };
+      }
+    },
+    []
+  );
+
+  const refreshCurrentUser = useCallback(async () => {
+    try {
+      setCurrentUser(await getCurrentUser());
+    } catch (error) {
+      console.error('[auth] Could not refresh the current user:', error instanceof Error ? error.message : error);
     }
-    localStorage.setItem(SESSION_KEY, user.email);
-    const withLastLogin = updateUser(user.id, { lastLogin: new Date().toISOString() }) ?? user;
-    setCurrentUser(withLastLogin);
-    return { success: true };
-  };
-
-  const logout = () => {
-    localStorage.removeItem(SESSION_KEY);
-    setCurrentUser(null);
-  };
-
-  const refreshCurrentUser = () => {
-    if (!currentUser) return;
-    const refreshed = getUserByEmail(currentUser.email);
-    if (refreshed) setCurrentUser(refreshed);
-  };
-
-  const hasRole = (role: RoleId) => currentUser?.role === role;
-
-  const hasPermission = (action: ActionId) => Boolean(currentUser?.permissions.actions.includes(action));
-
-  const hasModuleAccess = (moduleId: ModuleId) => Boolean(currentUser?.permissions.modules[moduleId]);
+  }, []);
 
   const value = useMemo<AuthContextValue>(
     () => ({
       currentUser,
       isAuthenticated: currentUser !== null,
+      isRestoringSession,
       login,
       logout,
-      hasRole,
-      hasPermission,
-      hasModuleAccess,
+      changeOwnPassword,
+      hasRole: (role: RoleId) => currentUser?.role === role,
+      hasPermission: (action: ActionId) => Boolean(currentUser?.permissions.actions.includes(action)),
+      hasModuleAccess: (moduleId: ModuleId) => Boolean(currentUser?.permissions.modules[moduleId]),
       refreshCurrentUser
     }),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [currentUser]
+    [currentUser, isRestoringSession, login, logout, changeOwnPassword, refreshCurrentUser]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
+}
+
+function messageFor(error: unknown, fallback: string): string {
+  if (error instanceof ApiError) return error.message;
+  return error instanceof Error ? error.message : fallback;
 }
 
 export function useAuth(): AuthContextValue {

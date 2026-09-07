@@ -17,15 +17,26 @@ export function LoginPage() {
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [showPassword, setShowPassword] = useState(false);
+  const [isSigningIn, setIsSigningIn] = useState(false);
 
-  const handleSubmit = (event: React.FormEvent) => {
+  // Signing in is a round trip now rather than a localStorage lookup, so the
+  // button has to report that it is working — without the pending state a slow
+  // or unreachable backend looks exactly like a click that did nothing, and
+  // people click again.
+  const handleSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
-    const result = login(email, password);
-    if (result.success) {
+    setError(null);
+    setIsSigningIn(true);
+    try {
+      const result = await login(email, password);
+      if (!result.success) {
+        setError(result.error);
+        return;
+      }
       const user = getUserByEmail(email);
       navigate(user ? getSettings(user.id).defaultLandingPage : '/dashboard');
-    } else {
-      setError(result.error);
+    } finally {
+      setIsSigningIn(false);
     }
   };
 
@@ -137,8 +148,8 @@ export function LoginPage() {
                 }}
               />
 
-              <Button type="submit" variant="contained" fullWidth sx={{ mt: 3, py: 1.5, bgcolor: 'var(--c-orange)', '&:hover': { bgcolor: 'var(--c-orange-600)' }, borderRadius: 3 }}>
-                Login
+              <Button type="submit" variant="contained" fullWidth disabled={isSigningIn} sx={{ mt: 3, py: 1.5, bgcolor: 'var(--c-orange)', '&:hover': { bgcolor: 'var(--c-orange-600)' }, borderRadius: 3 }}>
+                {isSigningIn ? 'Signing in…' : 'Login'}
               </Button>
               <Typography variant="caption" sx={{ display: 'block', textAlign: 'center', color: 'var(--c-text-3)', mt: 2 }}>
                 Forgot your password? Contact your Manager to have it reset.

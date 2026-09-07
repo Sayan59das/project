@@ -21,7 +21,7 @@ export function Navbar({ collapsed, onToggleSidebar }: Props) {
 
   const handleLogout = () => {
     setAnchorEl(null);
-    logout();
+    void logout();
     navigate('/login');
   };
 

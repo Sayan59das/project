@@ -50,7 +50,7 @@ export function Sidebar({ collapsed }: Props) {
             return (
               <ListItemButton
                 {...(isLogout
-                  ? { onClick: () => { logout(); navigate('/login'); } }
+                  ? { onClick: () => { void logout().finally(() => navigate('/login')); } }
                   : { component: Link, to: item.path })}
                 key={item.label}
                 sx={{

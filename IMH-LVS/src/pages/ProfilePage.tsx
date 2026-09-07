@@ -63,7 +63,7 @@ export function ProfilePage() {
       return;
     }
     updateUser(currentUser.id, { fullName: nameDraft.trim(), phone: phoneDraft.trim() || undefined });
-    refreshCurrentUser();
+    void refreshCurrentUser();
     setEditing(false);
     setSuccessMessage('Profile updated successfully.');
   };
