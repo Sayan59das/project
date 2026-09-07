@@ -8,23 +8,30 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import type { Server } from 'node:http';
-import { createApp } from '../app';
+import { env } from '../config/env';
+import { closePool } from '../db/pool';
+import { TEST_ACCOUNTS, createTestAccount, listenForTests, removeTestAccount } from './testSession';
 
 let server: Server;
 let baseUrl: string;
+let token: string;
+
+// /api/labels moved behind the session guard in 004_auth.sql, and a session
+// comes out of the users table — so this suite, which drives the route over
+// HTTP, now needs a database where it used to need none. See testSession.ts for
+// why that trade was made and what still covers extraction without one.
+const SKIP = env.databaseUrl ? false : 'DATABASE_URL is not set — /api/labels needs a session';
 
 before(async () => {
-  const app = createApp();
-  await new Promise<void>((resolve) => {
-    server = app.listen(0, resolve);
-  });
-  const address = server.address();
-  if (!address || typeof address === 'string') throw new Error('Failed to bind test server');
-  baseUrl = `http://127.0.0.1:${address.port}`;
+  if (SKIP) return;
+  ({ server, baseUrl } = await listenForTests());
+  token = await createTestAccount(baseUrl, TEST_ACCOUNTS.compareExtracted);
 });
 
 after(async () => {
-  await new Promise<void>((resolve) => server.close(() => resolve()));
+  if (!SKIP) await removeTestAccount(TEST_ACCOUNTS.compareExtracted);
+  if (server) await new Promise<void>((resolve) => server.close(() => resolve()));
+  await closePool();
 });
 
 function extraction(overrides: Partial<Record<string, string>> = {}) {
@@ -46,14 +53,14 @@ function extraction(overrides: Partial<Record<string, string>> = {}) {
 async function postCompareExtracted(body: unknown): Promise<{ status: number; body: any }> {
   const res = await fetch(`${baseUrl}/api/labels/compare-extracted`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', authorization: `Bearer ${token}` },
     body: JSON.stringify(body)
   });
   const parsedBody = await res.json();
   return { status: res.status, body: parsedBody };
 }
 
-test('Compares two already-extracted labels: identical inputs report a 100% match with no DIFFERENT/MISSING fields', async () => {
+test('Compares two already-extracted labels: identical inputs report a 100% match with no DIFFERENT/MISSING fields', { skip: SKIP }, async () => {
   const labelA = extraction();
   const labelB = extraction();
   const { status, body } = await postCompareExtracted({ labelA, labelB });
@@ -68,7 +75,7 @@ test('Compares two already-extracted labels: identical inputs report a 100% matc
   assert.equal(body.data.comparison.fields.length, 10);
 });
 
-test('Reports DIFFERENT for a genuinely conflicting field between the new artwork and the approved baseline', async () => {
+test('Reports DIFFERENT for a genuinely conflicting field between the new artwork and the approved baseline', { skip: SKIP }, async () => {
   const labelA = extraction({ productName: 'Apple Cider Vinegar Gummies' });
   const labelB = extraction({ productName: 'Chyawanprash Gummies' });
   const { body } = await postCompareExtracted({ labelA, labelB });
@@ -78,7 +85,7 @@ test('Reports DIFFERENT for a genuinely conflicting field between the new artwor
   assert.ok(body.data.comparison.overallPercentage < 100);
 });
 
-test('Reports MISSING when only one side states a field', async () => {
+test('Reports MISSING when only one side states a field', { skip: SKIP }, async () => {
   const labelA = extraction({ flavour: 'Apple' });
   const labelB = extraction({ flavour: '' });
   const { body } = await postCompareExtracted({ labelA, labelB });
@@ -87,25 +94,25 @@ test('Reports MISSING when only one side states a field', async () => {
   assert.equal(flavourField.status, 'MISSING');
 });
 
-test('Missing labelA is rejected with a controlled 400, never a crash', async () => {
+test('Missing labelA is rejected with a controlled 400, never a crash', { skip: SKIP }, async () => {
   const { status, body } = await postCompareExtracted({ labelB: extraction() });
   assert.equal(status, 400);
   assert.equal(body.success, false);
 });
 
-test('Missing labelB is rejected with a controlled 400', async () => {
+test('Missing labelB is rejected with a controlled 400', { skip: SKIP }, async () => {
   const { status, body } = await postCompareExtracted({ labelA: extraction() });
   assert.equal(status, 400);
   assert.equal(body.success, false);
 });
 
-test('A non-string field value is rejected rather than silently coerced', async () => {
+test('A non-string field value is rejected rather than silently coerced', { skip: SKIP }, async () => {
   const { status, body } = await postCompareExtracted({ labelA: { ...extraction(), brand: 42 }, labelB: extraction() });
   assert.equal(status, 400);
   assert.equal(body.success, false);
 });
 
-test('Empty request body is rejected with a controlled 400', async () => {
+test('Empty request body is rejected with a controlled 400', { skip: SKIP }, async () => {
   const { status, body } = await postCompareExtracted({});
   assert.equal(status, 400);
   assert.equal(body.success, false);

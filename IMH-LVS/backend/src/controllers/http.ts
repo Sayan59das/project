@@ -7,7 +7,8 @@
 // constraint it was meant to mirror.
 
 import { NextFunction, Request, RequestHandler, Response } from 'express';
-import { DomainError, NotFoundError } from '../middleware/domainError';
+import { DomainError, NotFoundError, UnauthenticatedError } from '../middleware/domainError';
+import { AppUser } from '../types/domain';
 
 /**
  * Sends an async handler's rejection to the error middleware.
@@ -43,47 +44,51 @@ export function orNotFound<T>(value: T | undefined, what: string): T {
 /**
  * Who is making this request.
  *
- * THIS IS NOT AUTHENTICATION. There is no auth on this backend yet, and the
- * audit trail still has to name someone, so the caller states who they are in
- * a header and the server believes it. Anyone who can reach this API can claim
- * to be anyone.
+ * This IS authentication now. The actor comes from the session resolved by
+ * requireSession (src/middleware/auth.middleware.ts) — a row in `sessions`
+ * matched by the hash of a token the caller proved they hold — and NOT from
+ * anything the caller can assert about themselves.
  *
- * It is a header rather than a body field so that reads, writes and multipart
- * uploads all carry it the same way, and so replacing this function with a
- * decoded session is a change in one place. Until then, this API must not be
- * exposed outside a trusted network — see backend/README.md.
+ * Until 004_auth.sql this read an X-Actor-Name header and believed it, which
+ * meant anyone who could reach the API could approve a label under someone
+ * else's name. That header is now ignored wherever it still arrives: a client
+ * mid-migration that keeps sending it gets its real identity recorded rather
+ * than the claimed one, so the two can overlap without the old behaviour
+ * leaking through.
  *
- * Missing is an error rather than a default: 'system' or 'unknown' in an audit
- * trail a pharma reviewer relies on is worse than a refused request, because it
- * looks like a real answer.
+ * Throwing rather than defaulting is unchanged and still the point: 'system'
+ * or 'unknown' in an audit trail a pharma reviewer relies on is worse than a
+ * refused request, because it looks like a real answer. The only difference is
+ * that the failure is now a 401 the client can act on rather than a 400 about
+ * a missing header.
  */
 export function requireActor(req: Request): string {
-  const actor = header(req, 'x-actor-name');
-  if (!actor) {
-    throw new DomainError(
-      'Missing X-Actor-Name header. Every write is recorded against a person, so the caller has to say who is acting.'
-    );
-  }
-  return actor;
+  return requireActorRecord(req).fullName;
 }
 
-/** The full actor a workflow decision records: id, name and role. */
+/**
+ * The full actor a workflow decision records: id, name and role.
+ *
+ * All three come off the authenticated user, so they are necessarily
+ * consistent with each other and with the `users` row they name. The previous
+ * version assembled them from three separate headers, which allowed a caller
+ * to pair one person's id with another person's role — an audit entry that is
+ * internally contradictory and impossible to detect after the fact.
+ */
 export function requireWorkflowActor(req: Request): { id: string; name: string; role: string } {
-  const id = header(req, 'x-actor-id');
-  const role = header(req, 'x-actor-role');
-  const name = requireActor(req);
-
-  if (!id || !role) {
-    throw new DomainError(
-      'A workflow decision is recorded against a specific user. Send X-Actor-Id, X-Actor-Name and X-Actor-Role.'
-    );
-  }
-  return { id, name, role };
+  const user = requireActorRecord(req);
+  return { id: user.id, name: user.fullName, role: user.role };
 }
 
-function header(req: Request, name: string): string | undefined {
-  const value = req.get(name);
-  return typeof value === 'string' && value.trim() !== '' ? value.trim() : undefined;
+function requireActorRecord(req: Request): AppUser {
+  if (!req.actor) {
+    // Reachable only by mounting a route that calls this behind no
+    // requireSession — a wiring mistake, not something a client can cause.
+    // It is still an UnauthenticatedError rather than a 500, because the
+    // honest answer to "who is acting" is nobody.
+    throw new UnauthenticatedError();
+  }
+  return req.actor.user;
 }
 
 /**

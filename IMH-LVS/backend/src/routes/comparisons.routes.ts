@@ -19,6 +19,7 @@ import {
   type WorkflowDecision
 } from '../repositories/comparison.repository';
 import { asyncHandler, orNotFound, requireActor, requireString, requireWorkflowActor, sendData } from '../controllers/http';
+import { DomainError, ForbiddenError } from '../middleware/domainError';
 import { ComparisonStatus, WorkflowStage } from '../types/domain';
 
 const router = Router();
@@ -81,17 +82,59 @@ router.post(
   '/:id/decisions',
   asyncHandler(async (req, res) => {
     const body = req.body as Omit<WorkflowDecision, 'actor'>;
-    requireString(req.body, 'stage');
+    const stage = requireString(req.body, 'stage') as WorkflowStage;
     requireString(req.body, 'action');
     requireString(req.body, 'resultingStatus');
 
-    const updated = await recordWorkflowDecision(req.params.id, {
-      ...body,
-      actor: requireWorkflowActor(req)
-    });
+    const actor = requireWorkflowActor(req);
+    requireStageRole(stage, actor.role);
+
+    const updated = await recordWorkflowDecision(req.params.id, { ...body, actor });
     sendData(res, orNotFound(updated, `Comparison "${req.params.id}"`));
   })
 );
+
+/**
+ * Each stage of the chain is taken by exactly one role.
+ *
+ * This is the one authorisation rule the backend owns outright, and it is
+ * enforced here rather than in a requireRole() on the route because the
+ * allowed role depends on the stage in the BODY, not on the path.
+ *
+ * It is not a duplicate of the frontend's permission model. src/auth/
+ * permissions.ts decides which pages a person is shown; this decides who may
+ * sign a step of an approval chain, which is a claim the audit trail makes
+ * about a regulated process. A rule enforced only in the UI is a rule that
+ * holds until somebody calls the API directly — and before 004_auth.sql, when
+ * the role arrived in a header the server believed, there was nothing here to
+ * enforce it against anyway.
+ *
+ * A Manager is NOT given a blanket override. Approving on someone else's
+ * behalf and recording it as your own decision is exactly the confusion the
+ * chain exists to prevent; if a Manager needs to act for an absent reviewer,
+ * that is a reassignment (PUT /assignments/:stage), which leaves a trail
+ * saying so.
+ */
+const ROLE_FOR_STAGE: Record<WorkflowStage, string> = {
+  'Label Final': 'label_final',
+  Technical: 'technical',
+  QA: 'qa',
+  Manager: 'manager'
+};
+
+function requireStageRole(stage: WorkflowStage, role: string): void {
+  const required = ROLE_FOR_STAGE[stage];
+  if (!required) {
+    throw new DomainError(
+      `Unknown workflow stage "${stage}". Valid stages are ${Object.keys(ROLE_FOR_STAGE).join(', ')}.`
+    );
+  }
+  if (role !== required) {
+    throw new ForbiddenError(
+      `The ${stage} stage is decided by the ${required} role. You are signed in as ${role}.`
+    );
+  }
+}
 
 // One reviewer per stage: assigning again replaces the previous one rather
 // than accumulating, so PUT rather than POST.

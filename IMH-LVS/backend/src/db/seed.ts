@@ -31,6 +31,8 @@
 
 import type { PoolClient } from 'pg';
 import { closePool, withTransaction } from './pool';
+import { env } from '../config/env';
+import { hashPassword } from '../services/password.service';
 import { versionToNumber } from '../repositories/mappers';
 import {
   ArtworkStatus,
@@ -845,8 +847,52 @@ export async function seed(): Promise<Record<string, number>> {
       COMPARISONS.flatMap(parameterRows)
     );
 
+    await applySeedPasswords(client);
+
     return counts;
   });
+}
+
+/**
+ * Gives every seeded user the password in SEED_USER_PASSWORD, if one is set.
+ *
+ * Runs on every seed rather than only on first insert, because the seed's job
+ * is "put the demo environment in a known state" and a half-seeded database
+ * whose users cannot log in is not that. It is safe to re-run: setting the same
+ * password again is a no-op from the outside.
+ *
+ * DOES NOTHING when the variable is unset, which is the default and the whole
+ * safety property — see env.seedUserPassword. A seed run against a real
+ * deployment must not quietly install a password somebody could look up in
+ * this repository, so the absence of the variable has to mean "no credential"
+ * rather than "use the usual one".
+ *
+ * It overwrites an existing password rather than filling in only the NULLs, so
+ * that re-running the seed after somebody has been experimenting restores a
+ * known state. That is acceptable ONLY because it is gated on an environment
+ * variable a production deploy does not set — the same reasoning, and the same
+ * blast radius, as the rest of this file.
+ */
+async function applySeedPasswords(client: PoolClient): Promise<void> {
+  if (!env.seedUserPassword) return;
+
+  // Hashed once and shared, not per user. These are all the same password by
+  // definition, and scrypt at these parameters costs ~50-100ms — paying that
+  // five times to produce five different salts for one publicly-known demo
+  // password buys nothing.
+  //
+  // This is the one place a shared salt is defensible, and it is defensible
+  // only because the password is not secret. Never do this for real ones.
+  const hash = await hashPassword(env.seedUserPassword);
+
+  await client.query(
+    `UPDATE users SET password_hash = $2, password_updated_at = now()
+      WHERE id = ANY($1::text[])`,
+    [USERS.map((row) => row.id), hash]
+  );
+
+  // eslint-disable-next-line no-console
+  console.log(`[seed] users: password set from SEED_USER_PASSWORD for ${USERS.length} seeded accounts`);
 }
 
 // Executed directly (`npm run db:seed`) rather than imported.

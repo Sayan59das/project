@@ -50,3 +50,33 @@ export class ConflictError extends DomainError {
     this.name = 'ConflictError';
   }
 }
+
+/**
+ * 401 — nobody is signed in, or the session presented is no longer usable.
+ *
+ * The message is deliberately the same one for every cause. An unknown token,
+ * an expired one, a revoked one and a session whose account was restricted all
+ * arrive here identically, because telling the caller which of those happened
+ * tells an attacker which tokens are real. The place to explain an account
+ * problem is the login response, where a credential has actually been proved.
+ */
+export class UnauthenticatedError extends DomainError {
+  constructor(message = 'Sign in to continue.') {
+    super(message, 401);
+    this.name = 'UnauthenticatedError';
+  }
+}
+
+/**
+ * 403 — we know who you are, and you may not do this.
+ *
+ * Distinct from a 401 in the one way that matters to the client: signing in
+ * again will not help. The frontend shows these, so the message names the
+ * roles that would have been allowed rather than saying "forbidden".
+ */
+export class ForbiddenError extends DomainError {
+  constructor(message: string) {
+    super(message, 403);
+    this.name = 'ForbiddenError';
+  }
+}

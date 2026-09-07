@@ -9,6 +9,12 @@
 // Every test here either reads or is rejected before it writes, so the suite
 // leaves the seeded database untouched without needing transactions. Mutating
 // writes are tested at the repository level, where they can be rolled back.
+//
+// Since 004_auth.sql every one of these routes needs a session, so the suite
+// creates an account of its own in before(), sends its token on every request,
+// and removes it in after(). See testSession.ts for why each suite gets its own
+// rather than sharing or borrowing a seeded one. Who the actor is, and the fact
+// that it can no longer be asserted in a header, is covered in auth.test.ts.
 
 import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
@@ -16,11 +22,16 @@ import type { Server } from 'node:http';
 import { createApp } from '../app';
 import { closePool, getPool } from '../db/pool';
 import { env } from '../config/env';
+import { TEST_ACCOUNTS, createTestAccount, removeTestAccount } from './testSession';
 
 const SKIP = env.databaseUrl ? false : 'DATABASE_URL is not set — see src/db/pool.ts';
 
 let server: Server;
 let baseUrl: string;
+let token: string;
+
+// label_final, because the workflow decision exercised below is that stage.
+const SIGN_IN_AS = TEST_ACCOUNTS.persistence;
 
 before(async () => {
   if (SKIP) return;
@@ -39,15 +50,28 @@ before(async () => {
   const address = server.address();
   if (!address || typeof address === 'string') throw new Error('Failed to bind test server');
   baseUrl = `http://127.0.0.1:${address.port}`;
+
+  token = await createTestAccount(baseUrl, SIGN_IN_AS);
 });
 
 after(async () => {
+  if (!SKIP) {
+    // Put the borrowed account back exactly as the seed left it: no
+    // credential, and none of the sessions this suite opened.
+    await getPool().query('DELETE FROM sessions WHERE user_id = $1', [SIGN_IN_AS.id]);
+    await getPool().query(
+      'UPDATE users SET password_hash = NULL, password_updated_at = NULL WHERE id = $1',
+      [SIGN_IN_AS.id]
+    );
+  }
   if (server) await new Promise<void>((resolve) => server.close(() => resolve()));
   await closePool();
 });
 
+// Bearer rather than the cookie: there is no cookie jar here, and the header is
+// the path this API deliberately keeps open for non-browser callers.
 async function get(path: string): Promise<{ status: number; body: any }> {
-  const response = await fetch(`${baseUrl}${path}`);
+  const response = await fetch(`${baseUrl}${path}`, { headers: { authorization: `Bearer ${token}` } });
   return { status: response.status, body: await response.json() };
 }
 
@@ -59,7 +83,7 @@ async function send(
 ): Promise<{ status: number; body: any }> {
   const response = await fetch(`${baseUrl}${path}`, {
     method,
-    headers: { 'content-type': 'application/json', ...headers },
+    headers: { 'content-type': 'application/json', authorization: `Bearer ${token}`, ...headers },
     body: JSON.stringify(body)
   });
   return { status: response.status, body: await response.json() };
@@ -106,26 +130,41 @@ describe('master data routes', { skip: SKIP }, () => {
 // the caller states who they are — but a write with nobody named is refused
 // rather than attributed to 'system', because a fabricated name in an audit
 // trail reads like a real one.
-describe('actor enforcement', { skip: SKIP }, () => {
-  it('refuses a write with no actor, and explains why', async () => {
-    const { status, body } = await send('POST', '/api/masters/flavours', {
-      flavourName: 'Blueberry',
-      status: 'Active'
+describe('authentication', { skip: SKIP }, () => {
+  // These two used to assert that a write without X-Actor-Name was a 400 naming
+  // the header. That contract is gone: the actor is no longer something a
+  // caller supplies, so its absence is not a malformed request but an
+  // unauthenticated one. Both are kept, pointed at the replacement behaviour,
+  // because the property they were protecting — no write is ever recorded
+  // without a named person behind it — is unchanged, and is the reason the
+  // route refuses at all.
+  it('refuses a write with no session', async () => {
+    const response = await fetch(`${baseUrl}/api/masters/flavours`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ flavourName: 'Blueberry', status: 'Active' })
     });
-    assert.equal(status, 400);
-    assert.match(body.message, /X-Actor-Name/);
-    assert.match(body.message, /recorded against a person/);
+    assert.equal(response.status, 401);
+    const refused = (await response.json()) as { message: string };
+    assert.match(refused.message, /sign in/i);
   });
 
-  it('refuses a workflow decision without the full actor identity', async () => {
-    const { status, body } = await send(
-      'POST',
-      '/api/comparisons/CMP-0001/decisions',
-      { stage: 'Label Final', action: 'Sent to Technical', resultingStatus: 'Pending Technical' },
-      { 'x-actor-name': 'Neha Singh' }
-    );
-    assert.equal(status, 400);
-    assert.match(body.message, /X-Actor-Id/);
+  it('refuses a workflow decision with no session, whatever the old actor headers claim', async () => {
+    const response = await fetch(`${baseUrl}/api/comparisons/CMP-0001/decisions`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-actor-name': 'Neha Singh',
+        'x-actor-id': 'U-003',
+        'x-actor-role': 'label_final'
+      },
+      body: JSON.stringify({
+        stage: 'Label Final',
+        action: 'Sent to Technical',
+        resultingStatus: 'Pending Technical'
+      })
+    });
+    assert.equal(response.status, 401);
   });
 });
 
@@ -298,7 +337,16 @@ describe('user routes', { skip: SKIP }, () => {
 
   it('lists the directory with module overrides absent', async () => {
     const { body } = await get('/api/users');
-    assert.equal(body.data.length, 5);
+
+    // The five seeded users are asserted by id rather than by counting rows.
+    // An exact count would now be a claim about every OTHER suite too — they
+    // run concurrently and each creates a user of its own (testSession.ts) —
+    // and this test is about the shape of a directory record, not the size of
+    // the population.
+    const ids = body.data.map((user: any) => user.id);
+    for (const seeded of ['U-001', 'U-002', 'U-003', 'U-004', 'U-005']) {
+      assert.ok(ids.includes(seeded), `directory is missing seeded user ${seeded}`);
+    }
     assert.equal(body.data.every((user: any) => user.moduleAccess === undefined), true);
   });
 });

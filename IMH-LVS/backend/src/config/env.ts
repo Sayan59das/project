@@ -61,5 +61,35 @@ export const env = {
   // use while diagnosing a real label's extraction; never enable this in a
   // deployment handling real uploads for longer than a debugging session,
   // since it logs label file content.
-  labelExtractionDebug: process.env.LABEL_EXTRACTION_DEBUG === 'true'
+  labelExtractionDebug: process.env.LABEL_EXTRACTION_DEBUG === 'true',
+
+  // How long a session lasts from the moment it is issued. Absolute, not
+  // sliding — see 004_auth.sql. Eight hours is one working day: a reviewer
+  // signs in once in the morning, and a machine left logged in overnight is
+  // not still authenticated in the morning.
+  sessionTtlHours: parsePositiveNumber(process.env.SESSION_TTL_HOURS, 8),
+
+  // The session cookie's SameSite/Secure attributes.
+  //
+  // Locally the API (4000) and the Vite dev server (4173/5173) differ only by
+  // port, and ports do not make two origins cross-SITE, so a Lax cookie is
+  // sent and nothing special is needed. On Render they are two hosts under
+  // onrender.com, which IS on the public suffix list, so they are cross-site
+  // and the cookie has to be SameSite=None; Secure or the browser drops it.
+  //
+  // Explicit rather than inferred from NODE_ENV, matching databaseSsl above:
+  // the deployment topology is the thing that decides this, and a developer
+  // running NODE_ENV=production locally over http must not silently get a
+  // cookie the browser refuses to store.
+  sessionCookieCrossSite: parseBoolean(process.env.SESSION_COOKIE_CROSS_SITE, false),
+
+  // A password applied to every seeded user by `npm run db:seed`.
+  //
+  // Has NO default, on purpose. Seeding a known password into a database
+  // nobody asked to be seeded that way is how a demo credential reaches a
+  // deployment; leaving it unset means the seeded users simply have no
+  // credential and cannot log in until somebody sets one. For local work,
+  // put SEED_USER_PASSWORD=password123 in .env — the same password the
+  // frontend prototype's mock login used (src/auth/mockUsers.ts).
+  seedUserPassword: process.env.SEED_USER_PASSWORD?.trim() ?? ''
 };

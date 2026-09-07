@@ -35,29 +35,88 @@ everything else is unaffected) degrades gracefully: the API still returns
 `200` with all 7 fields blank rather than erroring or crashing, and a clear
 message is logged server-side. See "Known limitations" below.
 
-## There is no authentication yet — do not expose this API
+## Authentication
 
-The persistence routes (`/api/masters`, `/api/products`, `/api/users`,
-`/api/artworks`, `/api/comparisons`) have **no authentication and no
-authorization**. Every write is recorded against a person because the audit
-trail requires one, and with no sessions the caller simply states who they are:
+Every route needs a signed-in, Active user except two: `/api/health`, which a
+platform health check calls before anybody could be signed in, and `/api/auth`,
+which is where a session comes from. The list is explicit in
+`src/routes/index.ts` so a new router cannot inherit "public" by accident.
 
 ```
-X-Actor-Name: Neha Singh          # every write
-X-Actor-Id / X-Actor-Role          # also required for a workflow decision
+POST /api/auth/login      { email, password }  -> sets a session cookie, also returns a token
+POST /api/auth/logout                          -> ends the session, clears the cookie
+GET  /api/auth/me                              -> the signed-in user (how a SPA restores state)
+POST /api/auth/password   { currentPassword, newPassword }
 ```
 
-The server believes it. Anyone who can reach the API can approve a label as
-anybody, and read or change every record.
+A browser holds an **httpOnly** cookie, so page script cannot read the session
+and an XSS bug cannot copy it somewhere it keeps working. Non-browser callers
+(scripts, the tests) send `Authorization: Bearer <token>` instead.
 
-A missing actor is a `400` rather than a default like `system`, on purpose: a
-fabricated name in a pharma approval trail reads exactly like a real one, and
-is worse than a refused request. But that only makes the trail honest about
-*absence* — it does nothing about impersonation.
+**Sessions are rows, not signed tokens.** `sessions` is checked on every
+request, which is what makes revocation real: a Manager setting an account to
+Restricted or Inactive stops that person on their very next call rather than
+whenever a token would have expired. A JWT cannot be withdrawn, and honouring
+those four user states with one would have meant a revocation list — the same
+table, plus a window of wrongness. See `db/migrations/004_auth.sql`.
 
-**So until real auth lands, this backend must not be reachable from the public
-internet.** `requireActor` in `src/controllers/http.ts` is the single place a
-decoded session would replace these headers.
+Passwords are **scrypt** (`node:crypto`), with the cost parameters stored in
+each hash so they can be raised later without invalidating existing
+credentials. No native addon, no new dependency — see
+`src/services/password.service.ts` for why that beat bcrypt and argon2 here.
+
+### Who a write is recorded against
+
+The actor comes from the session and nothing else. `X-Actor-Name`,
+`X-Actor-Id` and `X-Actor-Role` used to be believed as sent; they are now
+ignored wherever they still arrive, so a client mid-migration records its real
+identity rather than a claimed one. `requireActor` in
+`src/controllers/http.ts` is still the single place that answers "who is
+acting", it just answers from `req.actor` now.
+
+A missing actor is still refused rather than defaulted to something like
+`system`: a fabricated name in a pharma approval trail reads exactly like a
+real one. It is now a `401` rather than a `400`.
+
+### Which role may sign which stage
+
+`Label Final -> Technical -> QA -> Manager` maps one stage to one role, and
+`POST /api/comparisons/:id/decisions` enforces it (`comparisons.routes.ts`).
+A Manager gets no blanket override — acting for an absent reviewer is a
+reassignment, which leaves a trail saying so.
+
+This is deliberately NOT a copy of the frontend's `ROLE_MODULE_ACCESS`. That
+decides which pages a person is shown and the frontend owns it (see
+`003_user_module_access.sql`); this decides who may sign a step of a regulated
+approval chain, which cannot be left to the UI.
+
+### Giving the seeded users a password
+
+`npm run db:seed` sets one only if `SEED_USER_PASSWORD` is set, and there is no
+default — a seed run against a real deployment must not quietly install a
+password anybody could read out of this repository. For local work:
+
+```
+SEED_USER_PASSWORD=password123
+```
+
+### Still missing
+
+- **Rate limiting on `/api/auth/login`.** Deliberately not done in-process: an
+  in-memory counter resets on every deploy and is not shared between
+  instances, so it would report a control that does not exist. It belongs at
+  the edge (Render, or a reverse proxy).
+- **Failed-login auditing.** Belongs in an append-only table in the style of
+  `comparison_workflow_history`, not a counter on `users` — see the note at the
+  bottom of `004_auth.sql`.
+- **Password reset / invite.** A user with no `password_hash` cannot sign in,
+  which is the honest state for an account nobody has set one for; there is no
+  self-service way out of it yet.
+- **The frontend still signs in against `src/auth/mockUsers.ts`**, because it
+  still owns all of its state in localStorage and does not call this API at
+  all. Wiring its login to `/api/auth/login` belongs with that migration, not
+  ahead of it — done alone it would make the app require a database to log in
+  while every screen still read localStorage.
 
 ## Database (Postgres)
 

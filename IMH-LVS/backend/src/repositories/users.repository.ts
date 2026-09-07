@@ -269,3 +269,59 @@ export async function recordLogin(id: string, db: Queryable = getPool()): Promis
   const { rowCount } = await db.query('UPDATE users SET last_login = now() WHERE id = $1', [id]);
   return rowCount === 1 ? getUserById(id, db) : undefined;
 }
+
+/**
+ * The stored credential for an email address, for the login path only.
+ *
+ * Deliberately NOT part of AppUser or USER_SELECT. Every other read in this
+ * file returns a record that gets serialised to an API response somewhere, and
+ * a password hash that travels inside the ordinary user shape is one
+ * forgetful `res.json(user)` away from being published. Keeping it behind its
+ * own function means the hash only ever loads where somebody asked for it by
+ * name.
+ *
+ * Returns the row for ANY status, not just Active. Whether a suspended account
+ * may log in is an authorisation question the caller answers after the
+ * password is verified — checking it here instead would answer it by failing
+ * the password comparison, which tells the caller "wrong password" about an
+ * account whose password was right.
+ */
+export type UserCredential = { id: string; status: UserStatus; passwordHash: string | undefined };
+
+export async function getCredentialByEmail(
+  email: string,
+  db: Queryable = getPool()
+): Promise<UserCredential | undefined> {
+  const { rows } = await db.query<{ id: string; status: UserStatus; password_hash: string | null }>(
+    'SELECT id, status, password_hash FROM users WHERE email = $1',
+    [email]
+  );
+  const row = rows[0];
+  return row ? { id: row.id, status: row.status, passwordHash: nullToUndefined(row.password_hash) } : undefined;
+}
+
+/**
+ * Sets or replaces a user's password.
+ *
+ * Takes an already-hashed value rather than a plaintext one, so this file
+ * never sees a password and cannot log one. Hashing lives in
+ * services/password.service.ts; choosing to hash is the caller's decision and
+ * the caller is the only place that holds the plaintext.
+ *
+ * Moves password_updated_at but NOT updated_at, for the same reason
+ * recordLogin above leaves it alone: a credential change is not an edit to the
+ * directory entry, and conflating them makes "when was this profile last
+ * modified" unanswerable.
+ *
+ * Ending the user's other sessions is NOT done here. It has to happen, but it
+ * is a second table and a policy decision (a self-service change should end
+ * the others and keep the current one; an administrator's reset should end
+ * them all), so it belongs to the route that knows which of those it is.
+ */
+export async function setPasswordHash(id: string, passwordHash: string, db: Queryable = getPool()): Promise<boolean> {
+  const { rowCount } = await db.query(
+    'UPDATE users SET password_hash = $2, password_updated_at = now() WHERE id = $1',
+    [id, passwordHash]
+  );
+  return rowCount === 1;
+}

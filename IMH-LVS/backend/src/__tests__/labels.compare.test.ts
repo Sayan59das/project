@@ -9,24 +9,31 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import type { Server } from 'node:http';
-import { createApp } from '../app';
+import { env } from '../config/env';
+import { closePool } from '../db/pool';
+import { TEST_ACCOUNTS, createTestAccount, listenForTests, removeTestAccount } from './testSession';
 
 const FIXTURES_DIR = path.join(__dirname, 'fixtures');
 let server: Server;
 let baseUrl: string;
+let token: string;
+
+// /api/labels moved behind the session guard in 004_auth.sql, and a session
+// comes out of the users table — so this suite, which drives the route over
+// HTTP, now needs a database where it used to need none. See testSession.ts for
+// why that trade was made and what still covers extraction without one.
+const SKIP = env.databaseUrl ? false : 'DATABASE_URL is not set — /api/labels needs a session';
 
 before(async () => {
-  const app = createApp();
-  await new Promise<void>((resolve) => {
-    server = app.listen(0, resolve);
-  });
-  const address = server.address();
-  if (!address || typeof address === 'string') throw new Error('Failed to bind test server');
-  baseUrl = `http://127.0.0.1:${address.port}`;
+  if (SKIP) return;
+  ({ server, baseUrl } = await listenForTests());
+  token = await createTestAccount(baseUrl, TEST_ACCOUNTS.compare);
 });
 
 after(async () => {
-  await new Promise<void>((resolve) => server.close(() => resolve()));
+  if (!SKIP) await removeTestAccount(TEST_ACCOUNTS.compare);
+  if (server) await new Promise<void>((resolve) => server.close(() => resolve()));
+  await closePool();
 });
 
 function fixture(name: string): Buffer {
@@ -41,7 +48,7 @@ async function postCompare(
   const form = new FormData();
   if (labelAFile) form.append('labelA', new Blob([fixture(labelAFile)], { type: mimeType }), labelAFile);
   if (labelBFile) form.append('labelB', new Blob([fixture(labelBFile)], { type: mimeType }), labelBFile);
-  const res = await fetch(`${baseUrl}/api/labels/compare`, { method: 'POST', body: form });
+  const res = await fetch(`${baseUrl}/api/labels/compare`, { method: 'POST', body: form, headers: { authorization: `Bearer ${token}` } });
   const body = await res.json();
   return { status: res.status, body };
 }
@@ -57,7 +64,7 @@ function fieldResult(body: any, field: string) {
 // DIFFERENT (product name), and MISSING (flavour: Apple Cider Vinegar
 // Gummy states one, Chyawanprash Gummies states none) all in one real,
 // non-synthetic comparison.
-test('Compare two different real label PDFs: MATCH/DIFFERENT/MISSING all correctly distinguished', async () => {
+test('Compare two different real label PDFs: MATCH/DIFFERENT/MISSING all correctly distinguished', { skip: SKIP }, async () => {
   const { status, body } = await postCompare('apple-cider-vinegar-gummy.pdf', 'chyawanprash-gummies.pdf');
   assert.equal(status, 200);
   assert.equal(body.success, true);
@@ -114,7 +121,7 @@ test('Compare two different real label PDFs: MATCH/DIFFERENT/MISSING all correct
 // this is byte-identical content), never DIFFERENT or MISSING — and a
 // 100% overall score, since every field that was actually compared
 // matched.
-test('Compare a real label against itself: every populated field matches, overall score is 100%', async () => {
+test('Compare a real label against itself: every populated field matches, overall score is 100%', { skip: SKIP }, async () => {
   const { status, body } = await postCompare('apple-cider-vinegar-gummy.pdf', 'apple-cider-vinegar-gummy.pdf');
   assert.equal(status, 200);
   assert.equal(body.success, true);
@@ -129,35 +136,35 @@ test('Compare a real label against itself: every populated field matches, overal
   assert.equal(comparison.overallPercentage, 100);
 });
 
-test('Missing Label A returns a controlled 400', async () => {
+test('Missing Label A returns a controlled 400', { skip: SKIP }, async () => {
   const { status, body } = await postCompare(null, 'chyawanprash-gummies.pdf');
   assert.equal(status, 400);
   assert.equal(body.success, false);
   assert.match(body.message, /label a/i);
 });
 
-test('Missing Label B returns a controlled 400', async () => {
+test('Missing Label B returns a controlled 400', { skip: SKIP }, async () => {
   const { status, body } = await postCompare('apple-cider-vinegar-gummy.pdf', null);
   assert.equal(status, 400);
   assert.equal(body.success, false);
   assert.match(body.message, /label b/i);
 });
 
-test('Missing both files returns a controlled 400', async () => {
+test('Missing both files returns a controlled 400', { skip: SKIP }, async () => {
   const { status, body } = await postCompare(null, null);
   assert.equal(status, 400);
   assert.equal(body.success, false);
   assert.match(body.message, /label a.*label b|both/i);
 });
 
-test('Unsupported file type on either side is rejected with a controlled 400', async () => {
+test('Unsupported file type on either side is rejected with a controlled 400', { skip: SKIP }, async () => {
   const { status, body } = await postCompare('unsupported.txt', 'chyawanprash-gummies.pdf', 'text/plain');
   assert.equal(status, 400);
   assert.equal(body.success, false);
   assert.match(body.message, /unsupported file type/i);
 });
 
-test('Oversized file on either side is rejected with a controlled error, not a crash', async () => {
+test('Oversized file on either side is rejected with a controlled error, not a crash', { skip: SKIP }, async () => {
   const { status, body } = await postCompare('oversized.jpg', 'chyawanprash-gummies.pdf', 'image/jpeg');
   assert.equal(status, 413);
   assert.equal(body.success, false);
@@ -167,7 +174,7 @@ test('Oversized file on either side is rejected with a controlled error, not a c
 // response — an empty extraction on both sides is a valid state (per the
 // no-fabrication rule everywhere else in this app), reported as
 // NOT_COMPARED fields, never surfaced as a request failure.
-test('Two unreadable files: comparison still succeeds, reported as NOT_COMPARED rather than an error', async () => {
+test('Two unreadable files: comparison still succeeds, reported as NOT_COMPARED rather than an error', { skip: SKIP }, async () => {
   const { status, body } = await postCompare('corrupt.pdf', 'corrupt.pdf');
   assert.equal(status, 200);
   assert.equal(body.success, true);

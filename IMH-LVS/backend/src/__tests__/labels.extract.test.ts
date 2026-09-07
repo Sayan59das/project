@@ -13,24 +13,31 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import type { Server } from 'node:http';
-import { createApp } from '../app';
+import { env } from '../config/env';
+import { closePool } from '../db/pool';
+import { TEST_ACCOUNTS, createTestAccount, listenForTests, removeTestAccount } from './testSession';
 
 const FIXTURES_DIR = path.join(__dirname, 'fixtures');
 let server: Server;
 let baseUrl: string;
+let token: string;
+
+// /api/labels moved behind the session guard in 004_auth.sql, and a session
+// comes out of the users table — so this suite, which drives the route over
+// HTTP, now needs a database where it used to need none. See testSession.ts for
+// why that trade was made and what still covers extraction without one.
+const SKIP = env.databaseUrl ? false : 'DATABASE_URL is not set — /api/labels needs a session';
 
 before(async () => {
-  const app = createApp();
-  await new Promise<void>((resolve) => {
-    server = app.listen(0, resolve);
-  });
-  const address = server.address();
-  if (!address || typeof address === 'string') throw new Error('Failed to bind test server');
-  baseUrl = `http://127.0.0.1:${address.port}`;
+  if (SKIP) return;
+  ({ server, baseUrl } = await listenForTests());
+  token = await createTestAccount(baseUrl, TEST_ACCOUNTS.extract);
 });
 
 after(async () => {
-  await new Promise<void>((resolve) => server.close(() => resolve()));
+  if (!SKIP) await removeTestAccount(TEST_ACCOUNTS.extract);
+  if (server) await new Promise<void>((resolve) => server.close(() => resolve()));
+  await closePool();
 });
 
 function fixture(name: string): Buffer {
@@ -43,7 +50,7 @@ async function postLabel(fileName: string | null, mimeType?: string): Promise<{ 
     const buffer = fixture(fileName);
     form.append('file', new Blob([buffer], { type: mimeType }), fileName);
   }
-  const res = await fetch(`${baseUrl}/api/labels/extract`, { method: 'POST', body: form });
+  const res = await fetch(`${baseUrl}/api/labels/extract`, { method: 'POST', body: form, headers: { authorization: `Bearer ${token}` } });
   const body = await res.json();
   return { status: res.status, body };
 }
@@ -76,7 +83,7 @@ function assertWellFormedSuccessResponse(body: any) {
   assert.equal(body.data.manufacturingCompany, 'IM Healthcare Pvt. Ltd.');
 }
 
-test('JPG label: extracts all 7 fields via OCR', async () => {
+test('JPG label: extracts all 7 fields via OCR', { skip: SKIP }, async () => {
   const { status, body } = await postLabel('jpg-label.jpg', 'image/jpeg');
   assert.equal(status, 200);
   assertWellFormedSuccessResponse(body);
@@ -88,7 +95,7 @@ test('JPG label: extracts all 7 fields via OCR', async () => {
   assert.equal(body.data.flavour, 'Orange');
 });
 
-test('PDF with a selectable text layer: extracts fields without OCR', async () => {
+test('PDF with a selectable text layer: extracts fields without OCR', { skip: SKIP }, async () => {
   const { status, body } = await postLabel('text-label.pdf', 'application/pdf');
   assert.equal(status, 200);
   assertWellFormedSuccessResponse(body);
@@ -97,7 +104,7 @@ test('PDF with a selectable text layer: extracts fields without OCR', async () =
   assert.equal(body.data.email, 'support@abchealthcaretest.com');
 });
 
-test('Scanned/image-only PDF: rasterizes and extracts via OCR (pdftoppm is installed in this environment)', async () => {
+test('Scanned/image-only PDF: rasterizes and extracts via OCR (pdftoppm is installed in this environment)', { skip: SKIP }, async () => {
   const { status, body } = await postLabel('scanned-label.pdf', 'application/pdf');
   assert.equal(status, 200);
   assertWellFormedSuccessResponse(body);
@@ -141,7 +148,7 @@ test('Scanned/image-only PDF: rasterizes and extracts via OCR (pdftoppm is insta
 // full title. marketingCompany's trailing "Lid." (a real Tesseract "Ltd."
 // misread on this rendering) is now corrected by a generic company-suffix
 // normalization, so both fields assert their exact recovered values.
-test('Real label PDF (Apple Cider Vinegar Gummy): reliable fields correct, target fields recovered or safely blank', async () => {
+test('Real label PDF (Apple Cider Vinegar Gummy): reliable fields correct, target fields recovered or safely blank', { skip: SKIP }, async () => {
   const { status, body } = await postLabel('apple-cider-vinegar-gummy.pdf', 'application/pdf');
   assert.equal(status, 200);
   assertWellFormedSuccessResponse(body);
@@ -219,7 +226,7 @@ test('Real label PDF (Apple Cider Vinegar Gummy): reliable fields correct, targe
 // in an ordinary font, as part of an ingredient-blend name — see
 // titleRegionOcr.service.ts's fuzzy cross-validation step, which is
 // grounded entirely in real OCR output on this label, never fabricated.
-test('Real label PDF (Chyawanprash Gummies): same manufacturer, different product, title in Title Case', async () => {
+test('Real label PDF (Chyawanprash Gummies): same manufacturer, different product, title in Title Case', { skip: SKIP }, async () => {
   const { status, body } = await postLabel('chyawanprash-gummies.pdf', 'application/pdf');
   assert.equal(status, 200);
   assertWellFormedSuccessResponse(body);
@@ -264,7 +271,7 @@ test('Real label PDF (Chyawanprash Gummies): same manufacturer, different produc
 // mistaken for the title itself, plus an ALL-CAPS flavour caption and a
 // "Recommended Usage: 1 Gummy daily" dosage instruction that used to be
 // mistaken for the front-pack count.
-test('Real label PDF (Sharp Mind Plus Gummies): three-tier title (brand/name/form), ALL-CAPS flavour, dosage-instruction vs. pack-count disambiguation', async () => {
+test('Real label PDF (Sharp Mind Plus Gummies): three-tier title (brand/name/form), ALL-CAPS flavour, dosage-instruction vs. pack-count disambiguation', { skip: SKIP }, async () => {
   const { status, body } = await postLabel('sharp-mind-plus-gummies.pdf', 'application/pdf');
   assert.equal(status, 200);
   assertWellFormedSuccessResponse(body);
@@ -332,7 +339,7 @@ test('Real label PDF (Sharp Mind Plus Gummies): three-tier title (brand/name/for
 // break; here, no text-layer/OCR line ever contains the number at all —
 // it isn't fused, it's simply missing — so this can only be recovered by
 // looking at the badge as an image, not as text).
-test('Real label PDF (She-Arise Gummies): front count badge recovered via spatial/targeted OCR when a general-purpose pass drops the number entirely', async () => {
+test('Real label PDF (She-Arise Gummies): front count badge recovered via spatial/targeted OCR when a general-purpose pass drops the number entirely', { skip: SKIP }, async () => {
   const { status, body } = await postLabel('she-arise-gummies.pdf', 'application/pdf');
   assert.equal(status, 200);
   assertWellFormedSuccessResponse(body);
@@ -378,7 +385,7 @@ test('Real label PDF (She-Arise Gummies): front count badge recovered via spatia
 // multi-column-scrambled layout in the way — proof that when OCR reads a
 // label cleanly, this logic recovers every field exactly (not just "not
 // garbled").
-test('Real-world label pattern (JPG, via OCR): every field recovered, none guessed', async () => {
+test('Real-world label pattern (JPG, via OCR): every field recovered, none guessed', { skip: SKIP }, async () => {
   const { status, body } = await postLabel('real-pattern-label.jpg', 'image/jpeg');
   assert.equal(status, 200);
   assertWellFormedSuccessResponse(body);
@@ -397,34 +404,34 @@ test('Real-world label pattern (JPG, via OCR): every field recovered, none guess
   assert.equal(body.data.packageSize, '30');
 });
 
-test('Unsupported file type is rejected with a controlled 400', async () => {
+test('Unsupported file type is rejected with a controlled 400', { skip: SKIP }, async () => {
   const { status, body } = await postLabel('unsupported.txt', 'text/plain');
   assert.equal(status, 400);
   assert.equal(body.success, false);
   assert.match(body.message, /unsupported file type/i);
 });
 
-test('Oversized file is rejected with a controlled error, not a crash', async () => {
+test('Oversized file is rejected with a controlled error, not a crash', { skip: SKIP }, async () => {
   const { status, body } = await postLabel('oversized.jpg', 'image/jpeg');
   assert.equal(status, 413);
   assert.equal(body.success, false);
 });
 
-test('Missing file returns a controlled 400', async () => {
+test('Missing file returns a controlled 400', { skip: SKIP }, async () => {
   const { status, body } = await postLabel(null);
   assert.equal(status, 400);
   assert.equal(body.success, false);
   assert.match(body.message, /no file uploaded/i);
 });
 
-test('Corrupt PDF falls back to blank fields without crashing', async () => {
+test('Corrupt PDF falls back to blank fields without crashing', { skip: SKIP }, async () => {
   const { status, body } = await postLabel('corrupt.pdf', 'application/pdf');
   assert.equal(status, 200);
   assertWellFormedSuccessResponse(body);
   assert.equal(body.data.marketingCompany, '');
 });
 
-test('Unreadable/corrupt image falls back to blank fields without crashing', async () => {
+test('Unreadable/corrupt image falls back to blank fields without crashing', { skip: SKIP }, async () => {
   const { status, body } = await postLabel('corrupt.jpg', 'image/jpeg');
   assert.equal(status, 200);
   assertWellFormedSuccessResponse(body);
