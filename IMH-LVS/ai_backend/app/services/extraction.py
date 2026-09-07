@@ -1,11 +1,35 @@
 import os
 import io
 import json
+import re
 import torch
 from PIL import Image
 from pdf2image import convert_from_bytes
 from transformers import Qwen2VLForConditionalGeneration, AutoProcessor
 from app.schemas.label import ExtractedLabel
+
+
+def _validate_fssai_number(value):
+    """An Indian FSSAI license number is always exactly 14 digits. Rather than
+    trust a misread digit count (the model has been observed to pad or drop
+    one), treat anything else as unread — the no-fabrication rule this whole
+    system is built on."""
+    if value is None:
+        return None
+    digits = re.sub(r"\D", "", str(value))
+    return digits if len(digits) == 14 else None
+
+
+def _validate_logo(value):
+    """The logo field describes a graphic on the label, never a link. The
+    model has been observed to fabricate a plausible-looking placeholder URL
+    when it can't describe the logo confidently — reject anything URL-shaped
+    rather than pass a hallucinated link through as if it were real data."""
+    if value is None:
+        return None
+    if re.match(r"^\s*(https?://|www\.)", str(value), re.IGNORECASE):
+        return None
+    return value
 
 class ExtractionService:
     def __init__(self, use_mock: bool = True):
@@ -33,14 +57,33 @@ class ExtractionService:
             self._load_model()
             
             # Real VLM Inference Logic
-            # Instruct the model to extract fields deterministically without self-reported confidence
+            # Instruct the model to extract fields deterministically without self-reported confidence.
+            # The field-specific rules below each target a real failure mode observed in testing —
+            # not hypothetical ones — so keep them if the underlying model changes rather than
+            # trimming back to a generic prompt.
             prompt = (
-                "Analyze this product label image. Extract the following fields as a JSON object: "
-                "brand_name, product_name, colour_theme, flavour, claims, logo, layout, "
-                "nutrition_table, fssai_number, ingredients, marketing_company, address, "
-                "customer_care_number, customer_care_email, package_size, manufacturing_company. "
-                "If a field is not present in the image, set its value to null. "
-                "Return ONLY a valid JSON dictionary."
+                "You are extracting structured data from a product label image for a pharmaceutical/"
+                "health-supplement compliance system. Extract ONLY what is visibly printed on the label — "
+                "never guess, invent, or fill in a plausible-sounding value. Return a single JSON object "
+                "with exactly these fields: brand_name, product_name, colour_theme (list), flavour, "
+                "claims (list), logo, layout, nutrition_table (a flat object of nutrient name to amount, "
+                "one entry per row of the nutrition panel), fssai_number, ingredients (list), "
+                "marketing_company, address, customer_care_number, customer_care_email, package_size, "
+                "manufacturing_company.\n\n"
+                "Field-specific rules:\n"
+                "- fssai_number: an Indian FSSAI license number is ALWAYS exactly 14 digits. If more than "
+                "one is printed (e.g. one for the manufacturer, one for the marketer), extract the one for "
+                "the Marketed By / brand-owner company. If you cannot read all 14 digits with certainty, "
+                "return null rather than padding or guessing a digit.\n"
+                "- logo: describe what the logo looks like (shapes, symbols, colours). It is a graphic on "
+                "the label, never a URL or web link — never output anything starting with 'http' or 'www'.\n"
+                "- package_size: the net content/weight/count actually sold (e.g. '30 Gummies', '150 g', "
+                "'500 ml'). This is NOT a print/die-cut dimension annotation such as 'SIZE: 222x88mm' that "
+                "may appear as a production mark on the artwork — ignore those.\n"
+                "- claims and ingredients: each is a list of separate items. Never join two claims, or two "
+                "ingredients, into one string.\n"
+                "- If a field is not present or not legible on the image, set its value to null.\n"
+                "Return ONLY the JSON object, no other text."
             )
             
             # Format inputs according to Qwen2-VL requirements
@@ -58,7 +101,10 @@ class ExtractionService:
             inputs = self.processor(text=[text_prompt], images=[image], padding=True, return_tensors="pt").to(self.model.device)
             
             with torch.no_grad():
-                generated_ids = self.model.generate(**inputs, max_new_tokens=1024)
+                # Greedy decoding, not sampling: this is a single-answer extraction task, and
+                # sampling's per-token randomness is exactly what let a plausible-looking but
+                # fabricated logo URL and a corrupted FSSAI digit through in testing.
+                generated_ids = self.model.generate(**inputs, max_new_tokens=1024, do_sample=False)
                 
             # Trim the prompt from the output
             generated_ids_trimmed = [
@@ -108,7 +154,12 @@ class ExtractionService:
         for key in expected_keys:
             if key not in label_data:
                 label_data[key] = None
-        
+
+        # Deterministic checks the prompt can request but not guarantee — reject
+        # rather than trust a value that fails them outright.
+        label_data["fssai_number"] = _validate_fssai_number(label_data.get("fssai_number"))
+        label_data["logo"] = _validate_logo(label_data.get("logo"))
+
         # We use model_validate/parse_obj to safely ignore extra fields and enforce types
         return ExtractedLabel(**label_data)
 
