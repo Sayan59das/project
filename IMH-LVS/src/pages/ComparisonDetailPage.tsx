@@ -16,6 +16,7 @@ import { CrossCompanyResults } from '../components/labelComparison/CrossCompanyR
 import { getLabelComparisonById } from '../services/labelComparisonHistoryService';
 import { getArtworkById } from '../services/artworkService';
 import { formatDateTime } from '../utils/dateFormat';
+import { generateComparisonPDF } from '../utils/pdfGenerator';
 import type { LabelComparisonFieldResult } from '../types/labelComparison';
 import type { VersionComparisonResult } from '../types/labelComparisonRecord';
 
@@ -47,16 +48,6 @@ function summarizeFields(fields: LabelComparisonFieldResult[]) {
   return counts;
 }
 
-function buildReportSection(title: string, fields: LabelComparisonFieldResult[], overallPercentage: number): string[] {
-  const lines = [title, '='.repeat(title.length), `Overall Match: ${overallPercentage}%`, ''];
-  fields.forEach((field) => {
-    lines.push(`${field.label}: ${classifyDeviation(field)}`);
-    lines.push(`  Label Artwork: ${field.labelA || '(blank)'}`);
-    lines.push(`  Compared Against: ${field.labelB || '(blank)'}`);
-  });
-  return lines;
-}
-
 export function ComparisonDetailPage() {
   const { id } = useParams<{ id: string }>();
   const run = id ? getLabelComparisonById(id) : undefined;
@@ -84,43 +75,7 @@ export function ComparisonDetailPage() {
   }
 
   const handleDownloadReport = () => {
-    const lines = [
-      `COMPARISON ID: ${run.id}`,
-      `PRODUCT: ${run.productName}`,
-      `PARTY: ${run.marketingCompany}`,
-      `LABEL ARTWORK: ${run.candidateArtworkFileName} (${formatVersionLabel(run.candidateArtworkVersion)})`,
-      `COMPARED BY: ${run.comparedBy}`,
-      `COMPARED ON: ${formatDateTime(run.comparisonDate)}`,
-      ''
-    ];
-    if (run.versionComparison) {
-      lines.push(
-        ...buildReportSection(
-          `VERSION COMPARISON (vs. Latest Approved ${formatVersionLabel(run.versionComparison.approvedArtworkVersion)})`,
-          run.versionComparison.result.comparison.fields,
-          run.versionComparison.result.comparison.overallPercentage
-        ),
-        ''
-      );
-    } else {
-      lines.push('VERSION COMPARISON: Skipped — no previous approved version found for this label.', '');
-    }
-    lines.push('CROSS-COMPANY COMPARISON', '========================');
-    if (run.crossCompanyResults.length === 0) {
-      lines.push('No comparable labels from other marketing companies were found.');
-    } else {
-      run.crossCompanyResults.forEach((entry) => {
-        const score = entry.outcome.status === 'success' ? `${entry.outcome.result.comparison.overallPercentage}%` : 'File unavailable';
-        lines.push(`${entry.candidateMarketingCompany} (${entry.candidateProductName}): ${score}`);
-      });
-    }
-    const blob = new Blob([lines.join('\n')], { type: 'text/plain' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = `${run.id}-comparison-report.txt`;
-    link.click();
-    URL.revokeObjectURL(url);
+    generateComparisonPDF(run);
   };
 
   const versionComparison: VersionComparisonResult | undefined = run.versionComparison;

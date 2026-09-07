@@ -1,3 +1,5 @@
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-nocheck
 // Unit tests for labelIntakeService.findExactProductMatch — the function
 // Quick Label Comparison relies on to identify which Product an uploaded
