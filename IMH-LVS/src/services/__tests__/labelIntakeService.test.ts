@@ -7,29 +7,22 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { installMemoryLocalStorage } from './testLocalStorage';
+import type { Product } from '../../types/product';
 
+// Still installed: labelIntakeService imports artworkService and
+// comparisonService, which read localStorage at module scope. The matcher
+// under test no longer touches it — the products are handed to it directly.
 installMemoryLocalStorage();
 
 const { findExactProductMatch } = await import('../labelIntakeService');
-const PRODUCTS_KEY = 'imh_lvs_products';
 
-type ProductLike = {
-  id: string;
-  productName: string;
-  brandName: string;
-  marketingCompany: string;
-  manufacturingCompany: string;
-  flavour: string;
-  fssaiNumber: string;
-  packageSize?: string;
-  status: string;
-  createdDate: string;
-  updatedDate: string;
-  createdBy: string;
-  updatedBy: string;
-};
-
-function product(overrides: Partial<ProductLike> & Pick<ProductLike, 'id' | 'productName' | 'brandName' | 'marketingCompany'>): ProductLike {
+// The real Product type, not a local stand-in. The matcher takes the list as an
+// argument now, so nothing has to be shaped like a stored row any more — and a
+// field the type gains is a compile error here rather than a test that quietly
+// stops resembling the data.
+function product(
+  overrides: Partial<Product> & Pick<Product, 'id' | 'productName' | 'brandName' | 'marketingCompany'>
+): Product {
   return {
     manufacturingCompany: 'IM Healthcare Pvt. Ltd.',
     flavour: 'Apple',
@@ -42,10 +35,6 @@ function product(overrides: Partial<ProductLike> & Pick<ProductLike, 'id' | 'pro
     updatedBy: 'Tester',
     ...overrides
   };
-}
-
-function seed(products: ProductLike[]) {
-  (globalThis.localStorage as any).setItem(PRODUCTS_KEY, JSON.stringify(products));
 }
 
 function extractedFields(overrides: Partial<Record<string, string>> = {}) {
@@ -64,36 +53,36 @@ function extractedFields(overrides: Partial<Record<string, string>> = {}) {
 }
 
 test('Finds the product when Product Name + Brand + Marketing Company match exactly', () => {
-  seed([product({ id: 'PRD-0001', productName: 'Apple Cider Vinegar Gummies', brandName: 'Nutrinol', marketingCompany: 'Knoll Pharmaceuticals Ltd.' })]);
+  const products = [product({ id: 'PRD-0001', productName: 'Apple Cider Vinegar Gummies', brandName: 'Nutrinol', marketingCompany: 'Knoll Pharmaceuticals Ltd.' })];
 
-  const match = findExactProductMatch(extractedFields());
+  const match = findExactProductMatch(products, extractedFields());
   assert.equal(match?.id, 'PRD-0001');
 });
 
 test('Matching is case/whitespace-insensitive but not fuzzy', () => {
-  seed([product({ id: 'PRD-0001', productName: 'apple cider vinegar gummies', brandName: '  Nutrinol  ', marketingCompany: 'KNOLL PHARMACEUTICALS LTD.' })]);
+  const products = [product({ id: 'PRD-0001', productName: 'apple cider vinegar gummies', brandName: '  Nutrinol  ', marketingCompany: 'KNOLL PHARMACEUTICALS LTD.' })];
 
-  const match = findExactProductMatch(extractedFields());
+  const match = findExactProductMatch(products, extractedFields());
   assert.equal(match?.id, 'PRD-0001');
 });
 
 test('Returns undefined when no product matches the extracted Marketing Company', () => {
-  seed([product({ id: 'PRD-0001', productName: 'Apple Cider Vinegar Gummies', brandName: 'Nutrinol', marketingCompany: 'A Totally Different Company' })]);
+  const products = [product({ id: 'PRD-0001', productName: 'Apple Cider Vinegar Gummies', brandName: 'Nutrinol', marketingCompany: 'A Totally Different Company' })];
 
-  const match = findExactProductMatch(extractedFields());
+  const match = findExactProductMatch(products, extractedFields());
   assert.equal(match, undefined);
 });
 
 test('Returns undefined when no product matches the extracted Product Name', () => {
-  seed([product({ id: 'PRD-0001', productName: 'Chyawanprash Gummies', brandName: 'Nutrinol', marketingCompany: 'Knoll Pharmaceuticals Ltd.' })]);
+  const products = [product({ id: 'PRD-0001', productName: 'Chyawanprash Gummies', brandName: 'Nutrinol', marketingCompany: 'Knoll Pharmaceuticals Ltd.' })];
 
-  const match = findExactProductMatch(extractedFields());
+  const match = findExactProductMatch(products, extractedFields());
   assert.equal(match, undefined);
 });
 
 test('Returns undefined (never guesses) when required identity fields were not read from the label', () => {
-  seed([product({ id: 'PRD-0001', productName: 'Apple Cider Vinegar Gummies', brandName: 'Nutrinol', marketingCompany: 'Knoll Pharmaceuticals Ltd.' })]);
+  const products = [product({ id: 'PRD-0001', productName: 'Apple Cider Vinegar Gummies', brandName: 'Nutrinol', marketingCompany: 'Knoll Pharmaceuticals Ltd.' })];
 
-  const match = findExactProductMatch(extractedFields({ brand: '' }));
+  const match = findExactProductMatch(products, extractedFields({ brand: '' }));
   assert.equal(match, undefined);
 });

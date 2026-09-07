@@ -1,57 +1,122 @@
-// Product data access layer. Everything the UI needs goes through these
-// functions, backed by localStorage for now. Swapping this file's internals
-// for REST API calls later should not require any change to ProductsPage.
+// Product data access, against the real API.
+//
+// Was localStorage seeded from src/data/products.ts, which meant a product
+// created by one person's label upload did not exist for anybody else — and an
+// artwork, a comparison and an approval trail all reference a product by id.
+//
+// Every function here is a request. The joins that used to read the whole list
+// synchronously (reports, dashboards, the comparison workflow) now take the
+// products they join against as an argument instead: those modules are pure
+// functions of already-loaded data, and the page holding the cached list is the
+// right place for the fetch.
+//
+// NO `actor` PARAMETER on writes. The server records who did it from the
+// session (controllers/http.ts's requireActor); a name sent from the page was
+// already being ignored.
 
+import { apiRequest, findOne } from './apiClient';
 import { Product, ProductInput, ProductOrigin } from '../types/product';
-import { SEED_PRODUCTS } from '../data/products';
 
-const STORAGE_KEY = 'imh_lvs_products';
-
-function readAll(): Product[] {
-  const raw = localStorage.getItem(STORAGE_KEY);
-  if (!raw) {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(SEED_PRODUCTS));
-    return SEED_PRODUCTS;
-  }
-  try {
-    return JSON.parse(raw) as Product[];
-  } catch {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(SEED_PRODUCTS));
-    return SEED_PRODUCTS;
-  }
+export function getProducts(): Promise<Product[]> {
+  return apiRequest<Product[]>('/products');
 }
 
-function writeAll(products: Product[]) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(products));
+export function getProductById(id: string): Promise<Product | undefined> {
+  return findOne(apiRequest<Product>(`/products/${encodeURIComponent(id)}`));
 }
 
-function nextProductId(existing: Product[]): string {
-  const maxSeq = existing.reduce((max, product) => {
-    const match = /^PRD-(\d+)$/.exec(product.id);
-    if (!match) return max;
-    return Math.max(max, Number(match[1]));
-  }, 0);
-  return `PRD-${String(maxSeq + 1).padStart(4, '0')}`;
+/**
+ * Whether a product with this name, brand and marketing company already exists.
+ *
+ * Asked before creating one so the operator sees the existing record rather
+ * than adding a second product for the same label. Not a constraint — two
+ * companies legitimately market products of the same name — so it answers with
+ * the match rather than refusing, and the endpoint returns null for no match.
+ */
+export async function findPossibleDuplicate(
+  input: Pick<ProductInput, 'productName' | 'brandName' | 'marketingCompany'>
+): Promise<Product | undefined> {
+  const match = await apiRequest<Product | null>('/products/possible-duplicate', {
+    query: {
+      productName: input.productName,
+      brandName: input.brandName,
+      marketingCompany: input.marketingCompany
+    }
+  });
+  return match ?? undefined;
 }
 
-function today(): string {
-  return new Date().toISOString().slice(0, 10);
+/**
+ * Products sharing a brand and marketing company, whatever their product name.
+ *
+ * Surfaced by the label upload flow (labelIntakeService.findPossibleProductMatches)
+ * when a label cannot be auto-matched to one exact product but could plausibly
+ * belong to one of these. Callers must have the user resolve the ambiguity
+ * rather than guessing which one to link.
+ */
+export function getProductsByBrandAndCompany(brandName: string, marketingCompany: string): Promise<Product[]> {
+  return apiRequest<Product[]>('/products', { query: { brand: brandName, marketingCompany } });
 }
 
-export function getProducts(): Product[] {
-  return readAll();
+export type ProductOriginMeta = { origin: ProductOrigin; sourceArtworkId?: string };
+
+export function createProduct(input: ProductInput, meta?: ProductOriginMeta): Promise<Product> {
+  // origin/sourceArtworkId travel alongside the product's own fields rather
+  // than inside ProductInput: they are provenance the intake pipeline supplies
+  // and a manual creation does not.
+  return apiRequest<Product>('/products', {
+    method: 'POST',
+    body: { ...input, origin: meta?.origin, sourceArtworkId: meta?.sourceArtworkId }
+  });
 }
 
-export function getProductById(id: string): Product | undefined {
-  return readAll().find((product) => product.id === id);
+/**
+ * Backfills the originating artwork onto a product created moments earlier by
+ * the label intake pipeline, once that artwork's own id is known.
+ *
+ * Its own endpoint, not a PATCH of the product: this is provenance, not a user
+ * edit, and it deliberately leaves updatedBy/updatedDate alone so recording it
+ * never looks like somebody editing the record.
+ */
+export function setProductSourceArtwork(id: string, artworkId: string): Promise<Product | undefined> {
+  return findOne(
+    apiRequest<Product>(`/products/${encodeURIComponent(id)}/source-artwork`, {
+      method: 'PATCH',
+      body: { artworkId }
+    })
+  );
 }
 
-// Possible-duplicate check ahead of creating a product: same name + brand +
-// marketing company (case-insensitive, trimmed). Callers decide whether to
-// block or let the user proceed.
-export function findPossibleDuplicate(input: Pick<ProductInput, 'productName' | 'brandName' | 'marketingCompany'>): Product | undefined {
-  const norm = (value: string) => value.trim().toLowerCase();
-  return readAll().find(
+export function updateProduct(id: string, input: Partial<ProductInput>): Promise<Product | undefined> {
+  return findOne(apiRequest<Product>(`/products/${encodeURIComponent(id)}`, { method: 'PATCH', body: input }));
+}
+
+/**
+ * Products are never physically removed — artworks, comparisons and approval
+ * history all reference one — so this flips status to Inactive. DELETE is the
+ * verb the API uses for it.
+ */
+export function deactivateProduct(id: string): Promise<Product | undefined> {
+  return findOne(apiRequest<Product>(`/products/${encodeURIComponent(id)}`, { method: 'DELETE' }));
+}
+
+// ---------------------------------------------------------------------------
+// Selectors over an already-loaded list
+//
+// These were reads of the whole store; they are now pure functions, so a caller
+// that already holds the products (a page with the cached list, a report
+// joining against it) does not make a second request to answer a question about
+// rows it is looking at.
+// ---------------------------------------------------------------------------
+
+const norm = (value: string) => value.trim().toLowerCase();
+
+/** The exact Product Name + Brand + Marketing Company match, or undefined. */
+export function selectExactMatch(
+  products: Product[],
+  input: Pick<ProductInput, 'productName' | 'brandName' | 'marketingCompany'>
+): Product | undefined {
+  return products.find(
     (product) =>
       norm(product.productName) === norm(input.productName) &&
       norm(product.brandName) === norm(input.brandName) &&
@@ -59,68 +124,8 @@ export function findPossibleDuplicate(input: Pick<ProductInput, 'productName' | 
   );
 }
 
-// Products sharing the same Brand + Marketing Company but not necessarily
-// the same Product Name — surfaced by the label upload flow
-// (labelIntakeService.findPossibleProductMatches) when a label can't be
-// auto-matched to one exact product but could plausibly belong to one of
-// these. Callers must have the user explicitly resolve the ambiguity rather
-// than guessing which one to link.
-export function getProductsByBrandAndCompany(brandName: string, marketingCompany: string): Product[] {
-  const norm = (value: string) => value.trim().toLowerCase();
-  return readAll().filter(
+export function selectByBrandAndCompany(products: Product[], brandName: string, marketingCompany: string): Product[] {
+  return products.filter(
     (product) => norm(product.brandName) === norm(brandName) && norm(product.marketingCompany) === norm(marketingCompany)
   );
-}
-
-export type ProductOriginMeta = { origin: ProductOrigin; sourceArtworkId?: string };
-
-export function createProduct(input: ProductInput, actor: string, meta?: ProductOriginMeta): Product {
-  const products = readAll();
-  const now = today();
-  const newProduct: Product = {
-    id: nextProductId(products),
-    ...input,
-    origin: meta?.origin,
-    sourceArtworkId: meta?.sourceArtworkId,
-    createdDate: now,
-    updatedDate: now,
-    createdBy: actor,
-    updatedBy: actor
-  };
-  writeAll([...products, newProduct]);
-  return newProduct;
-}
-
-// Backfills the originating artwork onto a product created moments earlier
-// by the label intake pipeline, once that artwork's own id is known (see
-// labelIntakeService.submitLabelIntake) — a provenance-only patch, not a
-// user edit, so it intentionally does not touch updatedBy/updatedDate.
-export function setProductSourceArtwork(id: string, artworkId: string): Product | undefined {
-  const products = readAll();
-  const index = products.findIndex((product) => product.id === id);
-  if (index === -1) return undefined;
-  products[index] = { ...products[index], sourceArtworkId: artworkId };
-  writeAll(products);
-  return products[index];
-}
-
-export function updateProduct(id: string, input: Partial<ProductInput>, actor: string): Product | undefined {
-  const products = readAll();
-  const index = products.findIndex((product) => product.id === id);
-  if (index === -1) return undefined;
-  const updated: Product = {
-    ...products[index],
-    ...input,
-    updatedDate: today(),
-    updatedBy: actor
-  };
-  products[index] = updated;
-  writeAll(products);
-  return updated;
-}
-
-// Products are never physically removed (Artwork/Comparison/Approvals will
-// reference them later) — deactivating just flips status to Inactive.
-export function deactivateProduct(id: string, actor: string): Product | undefined {
-  return updateProduct(id, { status: 'Inactive' }, actor);
 }

@@ -11,7 +11,7 @@ import { Artwork, ArtworkStatus } from '../types/artwork';
 import { Comparison, ComparisonStatus, WorkflowAction, WorkflowStage } from '../types/comparison';
 import { getArtworks, parseVersionNumber } from './artworkService';
 import { getAllWorkflowHistory, getComparisons } from './comparisonService';
-import { getProducts } from './productService';
+import { Product } from '../types/product';
 
 // ---------------------------------------------------------------------
 // Shared filters + helpers
@@ -113,8 +113,12 @@ export type ComparisonReportRow = {
   updatedDate: string;
 };
 
-export function getComparisonReport(filters: ReportFilters): ComparisonReportRow[] {
-  const products = getProducts();
+// `products` is passed in for the same reason `users` is (see
+// getUserActivityReport): products are fetched now, every report in this module
+// is a pure function of already-loaded data, and making four of them async
+// would make the whole report switch in ReportsPage await. The page holds the
+// cached list.
+export function getComparisonReport(filters: ReportFilters, products: Product[]): ComparisonReportRow[] {
   return getComparisons()
     .map((comparison) => {
       const product = products.find((p) => p.id === comparison.productId);
@@ -174,8 +178,7 @@ const PENDING_STAGE_MAP: Partial<Record<ComparisonStatus, { stage: string; role:
   'Pending Manager Approval': { stage: 'Manager', role: 'Manager' }
 };
 
-export function getPendingVerificationReport(filters: ReportFilters): PendingVerificationRow[] {
-  const products = getProducts();
+export function getPendingVerificationReport(filters: ReportFilters, products: Product[]): PendingVerificationRow[] {
   return getComparisons()
     .filter((comparison) => Boolean(PENDING_STAGE_MAP[comparison.status]))
     .map((comparison) => {
@@ -232,8 +235,7 @@ export type ApprovedLabelRow = {
   status: ComparisonStatus;
 };
 
-export function getApprovedLabelsReport(filters: ReportFilters): ApprovedLabelRow[] {
-  const products = getProducts();
+export function getApprovedLabelsReport(filters: ReportFilters, products: Product[]): ApprovedLabelRow[] {
   return getComparisons()
     .filter((comparison) => comparison.status === 'Final Approved')
     .map((comparison) => {
@@ -286,8 +288,11 @@ export type RevisionReportRow = {
   date: string;
 };
 
-export function getRevisionRejectionReport(filters: ReportFilters, scope: RevisionScope = 'Both'): RevisionReportRow[] {
-  const products = getProducts();
+export function getRevisionRejectionReport(
+  filters: ReportFilters,
+  products: Product[],
+  scope: RevisionScope = 'Both'
+): RevisionReportRow[] {
   const statuses: ComparisonStatus[] = scope === 'Both' ? ['Rejected', 'Revision Required'] : [scope];
   return getComparisons()
     .filter((comparison) => statuses.includes(comparison.status))

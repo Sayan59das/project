@@ -49,8 +49,8 @@ export { LabelExtractionError, LabelComparisonError };
 // Label selection
 // ---------------------------------------------------------------------
 
-export function getSelectableLabels(): Product[] {
-  return getProducts().filter((product) => product.status !== 'Inactive');
+export async function getSelectableLabels(): Promise<Product[]> {
+  return (await getProducts()).filter((product) => product.status !== 'Inactive');
 }
 
 export function formatLabelName(product: Product): string {
@@ -73,8 +73,8 @@ export type ComparisonPlan =
   // A newer candidate artwork and an approved baseline both exist.
   | { status: 'ready'; product: Product; candidateArtwork: Artwork; approvedArtwork: Artwork };
 
-export function identifyComparisonPlan(productId: string): ComparisonPlan | undefined {
-  const product = getProductById(productId);
+export async function identifyComparisonPlan(productId: string): Promise<ComparisonPlan | undefined> {
+  const product = await getProductById(productId);
   if (!product) return undefined;
 
   const artworks = getArtworksByProduct(productId).filter((artwork) => artwork.status !== 'Archived');
@@ -168,7 +168,7 @@ export async function runComparisonWorkflow(plan: ComparisonPlan, actor: string)
     };
   }
 
-  const candidates = getCrossCompanyCandidates(plan.product.id);
+  const candidates = await getCrossCompanyCandidates(plan.product.id);
   const crossCompanyResults: CrossCompanyResultEntry[] = [];
   for (const candidate of candidates) {
     crossCompanyResults.push(await compareCandidate(candidateExtraction, candidate));

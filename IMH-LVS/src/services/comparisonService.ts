@@ -335,8 +335,8 @@ export function findBestMatch(
 // Other marketing companies' Approved "Full Label" artwork for the exact
 // same product name — same-product-name matching only (no semantic/fuzzy
 // product matching yet, per spec).
-export function getCrossCompanyCandidates(productId: string): CrossCompanyCandidate[] {
-  const products = getProducts();
+export async function getCrossCompanyCandidates(productId: string): Promise<CrossCompanyCandidate[]> {
+  const products = await getProducts();
   const sourceProduct = products.find((product) => product.id === productId);
   if (!sourceProduct) return [];
 
@@ -715,14 +715,18 @@ export type DashboardSummary = {
 // getApprovalSummary() for every workflow-stage count rather than
 // recomputing them, and reads Products/Artwork through their own services —
 // Dashboard.tsx should never need to filter raw records itself.
-export function getDashboardSummary(): DashboardSummary {
+export async function getDashboardSummary(): Promise<DashboardSummary> {
   const approval = getApprovalSummary();
   const artworks = getArtworks();
+  // The only awaited read here: products moved to the API, artworks and
+  // comparisons have not yet. When they do, this whole function becomes one
+  // request rather than three.
+  const products = await getProducts();
   const pendingComparison = artworks.filter((artwork) => artwork.status === 'Pending Comparison').length;
   const pendingApproval = approval.pendingLabelFinal + approval.pendingTechnical + approval.pendingQA + approval.pendingManagerApproval;
 
   return {
-    totalProducts: getProducts().length,
+    totalProducts: products.length,
     totalArtwork: artworks.length,
     pendingComparison,
     pendingApproval,

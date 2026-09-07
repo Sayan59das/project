@@ -1,6 +1,6 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Alert, Box, Button, Card, Paper, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Typography } from '@mui/material';
+import { Alert, Box, Button, Card, CircularProgress, Paper, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Typography } from '@mui/material';
 import { MdArrowForward, MdCancel, MdCheckCircle, MdWarningAmber } from 'react-icons/md';
 import { PageHeader } from '../components/PageHeader';
 import { StatCard, DashboardStatCard } from '../components/StatCard';
@@ -98,9 +98,12 @@ type DashboardData = {
   pendingWork: Comparison[];
 };
 
-function loadDashboardData(role: RoleId, userId: string): DashboardData {
+// Async because the summary counts products, which are fetched now. The rest
+// is still localStorage; when artworks and comparisons move, this stays the one
+// place the dashboard's data is assembled.
+async function loadDashboardData(role: RoleId, userId: string): Promise<DashboardData> {
   return {
-    summary: getDashboardSummary(),
+    summary: await getDashboardSummary(),
     finalApprovedArtworks: getFinalApprovedArtworks(),
     recentActivity: getRecentActivity(8),
     unsubmittedCount: getUnsubmittedComparisons().length,
@@ -114,13 +117,37 @@ export function DashboardPage() {
   const role: RoleId = currentUser?.role ?? 'account_manager';
   const userId = currentUser?.id ?? '';
 
-  const [data] = useState<DashboardData | null>(() => {
-    try {
-      return loadDashboardData(role, userId);
-    } catch {
-      return null;
-    }
-  });
+  const [data, setData] = useState<DashboardData | null>(null);
+  const [loadFailed, setLoadFailed] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    loadDashboardData(role, userId)
+      .then((loaded) => {
+        if (!cancelled) setData(loaded);
+      })
+      .catch((error: unknown) => {
+        if (cancelled) return;
+        // Reported rather than rendered as zeroes: a dashboard of zeros during
+        // an outage says the pipeline is empty, which is the opposite of true.
+        console.error('[dashboard] Could not load:', error instanceof Error ? error.message : error);
+        setLoadFailed(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [role, userId]);
+
+  if (!data && !loadFailed) {
+    return (
+      <Box>
+        <PageHeader title="Dashboard" subtitle="Live overview of products, artwork, and the approval workflow." />
+        <Box sx={{ display: 'grid', placeItems: 'center', py: 8 }}>
+          <CircularProgress aria-label="Loading the dashboard" />
+        </Box>
+      </Box>
+    );
+  }
 
   if (!data) {
     return (

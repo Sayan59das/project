@@ -6,7 +6,7 @@
 // version dropdown anywhere in this flow, matching the business workflow:
 // Select Label -> (approved version exists?) -> Version Comparison (or
 // skip) -> Cross-Company Comparison -> Final Result.
-import { useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Alert, Autocomplete, Box, Button, CircularProgress, Paper, TextField, Typography } from '@mui/material';
 import { MdCompareArrows } from 'react-icons/md';
 import {
@@ -32,16 +32,40 @@ type Props = {
 };
 
 export function SelectLabelCard({ actor, onCompared }: Props) {
-  const labels = useMemo(() => getSelectableLabels(), []);
+  const [labels, setLabels] = useState<Product[]>([]);
   const [selected, setSelected] = useState<Product | null>(null);
   const [plan, setPlan] = useState<ComparisonPlan | null>(null);
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // The selectable labels are a request now. A failure is reported in the same
+  // place as a comparison failure rather than leaving an empty picker, which
+  // would read as "this company has no labels".
+  useEffect(() => {
+    let cancelled = false;
+    getSelectableLabels()
+      .then((products) => {
+        if (!cancelled) setLabels(products);
+      })
+      .catch((err: unknown) => {
+        if (!cancelled) setError(err instanceof Error ? err.message : 'Could not load the label list.');
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const handleSelect = (product: Product | null) => {
     setSelected(product);
     setError(null);
-    setPlan(product ? identifyComparisonPlan(product.id) ?? null : null);
+    setPlan(null);
+    if (!product) return;
+
+    // Which artwork this label would be compared against comes from the server;
+    // until it answers there is no plan, and the Run button stays disabled.
+    identifyComparisonPlan(product.id)
+      .then((identified) => setPlan(identified ?? null))
+      .catch((err: unknown) => setError(err instanceof Error ? err.message : 'Could not prepare this comparison.'));
   };
 
   const handleRun = async () => {

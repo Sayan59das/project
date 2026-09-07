@@ -19,7 +19,7 @@ import { DataGrid, GridColDef, GridRowParams } from '@mui/x-data-grid';
 import { PageHeader } from '../components/PageHeader';
 import { StatusChip } from '../components/StatusChip';
 import { useAuth } from '../auth/AuthContext';
-import { getProducts } from '../services/productService';
+import { useProducts } from '../hooks/useProducts';
 import { getArtworks, parseVersionNumber } from '../services/artworkService';
 import { useBrands, useManufacturingCompanies, useMarketingCompanies } from '../hooks/useMasterData';
 import { useUserDirectory } from '../hooks/useUserDirectory';
@@ -339,6 +339,7 @@ export function ReportsPage() {
   const navigate = useNavigate();
   const { currentUser, hasPermission } = useAuth();
   const { users: directoryUsers } = useUserDirectory();
+  const { products } = useProducts();
   const brands = useBrands();
   const marketingCompanies = useMarketingCompanies();
   const manufacturingCompanies = useManufacturingCompanies();
@@ -357,7 +358,7 @@ export function ReportsPage() {
   const referenceData = useMemo(() => {
     try {
       return {
-        products: getProducts(),
+        products,
         brands: Array.from(new Set(brands.items.map((b) => b.brandName))).sort(),
         marketingCompanies: Array.from(new Set(marketingCompanies.items.map((c) => c.companyName))).sort(),
         manufacturingCompanies: Array.from(new Set(manufacturingCompanies.items.map((c) => c.companyName))).sort(),
@@ -373,7 +374,7 @@ export function ReportsPage() {
     // Recomputed as each fetched list arrives: masters and the user directory
     // are requests now, so the first pass runs with empty lists and the filter
     // dropdowns would stay empty otherwise.
-  }, [directoryUsers, brands.items, marketingCompanies.items, manufacturingCompanies.items]);
+  }, [directoryUsers, products, brands.items, marketingCompanies.items, manufacturingCompanies.items]);
 
   const visibility = FILTER_VISIBILITY[activeReport];
   const statusOptions = STATUS_OPTIONS_BY_TYPE[activeReport];
@@ -383,13 +384,13 @@ export function ReportsPage() {
     try {
       switch (activeReport) {
         case 'comparison':
-          return getComparisonReport(effectiveFilters) as unknown as Record<string, unknown>[];
+          return getComparisonReport(effectiveFilters, products) as unknown as Record<string, unknown>[];
         case 'pending':
-          return getPendingVerificationReport(effectiveFilters) as unknown as Record<string, unknown>[];
+          return getPendingVerificationReport(effectiveFilters, products) as unknown as Record<string, unknown>[];
         case 'approved':
-          return getApprovedLabelsReport(effectiveFilters) as unknown as Record<string, unknown>[];
+          return getApprovedLabelsReport(effectiveFilters, products) as unknown as Record<string, unknown>[];
         case 'revision':
-          return getRevisionRejectionReport(effectiveFilters, revisionScope) as unknown as Record<string, unknown>[];
+          return getRevisionRejectionReport(effectiveFilters, products, revisionScope) as unknown as Record<string, unknown>[];
         case 'artwork':
           return getArtworkHistoryReport(effectiveFilters) as unknown as Record<string, unknown>[];
         case 'approvalHistory':
@@ -403,7 +404,7 @@ export function ReportsPage() {
       setLoadError(true);
       return [];
     }
-  }, [activeReport, effectiveFilters, revisionScope, directoryUsers]);
+  }, [activeReport, effectiveFilters, revisionScope, directoryUsers, products]);
 
   const gridRows = useMemo(() => rows.map((row, index) => ({ id: index, ...row })), [rows]);
   const columns = useMemo(() => columnsFor(activeReport), [activeReport]);

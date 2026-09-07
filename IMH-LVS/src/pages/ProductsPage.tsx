@@ -48,7 +48,8 @@ import {
 import { PageHeader } from '../components/PageHeader';
 import { StatusChip } from '../components/StatusChip';
 import { useAuth } from '../auth/AuthContext';
-import { deactivateProduct, getProducts, updateProduct } from '../services/productService';
+import { deactivateProduct, updateProduct } from '../services/productService';
+import { useInvalidateProducts, useProducts } from '../hooks/useProducts';
 import { useBrands, useFlavours, useMarketingCompanies } from '../hooks/useMasterData';
 import { getArtworksByProduct } from '../services/artworkService';
 import { getComparisonsByProduct } from '../services/comparisonService';
@@ -96,10 +97,12 @@ export function ProductsPage() {
   const brands = useBrands();
   const flavours = useFlavours();
   const canEdit = hasPermission('EDIT');
-  const actor = currentUser?.fullName ?? 'Unknown User';
   const defaultPageSize = getSettings(currentUser?.id ?? '').pageSize;
 
-  const [products, setProducts] = useState<Product[]>(() => getProducts());
+  const { products, isLoading, isError: productsFailed, error: productsError } = useProducts();
+  const invalidateProducts = useInvalidateProducts();
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
   const [searchParams] = useSearchParams();
   const [search, setSearch] = useState(() => searchParams.get('search') ?? '');
   const [filterDraft, setFilterDraft] = useState<FilterState>(EMPTY_FILTERS);
@@ -183,16 +186,19 @@ export function ProductsPage() {
 
   const filtersActive = Object.values(appliedFilters).some((value) => value !== ALL);
 
-  const emptyMessage =
-    products.length === 0
-      ? 'No products found.'
-      : search.trim() !== ''
-      ? 'No products match your search.'
-      : filtersActive
-      ? 'No products match the selected filters.'
-      : 'No products found.';
-
-  const refresh = () => setProducts(getProducts());
+  // Loading, failed, filtered-to-nothing and genuinely empty are four
+  // different tables. Only the last two are about the data.
+  const emptyMessage = isLoading
+    ? 'Loading…'
+    : productsFailed
+      ? 'Could not load products.'
+      : products.length === 0
+        ? 'No products found.'
+        : search.trim() !== ''
+          ? 'No products match your search.'
+          : filtersActive
+            ? 'No products match the selected filters.'
+            : 'No products found.';
 
   const handleApplyFilters = () => setAppliedFilters(filterDraft);
   const handleClearFilters = () => {
@@ -241,11 +247,20 @@ export function ProductsPage() {
   // Product Management no longer creates products manually â€” every record
   // comes from the label upload pipeline (see ArtworkPage / labelIntakeService).
   // This drawer/handleSave path only ever runs against an existing product.
-  const handleSave = () => {
+  const handleSave = async () => {
     if (!editingId || !validate()) return;
-    updateProduct(editingId, formState, actor);
-    refresh();
-    setFormOpen(false);
+    setSaveError(null);
+    setIsSaving(true);
+    try {
+      await updateProduct(editingId, formState);
+      invalidateProducts();
+      setFormOpen(false);
+    } catch (error) {
+      // The drawer stays open with what was typed: nothing was saved.
+      setSaveError(error instanceof Error ? error.message : 'Could not save this product.');
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   const handleOpenView = (product: Product) => {
@@ -253,12 +268,18 @@ export function ProductsPage() {
     setViewOpen(true);
   };
 
-  const handleConfirmDeactivate = () => {
+  const handleConfirmDeactivate = async () => {
     if (!deactivateTarget) return;
-    deactivateProduct(deactivateTarget.id, actor);
-    refresh();
-    setViewProduct((prev) => (prev && prev.id === deactivateTarget.id ? { ...prev, status: 'Inactive' } : prev));
+    const target = deactivateTarget;
     setDeactivateTarget(null);
+    try {
+      await deactivateProduct(target.id);
+      invalidateProducts();
+      setViewProduct((prev) => (prev && prev.id === target.id ? { ...prev, status: 'Inactive' } : prev));
+    } catch (error) {
+      // Nothing changed, so the details panel must not show Inactive.
+      setSaveError(error instanceof Error ? error.message : 'Could not deactivate this product.');
+    }
   };
 
   const columns: GridColDef<Product>[] = [
@@ -435,6 +456,20 @@ export function ProductsPage() {
       </Paper>
 
       <Paper sx={{ p: 3, mb: 3 }}>
+        {/* The catalogue failing to load is reported, with the server's own
+            sentence. An empty grid under a silent error tells a reviewer there
+            are no products to review. */}
+        {productsFailed && (
+          <Alert severity="error" sx={{ mb: 2 }}>
+            {productsError instanceof Error ? productsError.message : 'Could not load products.'}
+          </Alert>
+        )}
+        {saveError && (
+          <Alert severity="error" sx={{ mb: 2 }} onClose={() => setSaveError(null)}>
+            {saveError}
+          </Alert>
+        )}
+
         {filteredRows.length === 0 ? (
           <Box sx={{ py: 6, textAlign: 'center' }}>
             <Typography variant="body1" sx={{ color: 'var(--c-text-3)' }}>
@@ -541,7 +576,7 @@ export function ProductsPage() {
             <Button onClick={handleCloseForm} sx={{ textTransform: 'none' }}>
               Cancel
             </Button>
-            <Button variant="contained" sx={{ textTransform: 'none' }} onClick={handleSave}>
+            <Button variant="contained" sx={{ textTransform: 'none' }} onClick={() => void handleSave()} disabled={isSaving}>
               Save Changes
             </Button>
           </Box>
@@ -565,7 +600,7 @@ export function ProductsPage() {
           <Button onClick={() => setDeactivateTarget(null)} sx={{ textTransform: 'none' }}>
             Cancel
           </Button>
-          <Button variant="contained" color="error" sx={{ textTransform: 'none' }} onClick={handleConfirmDeactivate}>
+          <Button variant="contained" color="error" sx={{ textTransform: 'none' }} onClick={() => void handleConfirmDeactivate()}>
             Deactivate
           </Button>
         </DialogActions>
