@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
@@ -50,10 +49,9 @@ import {
   toCsv
 } from '../services/reportService';
 import { formatDateTime } from '../utils/dateFormat';
-import { useMasterData } from '../hooks/useMasterData';
 
 // Every field name across the report row types above that holds a date or
-// datetime value — used both to format the on-screen DataGrid cell and to
+// datetime value â€” used both to format the on-screen DataGrid cell and to
 // make the CSV export match it exactly (see handleExportCsv below). Never
 // applied to the underlying row data itself, since those same fields feed
 // date-range filtering and sorting in reportService.ts.
@@ -64,7 +62,7 @@ function dateCell(params: { value?: unknown }) {
 }
 
 // ---------------------------------------------------------------------
-// Report type configuration — single /reports route, tabs switch what's
+// Report type configuration â€” single /reports route, tabs switch what's
 // shown. Each report type declares which common filters actually apply to
 // it and which status vocabulary its Status dropdown should offer.
 // ---------------------------------------------------------------------
@@ -287,7 +285,7 @@ const ARTWORK_COLUMNS: GridColDef<ArtworkHistoryRow>[] = [
   { field: 'uploadedBy', headerName: 'Uploaded By', minWidth: 140, flex: 0.9 },
   { field: 'uploadDate', headerName: 'Uploaded Date', minWidth: 130, flex: 0.8, renderCell: dateCell },
   { field: 'archivedDate', headerName: 'Archived Date', minWidth: 130, flex: 0.8, renderCell: dateCell },
-  { field: 'isLatestVersion', headerName: 'Latest Version', minWidth: 120, flex: 0.7, renderCell: (p) => (p.value ? 'Yes' : '—') }
+  { field: 'isLatestVersion', headerName: 'Latest Version', minWidth: 120, flex: 0.7, renderCell: (p) => (p.value ? 'Yes' : 'â€”') }
 ];
 
 const APPROVAL_HISTORY_COLUMNS: GridColDef<ApprovalHistoryRow>[] = [
@@ -310,8 +308,8 @@ const USER_ACTIVITY_COLUMNS: GridColDef<UserActivityRow>[] = [
   { field: 'action', headerName: 'Action', minWidth: 220, flex: 1.4 },
   { field: 'module', headerName: 'Module/Stage', minWidth: 130, flex: 0.9 },
   { field: 'reference', headerName: 'Reference', minWidth: 130, flex: 0.9 },
-  { field: 'approvalUserId', headerName: 'Approval User ID', minWidth: 150, flex: 1, renderCell: (p) => p.value ?? '—' },
-  { field: 'actorId', headerName: 'Actor ID', minWidth: 110, flex: 0.7, renderCell: (p) => p.value ?? '—' },
+  { field: 'approvalUserId', headerName: 'Approval User ID', minWidth: 150, flex: 1, renderCell: (p) => p.value ?? 'â€”' },
+  { field: 'actorId', headerName: 'Actor ID', minWidth: 110, flex: 0.7, renderCell: (p) => p.value ?? 'â€”' },
   { field: 'date', headerName: 'Date/Time', minWidth: 180, flex: 1.1, renderCell: dateCell },
   { field: 'status', headerName: 'Status', minWidth: 160, flex: 1.1, renderCell: (p) => statusCell(p.value) }
 ];
@@ -349,17 +347,17 @@ export function ReportsPage() {
   const [appliedFilters, setAppliedFilters] = useState<FilterDraft>(EMPTY_DRAFT);
   const [revisionScope, setRevisionScope] = useState<RevisionScope>('Both');
 
-  // Loaded once per render pass from the existing services — never raw
-  // localStorage — and reused for every filter dropdown's option list.
+  // Loaded once per render pass from the existing services â€” never raw
+  // localStorage â€” and reused for every filter dropdown's option list.
   const [loadError, setLoadError] = useState(false);
   const referenceData = useMemo(() => {
     try {
       return {
-        products: products,
-        brands: Array.from(new Set(brands.map((b) => b.brandName))).sort(),
-        marketingCompanies: Array.from(new Set(marketingCompanies.map((c) => c.companyName))).sort(),
-        manufacturingCompanies: Array.from(new Set(manufacturingCompanies.map((c) => c.companyName))).sort(),
-        artworkVersions: Array.from(new Set(artworks.map((a) => a.version))).sort((a, b) => parseVersionNumber(a) - parseVersionNumber(b)),
+        products: getProducts(),
+        brands: Array.from(new Set(getBrands().map((b) => b.brandName))).sort(),
+        marketingCompanies: Array.from(new Set(getMarketingCompanies().map((c) => c.companyName))).sort(),
+        manufacturingCompanies: Array.from(new Set(getManufacturingCompanies().map((c) => c.companyName))).sort(),
+        artworkVersions: Array.from(new Set(getArtworks().map((a) => a.version))).sort((a, b) => parseVersionNumber(a) - parseVersionNumber(b)),
         users: getUsers()
           .map((u) => u.fullName)
           .sort()
@@ -374,42 +372,30 @@ export function ReportsPage() {
   const statusOptions = STATUS_OPTIONS_BY_TYPE[activeReport];
   const effectiveFilters = useMemo(() => toReportFilters(appliedFilters, search), [appliedFilters, search]);
 
-  const [rows, setRows] = useState<Record<string, unknown>[]>([]);
-  useEffect(() => {
-    let active = true;
-    const fetchRows = async () => {
-      try {
-        let result = [];
-        switch (activeReport) {
-          case 'comparison':
-            result = await getComparisonReport(effectiveFilters) as unknown as Record<string, unknown>[];
-            break;
-          case 'pending':
-            result = await getPendingVerificationReport(effectiveFilters) as unknown as Record<string, unknown>[];
-            break;
-          case 'approved':
-            result = await getApprovedLabelsReport(effectiveFilters) as unknown as Record<string, unknown>[];
-            break;
-          case 'revision':
-            result = await getRevisionRejectionReport(effectiveFilters, revisionScope) as unknown as Record<string, unknown>[];
-            break;
-          case 'artwork':
-            result = await getArtworkHistoryReport(effectiveFilters) as unknown as Record<string, unknown>[];
-            break;
-          case 'approvalHistory':
-            result = await getApprovalHistoryReport(effectiveFilters) as unknown as Record<string, unknown>[];
-            break;
-          case 'userActivity':
-            result = await getUserActivityReport(effectiveFilters) as unknown as Record<string, unknown>[];
-            break;
-        }
-        if (active) setRows(result);
-      } catch {
-        if (active) setLoadError(true);
+  const rows = useMemo<Record<string, unknown>[]>(() => {
+    try {
+      switch (activeReport) {
+        case 'comparison':
+          return getComparisonReport(effectiveFilters) as unknown as Record<string, unknown>[];
+        case 'pending':
+          return getPendingVerificationReport(effectiveFilters) as unknown as Record<string, unknown>[];
+        case 'approved':
+          return getApprovedLabelsReport(effectiveFilters) as unknown as Record<string, unknown>[];
+        case 'revision':
+          return getRevisionRejectionReport(effectiveFilters, revisionScope) as unknown as Record<string, unknown>[];
+        case 'artwork':
+          return getArtworkHistoryReport(effectiveFilters) as unknown as Record<string, unknown>[];
+        case 'approvalHistory':
+          return getApprovalHistoryReport(effectiveFilters) as unknown as Record<string, unknown>[];
+        case 'userActivity':
+          return getUserActivityReport(effectiveFilters) as unknown as Record<string, unknown>[];
+        default:
+          return [];
       }
-    };
-    fetchRows();
-    return () => { active = false; };
+    } catch {
+      setLoadError(true);
+      return [];
+    }
   }, [activeReport, effectiveFilters, revisionScope]);
 
   const gridRows = useMemo(() => rows.map((row, index) => ({ id: index, ...row })), [rows]);
@@ -549,7 +535,7 @@ export function ReportsPage() {
           sx={{ mb: 3 }}
         />
 
-        <Typography variant="subtitle2" sx={{ fontWeight: 700, mb: 1.5, color: '#6B7177' }}>
+        <Typography variant="subtitle2" sx={{ fontWeight: 700, mb: 1.5, color: 'var(--c-text-2)' }}>
           Filters
         </Typography>
         <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 2, alignItems: 'center' }}>
@@ -695,10 +681,10 @@ export function ReportsPage() {
             </FormControl>
           )}
 
-          <Button variant="contained" sx={{ bgcolor: '#00A651', '&:hover': { bgcolor: '#00913f' } }} onClick={handleApplyFilters}>
+          <Button variant="contained" sx={{ bgcolor: 'var(--c-green)', '&:hover': { bgcolor: 'var(--c-green-600)' } }} onClick={handleApplyFilters}>
             Apply Filters
           </Button>
-          <Button variant="outlined" sx={{ borderColor: '#D8DDE3', color: '#9EA4AB' }} onClick={handleClearFilters}>
+          <Button variant="outlined" sx={{ borderColor: 'var(--c-border)', color: 'var(--c-text-3)' }} onClick={handleClearFilters}>
             Clear Filters
           </Button>
         </Box>
@@ -706,8 +692,8 @@ export function ReportsPage() {
 
       <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: 'repeat(auto-fit, minmax(160px, 1fr))' }, gap: 2, mb: 3 }}>
         {summaryCards.map((card) => (
-          <Card key={card.label} sx={{ p: 3, borderRadius: 3, bgcolor: '#EEF1F4' }}>
-            <Typography variant="subtitle2" sx={{ color: '#6B7177', mb: 1, fontWeight: 700 }}>
+          <Card key={card.label} sx={{ p: 3, borderRadius: 3, bgcolor: 'var(--c-surface)' }}>
+            <Typography variant="subtitle2" sx={{ color: 'var(--c-text-2)', mb: 1, fontWeight: 700 }}>
               {card.label}
             </Typography>
             <Typography variant="h5" sx={{ fontWeight: 800 }}>
@@ -723,7 +709,7 @@ export function ReportsPage() {
             {REPORT_TYPES.find((type) => type.key === activeReport)?.label} Report
           </Typography>
           {canExport && (
-            <Button variant="outlined" sx={{ borderColor: '#E26737', color: '#2E3135', textTransform: 'none' }} onClick={handleExportCsv} disabled={rows.length === 0}>
+            <Button variant="outlined" sx={{ borderColor: 'var(--c-orange)', color: 'var(--c-text-1)', textTransform: 'none' }} onClick={handleExportCsv} disabled={rows.length === 0}>
               Export CSV
             </Button>
           )}
@@ -731,11 +717,11 @@ export function ReportsPage() {
 
         {rows.length === 0 ? (
           <Box sx={{ py: 6, textAlign: 'center' }}>
-            <Typography variant="body1" sx={{ color: '#9EA4AB', mb: 2 }}>
+            <Typography variant="body1" sx={{ color: 'var(--c-text-3)', mb: 2 }}>
               {filtersActive ? 'No records found.' : 'No activity available.'}
             </Typography>
             {filtersActive && (
-              <Button variant="outlined" sx={{ borderColor: '#D8DDE3', color: '#9EA4AB' }} onClick={handleClearFilters}>
+              <Button variant="outlined" sx={{ borderColor: 'var(--c-border)', color: 'var(--c-text-3)' }} onClick={handleClearFilters}>
                 Clear Filters
               </Button>
             )}
@@ -751,10 +737,10 @@ export function ReportsPage() {
               disableRowSelectionOnClick
               sx={{
                 borderRadius: 3,
-                borderColor: '#D8DDE3',
+                borderColor: 'var(--c-border)',
                 cursor: 'pointer',
-                '& .MuiDataGrid-columnHeaders': { bgcolor: '#F3F7FA', borderBottom: '1px solid #D8DDE3' },
-                '& .MuiDataGrid-cell': { borderBottom: '1px solid #D8DDE3' }
+                '& .MuiDataGrid-columnHeaders': { bgcolor: 'var(--c-tint-blue)', borderBottom: '1px solid var(--c-border)' },
+                '& .MuiDataGrid-cell': { borderBottom: '1px solid var(--c-border)' }
               }}
             />
           </Box>

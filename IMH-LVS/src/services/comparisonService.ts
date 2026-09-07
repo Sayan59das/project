@@ -48,7 +48,6 @@ import {
   updateArtwork as updateArtworkStatus
 } from './artworkService';
 import { getProducts } from './productService';
-import apiClient from './apiClient';
 
 // The acting user for every approval-stage decision — id/name for the audit
 // trail, role for the service-layer permission check (see canActAtStage).
@@ -73,17 +72,22 @@ function withDefaults(comparison: Comparison): Comparison {
   };
 }
 
-async function readAll(): Promise<Comparison[]> {
+function readAll(): Comparison[] {
+  const raw = localStorage.getItem(STORAGE_KEY);
+  if (!raw) {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(SEED_COMPARISONS));
+    return SEED_COMPARISONS;
+  }
   try {
-    const { data } = await apiClient.get('/data/Comparison');
-    return data;
-  } catch (err) {
+    return (JSON.parse(raw) as Comparison[]).map(withDefaults);
+  } catch {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(SEED_COMPARISONS));
     return SEED_COMPARISONS;
   }
 }
 
-async function writeAll(comparisons: Comparison[]) {
-  // no-op, use direct put/post
+function writeAll(comparisons: Comparison[]) {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(comparisons));
 }
 
 function nextComparisonId(existing: Comparison[]): string {
@@ -108,16 +112,18 @@ function nowTimestamp(): string {
 
 const LABEL_ATTRIBUTES_STORAGE_KEY = 'imh_lvs_label_attributes';
 
-async function readCustomLabelAttributes(): Promise<LabelAttributes[]> {
+function readCustomLabelAttributes(): LabelAttributes[] {
+  const raw = localStorage.getItem(LABEL_ATTRIBUTES_STORAGE_KEY);
+  if (!raw) return [];
   try {
-    const { data } = await apiClient.get('/data/LabelAttribute');
-    return data;
-  } catch (err) {
+    return JSON.parse(raw) as LabelAttributes[];
+  } catch {
     return [];
   }
 }
 
-async function writeCustomLabelAttributes(attributes: LabelAttributes[]) {
+function writeCustomLabelAttributes(attributes: LabelAttributes[]) {
+  localStorage.setItem(LABEL_ATTRIBUTES_STORAGE_KEY, JSON.stringify(attributes));
 }
 
 // Persists the structured label content captured during label upload (see
@@ -125,19 +131,26 @@ async function writeCustomLabelAttributes(attributes: LabelAttributes[]) {
 // comparison engine reads the actual values the user verified instead of
 // falling back to "Not specified". Overwrites any prior record for the same
 // artworkId.
-export async function saveLabelAttributes(attributes: LabelAttributes): Promise<void> {
-  const existing = (await readCustomLabelAttributes()).filter((item) => item.artworkId !== attributes.artworkId);
-  await apiClient.post('/data/LabelAttribute', attributes);
+export function saveLabelAttributes(attributes: LabelAttributes): void {
+  const existing = readCustomLabelAttributes().filter((item) => item.artworkId !== attributes.artworkId);
+  writeCustomLabelAttributes([...existing, attributes]);
 }
 
 // Returns the artwork's structured label content: label-upload-captured
 // data first (see saveLabelAttributes above), then hand-authored seed data,
 // and only then a synthesized record built from Product/Artwork fields for
 // artworks that have neither (e.g. artwork created via the legacy Edit
-// path) — those fallback fields read "Not specified" rather than guessing,
-// since there is no OCR step yet to actually read the file.
-export async function getLabelAttributes(artwork: Artwork, product?: Product): Promise<LabelAttributes> {
-  const custom = (await readCustomLabelAttributes()).find((attributes) => attributes.artworkId === artwork.id);
+// path).
+//
+// Fields that cannot be resolved are returned as EMPTY STRINGS, not as a
+// placeholder like 'Not specified'. That distinction is load-bearing: a
+// placeholder is just another string to the classifier, so two artworks
+// that had never been read compared equal on it and the engine reported a
+// 100% MATCH across parameters it had never actually seen. An empty value
+// is recognised by classifyParameterValues() as MISSING instead. Render
+// MISSING_VALUE_DISPLAY in the UI where a blank would look broken.
+export function getLabelAttributes(artwork: Artwork, product?: Product): LabelAttributes {
+  const custom = readCustomLabelAttributes().find((attributes) => attributes.artworkId === artwork.id);
   if (custom) return custom;
 
   const seeded = SEED_LABEL_ATTRIBUTES.find((attributes) => attributes.artworkId === artwork.id);
@@ -147,17 +160,17 @@ export async function getLabelAttributes(artwork: Artwork, product?: Product): P
     artworkId: artwork.id,
     brandName: artwork.brand,
     productName: artwork.productName,
-    address: 'Not specified',
-    customerCareNumber: 'Not specified',
-    customerCareEmail: 'Not specified',
-    colourTheme: 'Not specified',
-    flavour: product?.flavour ?? 'Not specified',
-    claims: 'Not specified',
-    logo: 'Not specified',
-    labelDesign: 'Not specified',
-    nutritionTableFormat: 'Not specified',
-    fssaiNumber: product?.fssaiNumber ?? 'Not specified',
-    ingredients: 'Not specified'
+    address: '',
+    customerCareNumber: '',
+    customerCareEmail: '',
+    colourTheme: '',
+    flavour: product?.flavour ?? '',
+    claims: '',
+    logo: '',
+    labelDesign: '',
+    nutritionTableFormat: '',
+    fssaiNumber: product?.fssaiNumber ?? '',
+    ingredients: ''
   };
 }
 
@@ -187,9 +200,18 @@ function jaccardSimilarity(a: Set<string>, b: Set<string>): number {
 
 // The replaceable classifier: swap this implementation for an OCR/AI-backed
 // one later without changing its signature or any caller.
+//
+// The MISSING check must stay FIRST. Two absent values are equal as strings,
+// so an equality test that runs before it reports "both unknown" as a MATCH.
 function classifyParameterValues(referenceValue: string, newValue: string): ParameterResult {
   const normalizedReference = referenceValue.trim().toLowerCase();
   const normalizedNew = newValue.trim().toLowerCase();
+
+  // Either side absent: there is nothing to compare. Not agreement, and not
+  // a conflict — a label that hasn't been read yet must not generate
+  // findings against one that has.
+  if (!normalizedReference || !normalizedNew) return 'MISSING';
+
   if (normalizedReference === normalizedNew) return 'MATCH';
 
   const similarity = jaccardSimilarity(tokenize(referenceValue), tokenize(newValue));
@@ -229,22 +251,47 @@ export function compareParameters(reference: LabelAttributes, newLabel: LabelAtt
 }
 
 // Documented, transparent scoring: each parameter contributes a fixed
-// point value by its result, averaged across all compared parameters.
+// point value by its result, averaged across the parameters that could
+// actually be compared.
+//
+// MISSING parameters are excluded from the average rather than scored as
+// zero. Scoring them as zero would punish a label for data nobody has
+// captured yet; counting them as matches would inflate the score. Neither
+// is a measurement, so they leave the ratio alone — but note the score is
+// then only as meaningful as its coverage, which is why
+// countComparableParameters() exists for the UI to report alongside it.
 export function calculateSimilarity(parameters: ParameterComparison[]): number {
-  if (parameters.length === 0) return 0;
-  const total = parameters.reduce((sum, param) => {
+  const comparable = parameters.filter((param) => param.result !== 'MISSING');
+  if (comparable.length === 0) return 0;
+  const total = comparable.reduce((sum, param) => {
     if (param.result === 'MATCH') return sum + MATCH_SCORE;
     if (param.result === 'SIMILAR') return sum + SIMILAR_SCORE;
     return sum + CONFLICT_SCORE;
   }, 0);
-  return Math.round(total / parameters.length);
+  return Math.round(total / comparable.length);
 }
 
-// CONFLICT if any parameter conflicts; REVIEW REQUIRED if no conflicts but
-// at least one SIMILAR; MATCH only when every parameter matches exactly.
-export async function generateComparisonResult(parameters: ParameterComparison[]): Promise<OverallResult> {
+// How many parameters carried enough data to compare, out of how many were
+// attempted. A similarity percentage is misleading without this — 100%
+// across two comparable parameters is not the same claim as 100% across
+// thirteen.
+export function countComparableParameters(parameters: ParameterComparison[]): { comparable: number; total: number } {
+  return {
+    comparable: parameters.filter((param) => param.result !== 'MISSING').length,
+    total: parameters.length
+  };
+}
+
+// CONFLICT if any parameter conflicts. Otherwise MATCH is reserved for the
+// case where every parameter was compared AND every one agreed exactly —
+// anything less is REVIEW REQUIRED, because a clean-looking result built on
+// parameters nobody could read is exactly the outcome a compliance reviewer
+// must not be allowed to rubber-stamp.
+export function generateComparisonResult(parameters: ParameterComparison[]): OverallResult {
   if (parameters.some((param) => param.result === 'CONFLICT')) return 'CONFLICT';
   if (parameters.some((param) => param.result === 'SIMILAR')) return 'REVIEW REQUIRED';
+  if (parameters.some((param) => param.result === 'MISSING')) return 'REVIEW REQUIRED';
+  if (parameters.length === 0) return 'REVIEW REQUIRED';
   return 'MATCH';
 }
 
@@ -255,29 +302,29 @@ export async function generateComparisonResult(parameters: ParameterComparison[]
 // Stage 1: latest Approved (never Draft/Rejected/Archived) artwork for the
 // same product + same marketing company + artwork type. Delegates to
 // artworkService, which already owns this rule.
-export async function getLatestApprovedArtwork(productId: string, marketingCompany: string, artworkType: Artwork['artworkType']) {
-  return await getLatestApprovedArtworkFromArtworkService(productId, marketingCompany, artworkType);
+export function getLatestApprovedArtwork(productId: string, marketingCompany: string, artworkType: Artwork['artworkType']) {
+  return getLatestApprovedArtworkFromArtworkService(productId, marketingCompany, artworkType);
 }
 
-export async function getReferenceArtwork(productId: string, marketingCompany: string, artworkType: Artwork['artworkType']) {
-  return await getLatestApprovedArtwork(productId, marketingCompany, artworkType);
+export function getReferenceArtwork(productId: string, marketingCompany: string, artworkType: Artwork['artworkType']) {
+  return getLatestApprovedArtwork(productId, marketingCompany, artworkType);
 }
 
 // Given one new artwork and a list of candidate reference artworks, scores
 // each candidate and returns the highest-similarity one — used when more
 // than one existing label could plausibly serve as the reference (e.g.
 // several approved versions, or multiple cross-company candidates).
-export async function findBestMatch(
+export function findBestMatch(
   newArtwork: Artwork,
   candidates: Artwork[],
   productLookup?: Product
-): Promise<{ artwork: Artwork; similarity: number; parameters: ParameterComparison[] } | undefined> {
+): { artwork: Artwork; similarity: number; parameters: ParameterComparison[] } | undefined {
   if (candidates.length === 0) return undefined;
-  const newAttributes = await getLabelAttributes(newArtwork, productLookup);
-  const scored = await Promise.all(candidates.map(async (candidate) => {
-    const parameters = compareParameters(await getLabelAttributes(candidate, productLookup), newAttributes);
+  const newAttributes = getLabelAttributes(newArtwork, productLookup);
+  const scored = candidates.map((candidate) => {
+    const parameters = compareParameters(getLabelAttributes(candidate, productLookup), newAttributes);
     return { artwork: candidate, similarity: calculateSimilarity(parameters), parameters };
-  }));
+  });
   return scored.sort((a, b) => b.similarity - a.similarity)[0];
 }
 
@@ -288,8 +335,8 @@ export async function findBestMatch(
 // Other marketing companies' Approved "Full Label" artwork for the exact
 // same product name — same-product-name matching only (no semantic/fuzzy
 // product matching yet, per spec).
-export async function getCrossCompanyCandidates(productId: string): Promise<CrossCompanyCandidate[]> {
-  const products = (await getProducts());
+export function getCrossCompanyCandidates(productId: string): CrossCompanyCandidate[] {
+  const products = getProducts();
   const sourceProduct = products.find((product) => product.id === productId);
   if (!sourceProduct) return [];
 
@@ -300,9 +347,9 @@ export async function getCrossCompanyCandidates(productId: string): Promise<Cros
       product.productName.trim().toLowerCase() === sourceProduct.productName.trim().toLowerCase()
   );
 
-  const candidates = await Promise.all(
-    otherProducts.map(async (product) => {
-      const artwork = await getLatestApprovedArtwork(product.id, product.marketingCompany, 'Full Label');
+  return otherProducts
+    .map((product) => {
+      const artwork = getLatestApprovedArtwork(product.id, product.marketingCompany, 'Full Label');
       if (!artwork) return undefined;
       return {
         productId: product.id,
@@ -312,25 +359,23 @@ export async function getCrossCompanyCandidates(productId: string): Promise<Cros
         artworkVersion: artwork.version
       };
     })
-  );
-  
-  return candidates.filter((candidate): candidate is CrossCompanyCandidate => Boolean(candidate));
+    .filter((candidate): candidate is CrossCompanyCandidate => Boolean(candidate));
 }
 
 // ---------------------------------------------------------------------
 // Comparison CRUD
 // ---------------------------------------------------------------------
 
-export async function getComparisons(): Promise<Comparison[]> {
-  return (await readAll());
+export function getComparisons(): Comparison[] {
+  return readAll();
 }
 
-export async function getComparisonById(id: string): Promise<Comparison | undefined> {
-  return (await readAll()).find((comparison) => comparison.id === id);
+export function getComparisonById(id: string): Comparison | undefined {
+  return readAll().find((comparison) => comparison.id === id);
 }
 
-export async function getComparisonsByProduct(productId: string): Promise<Comparison[]> {
-  return (await readAll()).filter((comparison) => comparison.productId === productId);
+export function getComparisonsByProduct(productId: string): Comparison[] {
+  return readAll().filter((comparison) => comparison.productId === productId);
 }
 
 export type CreateComparisonInput = {
@@ -343,14 +388,14 @@ export type CreateComparisonInput = {
 
 // Runs the engine against the two artworks and persists the result as a
 // new Comparison record.
-export async function createComparison(input: CreateComparisonInput, actor: string, productLookup?: Product): Promise<Comparison> {
-  const referenceAttributes = await getLabelAttributes(input.referenceArtwork, productLookup);
-  const newAttributes = await getLabelAttributes(input.newArtwork, productLookup);
+export function createComparison(input: CreateComparisonInput, actor: string, productLookup?: Product): Comparison {
+  const referenceAttributes = getLabelAttributes(input.referenceArtwork, productLookup);
+  const newAttributes = getLabelAttributes(input.newArtwork, productLookup);
   const parameters = compareParameters(referenceAttributes, newAttributes);
   const overallSimilarity = calculateSimilarity(parameters);
-  const overallResult = await generateComparisonResult(parameters);
+  const overallResult = generateComparisonResult(parameters);
 
-  const comparisons = (await readAll());
+  const comparisons = readAll();
   const now = today();
   const newComparison: Comparison = {
     id: nextComparisonId(comparisons),
@@ -374,7 +419,7 @@ export async function createComparison(input: CreateComparisonInput, actor: stri
     updatedBy: actor,
     updatedDate: now
   };
-  await apiClient.post('/data/Comparison', newComparison);
+  writeAll([...comparisons, newComparison]);
   return newComparison;
 }
 
@@ -384,18 +429,18 @@ export async function createComparison(input: CreateComparisonInput, actor: stri
 // action, not a stage reviewer's), so it isn't routed through
 // canActAtStage/transitionComparison — but it still independently validates
 // the actor's role rather than trusting that the UI already hid the button.
-export async function sendComparisonForReview(id: string, actor: Actor): Promise<Comparison | undefined> {
+export function sendComparisonForReview(id: string, actor: Actor): Comparison | undefined {
   if (actor.role !== 'account_manager' && actor.role !== 'manager') {
     throw new Error(`Role "${actor.role}" is not authorized to submit a comparison for review.`);
   }
 
-  const comparisons = (await readAll());
+  const comparisons = readAll();
   const index = comparisons.findIndex((comparison) => comparison.id === id);
   if (index === -1) return undefined;
   const updated: Comparison = { ...comparisons[index], status: 'Pending Label Final', updatedBy: actor.name, updatedDate: today() };
   comparisons[index] = updated;
-  await apiClient.put(`/data/Comparison/${updated.id}`, updated);
-  await updateArtworkStatus(updated.newArtworkId, { status: 'Under Review' }, actor.name);
+  writeAll(comparisons);
+  updateArtworkStatus(updated.newArtworkId, { status: 'Under Review' }, actor.name);
   return updated;
 }
 
@@ -433,7 +478,7 @@ const STAGE_KEY_BY_WORKFLOW_STAGE: Record<WorkflowStage, ApprovalStageKey> = {
   Manager: 'manager'
 };
 
-async function transitionComparison(
+function transitionComparison(
   id: string,
   actor: Actor,
   stageRole: RoleId,
@@ -442,12 +487,12 @@ async function transitionComparison(
   action: WorkflowAction,
   remarks: string,
   artworkStatus?: ArtworkStatus
-): Promise<Comparison | undefined> {
+): Comparison | undefined {
   if (!canActAtStage(actor, stageRole)) {
     throw new Error(`Role "${actor.role}" is not authorized to record a ${stage} decision.`);
   }
 
-  const comparisons = (await readAll());
+  const comparisons = readAll();
   const index = comparisons.findIndex((comparison) => comparison.id === id);
   if (index === -1) return undefined;
 
@@ -478,40 +523,40 @@ async function transitionComparison(
     updatedDate: today()
   };
   comparisons[index] = updated;
-  await apiClient.put(`/data/Comparison/${updated.id}`, updated);
+  writeAll(comparisons);
 
-  if (artworkStatus) await updateArtworkStatus(updated.newArtworkId, { status: artworkStatus }, actor.name);
+  if (artworkStatus) updateArtworkStatus(updated.newArtworkId, { status: artworkStatus }, actor.name);
   return updated;
 }
 
-export async function getLabelFinalQueue(): Promise<Comparison[]> {
-  return (await readAll()).filter((comparison) => comparison.status === 'Pending Label Final');
+export function getLabelFinalQueue(): Comparison[] {
+  return readAll().filter((comparison) => comparison.status === 'Pending Label Final');
 }
 
-export async function getTechnicalQueue(): Promise<Comparison[]> {
-  return (await readAll()).filter((comparison) => comparison.status === 'Pending Technical');
+export function getTechnicalQueue(): Comparison[] {
+  return readAll().filter((comparison) => comparison.status === 'Pending Technical');
 }
 
-export async function getManagerApprovalQueue(): Promise<Comparison[]> {
-  return (await readAll()).filter((comparison) => comparison.status === 'Pending Manager Approval');
+export function getManagerApprovalQueue(): Comparison[] {
+  return readAll().filter((comparison) => comparison.status === 'Pending Manager Approval');
 }
 
 // Label Final is the first review stage after a comparison is submitted.
 // Approve moves it to Technical; it never sets Final Approved.
-export async function submitLabelFinalDecision(id: string, action: 'approve' | 'revision', remarks: string, actor: Actor): Promise<Comparison | undefined> {
+export function submitLabelFinalDecision(id: string, action: 'approve' | 'revision', remarks: string, actor: Actor): Comparison | undefined {
   if (action === 'approve') {
-    return await transitionComparison(id, actor, 'label_final', 'Label Final', 'Pending Technical', 'Sent to Technical', remarks);
+    return transitionComparison(id, actor, 'label_final', 'Label Final', 'Pending Technical', 'Sent to Technical', remarks);
   }
-  return await transitionComparison(id, actor, 'label_final', 'Label Final', 'Revision Required', 'Revision Requested', remarks, 'Revision Required');
+  return transitionComparison(id, actor, 'label_final', 'Label Final', 'Revision Required', 'Revision Requested', remarks, 'Revision Required');
 }
 
 // Technical receives Label Final's remarks plus full context. Approve moves
 // it to QA; it never sets Final Approved.
-export async function submitTechnicalDecision(id: string, action: 'approve' | 'revision', remarks: string, actor: Actor): Promise<Comparison | undefined> {
+export function submitTechnicalDecision(id: string, action: 'approve' | 'revision', remarks: string, actor: Actor): Comparison | undefined {
   if (action === 'approve') {
-    return await transitionComparison(id, actor, 'technical', 'Technical', 'Pending QA', 'Sent to QA', remarks);
+    return transitionComparison(id, actor, 'technical', 'Technical', 'Pending QA', 'Sent to QA', remarks);
   }
-  return await transitionComparison(id, actor, 'technical', 'Technical', 'Revision Required', 'Revision Requested', remarks, 'Revision Required');
+  return transitionComparison(id, actor, 'technical', 'Technical', 'Revision Required', 'Revision Requested', remarks, 'Revision Required');
 }
 
 // ---------------------------------------------------------------------
@@ -522,35 +567,35 @@ export async function submitTechnicalDecision(id: string, action: 'approve' | 'r
 // underlying artwork to any final/terminal state. Only Manager's
 // submitManagerDecision('approve', ...) can ever produce Final Approved.
 
-export async function getQAQueue(): Promise<Comparison[]> {
-  return (await readAll()).filter((comparison) => comparison.status === 'Pending QA');
+export function getQAQueue(): Comparison[] {
+  return readAll().filter((comparison) => comparison.status === 'Pending QA');
 }
 
-export async function qaVerifyComparison(id: string, remarks: string, actor: Actor): Promise<Comparison | undefined> {
-  return await transitionComparison(id, actor, 'qa', 'QA', 'Pending Manager Approval', 'Sent to Manager', remarks);
+export function qaVerifyComparison(id: string, remarks: string, actor: Actor): Comparison | undefined {
+  return transitionComparison(id, actor, 'qa', 'QA', 'Pending Manager Approval', 'Sent to Manager', remarks);
 }
 
-export async function qaRejectComparison(id: string, remarks: string, actor: Actor): Promise<Comparison | undefined> {
-  return await transitionComparison(id, actor, 'qa', 'QA', 'Revision Required', 'Revision Requested', remarks, 'Revision Required');
+export function qaRejectComparison(id: string, remarks: string, actor: Actor): Comparison | undefined {
+  return transitionComparison(id, actor, 'qa', 'QA', 'Revision Required', 'Revision Requested', remarks, 'Revision Required');
 }
 
 // ---------------------------------------------------------------------
 // Manager Approval — the ONLY stage that can produce Final Approved.
 // ---------------------------------------------------------------------
 
-export async function submitManagerDecision(
+export function submitManagerDecision(
   id: string,
   action: 'approve' | 'reject' | 'revision',
   remarks: string,
   actor: Actor
-): Promise<Comparison | undefined> {
+): Comparison | undefined {
   if (action === 'approve') {
-    return await transitionComparison(id, actor, 'manager', 'Manager', 'Final Approved', 'Final Approved', remarks, 'Final Approved');
+    return transitionComparison(id, actor, 'manager', 'Manager', 'Final Approved', 'Final Approved', remarks, 'Final Approved');
   }
   if (action === 'reject') {
-    return await transitionComparison(id, actor, 'manager', 'Manager', 'Rejected', 'Rejected', remarks, 'Rejected');
+    return transitionComparison(id, actor, 'manager', 'Manager', 'Rejected', 'Rejected', remarks, 'Rejected');
   }
-  return await transitionComparison(id, actor, 'manager', 'Manager', 'Revision Required', 'Revision Requested', remarks, 'Revision Required');
+  return transitionComparison(id, actor, 'manager', 'Manager', 'Revision Required', 'Revision Requested', remarks, 'Revision Required');
 }
 
 // ---------------------------------------------------------------------
@@ -568,8 +613,8 @@ export type ApprovalSummary = {
   rejected: number;
 };
 
-export async function getApprovalSummary(): Promise<ApprovalSummary> {
-  const comparisons = (await readAll());
+export function getApprovalSummary(): ApprovalSummary {
+  const comparisons = readAll();
   const count = (status: ComparisonStatus) => comparisons.filter((comparison) => comparison.status === status).length;
   return {
     pendingLabelFinal: count('Pending Label Final'),
@@ -584,15 +629,15 @@ export async function getApprovalSummary(): Promise<ApprovalSummary> {
 
 // Convenience: all artwork versions (any status) for a product + company,
 // used by the "New Comparison" wizard's version picker.
-export async function getArtworkVersionsForSelection(productId: string, marketingCompany: string): Promise<Artwork[]> {
-  return (await getArtworks()).filter((artwork) => artwork.productId === productId && artwork.marketingCompany === marketingCompany);
+export function getArtworkVersionsForSelection(productId: string, marketingCompany: string): Artwork[] {
+  return getArtworks().filter((artwork) => artwork.productId === productId && artwork.marketingCompany === marketingCompany);
 }
 
 // Comparisons the engine has run against but that Account Manager hasn't
 // sent into the pipeline yet (see sendComparisonForReview). This is that
 // role's own "pending work" queue on the Dashboard/Approvals side of things.
-export async function getUnsubmittedComparisons(): Promise<Comparison[]> {
-  return (await readAll()).filter((comparison) => comparison.status === 'Completed');
+export function getUnsubmittedComparisons(): Comparison[] {
+  return readAll().filter((comparison) => comparison.status === 'Completed');
 }
 
 // ---------------------------------------------------------------------
@@ -604,11 +649,11 @@ export async function getUnsubmittedComparisons(): Promise<Comparison[]> {
 // check already established by canActAtStage.
 // ---------------------------------------------------------------------
 
-export async function assignApprovalStage(id: string, stageKey: ApprovalStageKey, userId: string | undefined, actor: Actor): Promise<Comparison | undefined> {
+export function assignApprovalStage(id: string, stageKey: ApprovalStageKey, userId: string | undefined, actor: Actor): Comparison | undefined {
   if (actor.role !== 'manager') {
     throw new Error(`Role "${actor.role}" is not authorized to assign approval stages.`);
   }
-  const comparisons = (await readAll());
+  const comparisons = readAll();
   const index = comparisons.findIndex((comparison) => comparison.id === id);
   if (index === -1) return undefined;
 
@@ -619,7 +664,7 @@ export async function assignApprovalStage(id: string, stageKey: ApprovalStageKey
     updatedDate: today()
   };
   comparisons[index] = updated;
-  await apiClient.put(`/data/Comparison/${updated.id}`, updated);
+  writeAll(comparisons);
   return updated;
 }
 
@@ -638,10 +683,10 @@ const PENDING_STAGE_BY_ROLE: Partial<Record<RoleId, { status: ComparisonStatus; 
 // specifically-assigned work. An unassigned stage stays visible to every
 // user with that role, preserving today's behavior for comparisons created
 // before assignment existed.
-export async function getMyPendingWork(userId: string, role: RoleId): Promise<Comparison[]> {
+export function getMyPendingWork(userId: string, role: RoleId): Comparison[] {
   const stageInfo = PENDING_STAGE_BY_ROLE[role];
   if (!stageInfo) return [];
-  return (await readAll()).filter((comparison) => {
+  return readAll().filter((comparison) => {
     if (comparison.status !== stageInfo.status) return false;
     const assigned = comparison.approvalAssignments[stageInfo.key];
     return !assigned || assigned === userId;
@@ -667,17 +712,17 @@ export type DashboardSummary = {
 };
 
 // Single aggregation point for the Dashboard's top-level numbers. Reuses
-// (await getApprovalSummary()) for every workflow-stage count rather than
+// getApprovalSummary() for every workflow-stage count rather than
 // recomputing them, and reads Products/Artwork through their own services —
 // Dashboard.tsx should never need to filter raw records itself.
-export async function getDashboardSummary(): Promise<DashboardSummary> {
-  const approval = (await getApprovalSummary());
-  const artworks = (await getArtworks());
+export function getDashboardSummary(): DashboardSummary {
+  const approval = getApprovalSummary();
+  const artworks = getArtworks();
   const pendingComparison = artworks.filter((artwork) => artwork.status === 'Pending Comparison').length;
   const pendingApproval = approval.pendingLabelFinal + approval.pendingTechnical + approval.pendingQA + approval.pendingManagerApproval;
 
   return {
-    totalProducts: (await getProducts()).length,
+    totalProducts: getProducts().length,
     totalArtwork: artworks.length,
     pendingComparison,
     pendingApproval,
@@ -713,9 +758,9 @@ export type RecentActivityItem = {
 // contribute nothing. Shared by the Dashboard's "Recent Activity" (via
 // getRecentActivity, which just caps this) and by Reports' Approval History
 // / User Activity reports, so the flatten-and-sort logic lives in one place.
-export async function getAllWorkflowHistory(): Promise<RecentActivityItem[]> {
+export function getAllWorkflowHistory(): RecentActivityItem[] {
   const items: RecentActivityItem[] = [];
-  (await readAll()).forEach((comparison) => {
+  readAll().forEach((comparison) => {
     comparison.history.forEach((entry) => {
       items.push({
         comparisonId: comparison.id,
@@ -735,6 +780,6 @@ export async function getAllWorkflowHistory(): Promise<RecentActivityItem[]> {
   return items.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
 }
 
-export async function getRecentActivity(limit = 10): Promise<RecentActivityItem[]> {
-  return (await getAllWorkflowHistory()).slice(0, limit);
+export function getRecentActivity(limit = 10): RecentActivityItem[] {
+  return getAllWorkflowHistory().slice(0, limit);
 }

@@ -442,53 +442,6 @@ export async function extractLabelReportFromFile(
         blanked.push(field);
       }
     }
-
-    // --- AI FALLBACK START ---
-    // Check if critical fields (like brand, product name) are missing.
-    // If so, invoke the local on-prem FastAPI (Qwen2-VL) to fill in the gaps.
-    const isMissingFields = Object.values(scrubbed).some(val => val === '' || val === null || val === undefined);
-    
-    if (isMissingFields) {
-      debugLog('Some fields are missing after Tesseract extraction. Calling local AI fallback...');
-      try {
-        const FormData = (await import('form-data')).default;
-        const axios = (await import('axios')).default;
-        
-        const form = new FormData();
-        form.append('file', fileBuffer, {
-          filename: isPdf ? 'upload.pdf' : 'upload.jpg',
-          contentType: mimeType,
-        });
-
-        const aiResponse = await axios.post('http://127.0.0.1:8000/api/extract', form, {
-          headers: form.getHeaders(),
-          timeout: 45000 // 45 second timeout for local inference
-        });
-
-        if (aiResponse.data && typeof aiResponse.data === 'object') {
-          const aiData = aiResponse.data;
-          debugLog(`AI Fallback returned: ${JSON.stringify(aiData)}`);
-          
-          // Only overwrite fields that are currently empty
-          for (const key of Object.keys(scrubbed) as (keyof LabelExtractionResult)[]) {
-            if (!scrubbed[key] && aiData[key]) {
-              if (Array.isArray(aiData[key])) {
-                scrubbed[key] = aiData[key].join(', ') as any;
-              } else if (typeof aiData[key] === 'object') {
-                scrubbed[key] = JSON.stringify(aiData[key]) as any;
-              } else {
-                scrubbed[key] = String(aiData[key]) as any;
-              }
-              debugLog(`AI Fallback filled missing field: ${key} = ${scrubbed[key]}`);
-            }
-          }
-        }
-      } catch (aiError) {
-        console.warn('[labelExtraction] AI Fallback failed or timed out. Proceeding with Tesseract-only data.', aiError instanceof Error ? aiError.message : aiError);
-      }
-    }
-    // --- AI FALLBACK END ---
-
     if (blanked.length > 0) {
       console.warn(
         `[labelExtraction] Discarded artwork-template placeholder text for: ${blanked.join(', ')}. ` +
@@ -502,4 +455,3 @@ export async function extractLabelReportFromFile(
     return { result: buildPlaceholderExtraction(), unknownClaims: [], discardedFields: [] };
   }
 }
-

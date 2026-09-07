@@ -18,7 +18,7 @@ import { Artwork, ArtworkType } from '../types/artwork';
 import { Product, ProductInput } from '../types/product';
 import { LabelAttributes } from '../types/comparison';
 import { FIXED_MANUFACTURING_COMPANY } from '../types/extraction';
-import { createArtwork, getArtworksByProduct } from './artworkService';
+import { createArtwork, suggestNextArtworkVersion } from './artworkService';
 import {
   createProduct,
   findPossibleDuplicate,
@@ -28,8 +28,7 @@ import {
   updateProduct
 } from './productService';
 import { getOrCreateBrand, getOrCreateFlavour, getOrCreateManufacturingCompany, getOrCreateMarketingCompany } from './masterService';
-// saveLabelAttributes doesn't exist on backend, so we might need a dummy or a real endpoint. 
-// For now we'll mock it if it doesn't exist in comparisonService.
+import { saveLabelAttributes } from './comparisonService';
 
 export type LabelIntakeExtractedFields = {
   productName: string;
@@ -56,6 +55,9 @@ export type LabelIntakeInput = {
   version?: string;
   remarks: string;
   file: LabelIntakeFile;
+  // Set when the caller (ArtworkPage) already had the user resolve which
+  // existing product this label belongs to — e.g. picked one from the
+  // "possible matches" list. Skips the exact-match auto-detect below.
   linkToProductId?: string;
 };
 
@@ -79,30 +81,29 @@ const REQUIRED_FIELD_LABELS: [keyof LabelIntakeExtractedFields, string][] = [
   ['address', 'Address']
 ];
 
-export async function findExactProductMatch(extracted: LabelIntakeExtractedFields): Promise<Product | undefined> {
+// Exact identity match only — Product Name + Brand + Marketing Company,
+// the same rule Product Management already used for its own duplicate
+// check (see productService.findPossibleDuplicate).
+export function findExactProductMatch(extracted: LabelIntakeExtractedFields): Product | undefined {
   if (!extracted.productName.trim() || !extracted.brand.trim() || !extracted.marketingCompanyName.trim()) return undefined;
-  return await findPossibleDuplicate({
+  return findPossibleDuplicate({
     productName: extracted.productName,
     brandName: extracted.brand,
     marketingCompany: extracted.marketingCompanyName
   });
 }
 
-export async function findPossibleProductMatches(extracted: LabelIntakeExtractedFields): Promise<Product[]> {
+// Same Brand + Marketing Company but not an exact identity match (different
+// or not-yet-entered Product Name) — plausible matches ("multiple possible
+// products match", per the task's error-handling requirements) that need a
+// human decision, never an automatic pick.
+export function findPossibleProductMatches(extracted: LabelIntakeExtractedFields): Product[] {
   if (!extracted.brand.trim() || !extracted.marketingCompanyName.trim()) return [];
-  const exact = await findExactProductMatch(extracted);
-  const byBrandAndCompany = await getProductsByBrandAndCompany(extracted.brand, extracted.marketingCompanyName);
-  return byBrandAndCompany.filter((product) => product.id !== exact?.id);
+  const exact = findExactProductMatch(extracted);
+  return getProductsByBrandAndCompany(extracted.brand, extracted.marketingCompanyName).filter((product) => product.id !== exact?.id);
 }
 
-// Temporary mock for suggestNextArtworkVersion since we moved it out of artworkService.ts rewrite
-export async function suggestNextArtworkVersion(productId: string, marketingCompany: string, type: ArtworkType): Promise<string> {
-  const existing = await getArtworksByProduct(productId);
-  const byType = existing.filter((a) => a.artworkType === type);
-  return `V${byType.length + 1}.0`;
-}
-
-export async function submitLabelIntake(input: LabelIntakeInput, actor: Actor): Promise<LabelIntakeResult> {
+export function submitLabelIntake(input: LabelIntakeInput, actor: Actor): LabelIntakeResult {
   const { extracted } = input;
 
   const missing = REQUIRED_FIELD_LABELS.filter(([key]) => !extracted[key].trim()).map(([, label]) => label);
@@ -110,28 +111,33 @@ export async function submitLabelIntake(input: LabelIntakeInput, actor: Actor): 
     throw new Error(`Cannot save — the following label fields are missing or unverified: ${missing.join(', ')}.`);
   }
 
-  await getOrCreateManufacturingCompany(FIXED_MANUFACTURING_COMPANY, actor.name);
-  await getOrCreateMarketingCompany(extracted.marketingCompanyName, actor.name);
-  await getOrCreateBrand(extracted.brand, extracted.marketingCompanyName, actor.name);
-  await getOrCreateFlavour(extracted.flavour, actor.name);
+  // Reuse existing Masters wherever possible; only create a new master
+  // record when the extracted name genuinely doesn't exist yet.
+  getOrCreateManufacturingCompany(FIXED_MANUFACTURING_COMPANY, actor.name);
+  getOrCreateMarketingCompany(extracted.marketingCompanyName, actor.name);
+  getOrCreateBrand(extracted.brand, extracted.marketingCompanyName, actor.name);
+  getOrCreateFlavour(extracted.flavour, actor.name);
 
   let product: Product | undefined;
   let isNewProduct = false;
 
   if (input.linkToProductId) {
-    product = await getProductById(input.linkToProductId);
+    product = getProductById(input.linkToProductId);
     if (!product) throw new Error('The product selected to link this artwork to could not be found.');
   } else {
-    product = await findExactProductMatch(extracted);
+    product = findExactProductMatch(extracted);
   }
 
   if (product) {
+    // Existing product — never duplicated. Bring its Flavour/FSSAI/Package
+    // Size in line with what this label actually shows, since that's the
+    // more current source of truth, without touching its identity fields.
     const updates: Partial<ProductInput> = {};
     if (product.flavour.trim().toLowerCase() !== extracted.flavour.trim().toLowerCase()) updates.flavour = extracted.flavour;
     if (product.fssaiNumber.trim() !== extracted.fssaiNumber.trim()) updates.fssaiNumber = extracted.fssaiNumber;
     if ((product.packageSize ?? '').trim() !== extracted.packageSize.trim()) updates.packageSize = extracted.packageSize;
     if (Object.keys(updates).length > 0) {
-      product = await updateProduct(product.id, updates, actor.name) ?? product;
+      product = updateProduct(product.id, updates, actor.name) ?? product;
     }
   } else {
     const newProductInput: ProductInput = {
@@ -144,13 +150,13 @@ export async function submitLabelIntake(input: LabelIntakeInput, actor: Actor): 
       packageSize: extracted.packageSize,
       status: 'Active'
     };
-    product = await createProduct(newProductInput, actor.name, { origin: 'Label Upload' });
+    product = createProduct(newProductInput, actor.name, { origin: 'Label Upload' });
     isNewProduct = true;
   }
 
-  const version = input.version?.trim() || await suggestNextArtworkVersion(product.id, extracted.marketingCompanyName, input.artworkType);
+  const version = input.version?.trim() || suggestNextArtworkVersion(product.id, extracted.marketingCompanyName, input.artworkType);
 
-  const artwork = await createArtwork(
+  const artwork = createArtwork(
     {
       productId: product.id,
       productName: product.productName,
@@ -170,11 +176,26 @@ export async function submitLabelIntake(input: LabelIntakeInput, actor: Actor): 
   );
 
   if (isNewProduct) {
-    product = await setProductSourceArtwork(product.id, artwork.id) ?? product;
+    product = setProductSourceArtwork(product.id, artwork.id) ?? product;
   }
 
-  // NOTE: saveLabelAttributes was removed since there is no backend table for it yet, 
-  // or it was in comparisonService which I overwrote. I'll just omit it here.
+  const labelAttributes: LabelAttributes = {
+    artworkId: artwork.id,
+    brandName: extracted.brand,
+    productName: extracted.productName,
+    address: extracted.address,
+    customerCareNumber: extracted.customerCareNumber,
+    customerCareEmail: extracted.email,
+    colourTheme: 'Not specified',
+    flavour: extracted.flavour,
+    claims: 'Not specified',
+    logo: 'Not specified',
+    labelDesign: 'Not specified',
+    nutritionTableFormat: 'Not specified',
+    fssaiNumber: extracted.fssaiNumber,
+    ingredients: 'Not specified'
+  };
+  saveLabelAttributes(labelAttributes);
 
   return { product, artwork, isNewProduct };
 }

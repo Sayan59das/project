@@ -1,6 +1,4 @@
-// @ts-nocheck
 import { useMemo, useState } from 'react';
-import { useEffect, useState, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Box,
@@ -38,15 +36,15 @@ import {
   submitManagerDecision,
   submitTechnicalDecision
 } from '../services/comparisonService';
-import { ApprovalStageKey, Comparison, ComparisonStatus } from '../types/comparison';
+import { ApprovalStageKey, Comparison, ComparisonStatus, MISSING_VALUE_DISPLAY } from '../types/comparison';
 import { formatDateTime } from '../utils/dateFormat';
 
-// The four approval stages, in pipeline order — reused for both the
+// The four approval stages, in pipeline order â€” reused for both the
 // assignment panel (Manager-only editing) and for resolving a comparison's
 // CURRENT stage's Approval User ID for display. `label` names the stage
 // itself (matches WorkflowStage/status wording elsewhere in the app);
 // `teamLabel` is the official business role from the responsibility matrix
-// and is what gets shown wherever we're naming WHO is responsible — never
+// and is what gets shown wherever we're naming WHO is responsible â€” never
 // an invented title like "QA Approver".
 const APPROVAL_STAGES: { key: ApprovalStageKey; label: string; teamLabel: string; role: RoleId }[] = [
   { key: 'labelFinal', label: 'Label Final', teamLabel: 'Label Final Team', role: 'label_final' },
@@ -63,16 +61,16 @@ const STAGE_KEY_BY_STATUS: Partial<Record<ComparisonStatus, ApprovalStageKey>> =
 };
 
 // The Approval User ID responsible for a comparison's CURRENT stage, for
-// the queue table's "Approval User ID" column — blank when the status has
+// the queue table's "Approval User ID" column â€” blank when the status has
 // no pending stage (e.g. Final Approved), "Unassigned" when it does but no
 // one has been assigned yet.
 function assignedUserLabel(comparison: Comparison): string {
   const stageKey = STAGE_KEY_BY_STATUS[comparison.status];
-  if (!stageKey) return '—';
+  if (!stageKey) return 'â€”';
   return comparison.approvalAssignments[stageKey] ?? 'Unassigned';
 }
 
-// Which pipeline stage a comparison's current status belongs to — drives the
+// Which pipeline stage a comparison's current status belongs to â€” drives the
 // "Current Stage" column and, together with the viewer's role, which action
 // buttons the detail view shows.
 function currentStageLabel(status: ComparisonStatus): string {
@@ -116,8 +114,8 @@ export function ApprovalsPage() {
     role: role ?? 'account_manager'
   };
 
-  const [comparisons, setComparisons] = useState<Comparison[]>(() => comparisons);
-  const refresh = () => setComparisons(comparisons);
+  const [comparisons, setComparisons] = useState<Comparison[]>(() => getComparisons());
+  const refresh = () => setComparisons(getComparisons());
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [remarks, setRemarks] = useState('');
@@ -167,7 +165,7 @@ export function ApprovalsPage() {
     handleBack();
   };
 
-  // Assignment — who is responsible for each stage, distinct from RBAC (who
+  // Assignment â€” who is responsible for each stage, distinct from RBAC (who
   // may act) and from the actual actor recorded in history. Manager-only,
   // same authority already gated by assignApprovalStage itself.
   const isManager = role === 'manager';
@@ -208,7 +206,7 @@ export function ApprovalsPage() {
 
       {selectedItem ? (
         <Box sx={{ display: 'grid', gap: 3 }}>
-          <Button startIcon={<MdArrowBack />} onClick={handleBack} sx={{ alignSelf: 'start', color: '#1976D2', textTransform: 'none' }}>
+          <Button startIcon={<MdArrowBack />} onClick={handleBack} sx={{ alignSelf: 'start', color: 'var(--c-info)', textTransform: 'none' }}>
             Back to Approvals
           </Button>
 
@@ -219,24 +217,24 @@ export function ApprovalsPage() {
                   <Typography variant="h4" sx={{ fontWeight: 700, mb: 1 }}>
                     {selectedItem.productName}
                   </Typography>
-                  <Typography variant="body2" sx={{ color: '#9EA4AB' }}>
-                    {selectedItem.newArtworkCompany} · Artwork {selectedItem.newArtworkId} — {selectedItem.newArtworkVersion}
+                  <Typography variant="body2" sx={{ color: 'var(--c-text-3)' }}>
+                    {selectedItem.newArtworkCompany} Â· Artwork {selectedItem.newArtworkId} â€” {selectedItem.newArtworkVersion}
                   </Typography>
-                  <Typography variant="body2" sx={{ color: '#9EA4AB', mt: 0.5 }}>
-                    Reference Artwork {selectedItem.referenceArtworkId} — {selectedItem.referenceArtworkVersion} (
+                  <Typography variant="body2" sx={{ color: 'var(--c-text-3)', mt: 0.5 }}>
+                    Reference Artwork {selectedItem.referenceArtworkId} â€” {selectedItem.referenceArtworkVersion} (
                     {selectedItem.referenceArtworkCompany})
                   </Typography>
                 </Box>
                 <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 1 }}>
                   <StatusChip status={selectedItem.status} />
-                  <Typography variant="body2" sx={{ color: '#9EA4AB' }}>
+                  <Typography variant="body2" sx={{ color: 'var(--c-text-3)' }}>
                     Comparison Score: <strong>{selectedItem.overallSimilarity}%</strong>
                   </Typography>
                   <StatusChip status={selectedItem.overallResult} />
                 </Box>
               </Box>
 
-              <Divider sx={{ borderColor: '#D8DDE3' }} />
+              <Divider sx={{ borderColor: 'var(--c-border)' }} />
 
               <Box>
                 <Typography variant="h6" sx={{ fontWeight: 700, mb: 2 }}>
@@ -247,7 +245,7 @@ export function ApprovalsPage() {
                   const currentStageKey = STAGE_KEY_BY_STATUS[selectedItem.status];
                   if (!currentStageKey) {
                     return (
-                      <Typography variant="body2" sx={{ color: '#9EA4AB', mb: isManager ? 3 : 0 }}>
+                      <Typography variant="body2" sx={{ color: 'var(--c-text-3)', mb: isManager ? 3 : 0 }}>
                         This record is not currently awaiting action at any stage.
                       </Typography>
                     );
@@ -256,10 +254,10 @@ export function ApprovalsPage() {
                   const assignedId = selectedItem.approvalAssignments[currentStageKey];
                   const assignedUser = assignedId ? getUserById(assignedId) : undefined;
                   return (
-                    <Paper variant="outlined" sx={{ p: 2.5, borderRadius: 3, mb: isManager ? 3 : 0, borderColor: '#D8DDE3' }}>
+                    <Paper variant="outlined" sx={{ p: 2.5, borderRadius: 3, mb: isManager ? 3 : 0, borderColor: 'var(--c-border)' }}>
                       <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr 1fr', sm: 'repeat(4, 1fr)' }, gap: 2 }}>
                         <Box>
-                          <Typography variant="caption" sx={{ color: '#9EA4AB', fontWeight: 700 }}>
+                          <Typography variant="caption" sx={{ color: 'var(--c-text-3)', fontWeight: 700 }}>
                             Approval Stage
                           </Typography>
                           <Typography variant="body1" sx={{ fontWeight: 700 }}>
@@ -267,7 +265,7 @@ export function ApprovalsPage() {
                           </Typography>
                         </Box>
                         <Box>
-                          <Typography variant="caption" sx={{ color: '#9EA4AB', fontWeight: 700 }}>
+                          <Typography variant="caption" sx={{ color: 'var(--c-text-3)', fontWeight: 700 }}>
                             Approval User ID
                           </Typography>
                           <Typography variant="body1" sx={{ fontWeight: 700 }}>
@@ -275,15 +273,15 @@ export function ApprovalsPage() {
                           </Typography>
                         </Box>
                         <Box>
-                          <Typography variant="caption" sx={{ color: '#9EA4AB', fontWeight: 700 }}>
+                          <Typography variant="caption" sx={{ color: 'var(--c-text-3)', fontWeight: 700 }}>
                             Assigned User
                           </Typography>
                           <Typography variant="body1" sx={{ fontWeight: 700 }}>
-                            {assignedUser?.fullName ?? '—'}
+                            {assignedUser?.fullName ?? 'â€”'}
                           </Typography>
                         </Box>
                         <Box>
-                          <Typography variant="caption" sx={{ color: '#9EA4AB', fontWeight: 700, display: 'block', mb: 0.5 }}>
+                          <Typography variant="caption" sx={{ color: 'var(--c-text-3)', fontWeight: 700, display: 'block', mb: 0.5 }}>
                             Status
                           </Typography>
                           <StatusChip status={selectedItem.status} />
@@ -316,24 +314,24 @@ export function ApprovalsPage() {
                 )}
               </Box>
 
-              <Divider sx={{ borderColor: '#D8DDE3' }} />
+              <Divider sx={{ borderColor: 'var(--c-border)' }} />
 
               <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', md: '1fr 1fr' }, gap: 3 }}>
                 <Box>
-                  <Typography variant="subtitle2" sx={{ color: '#6B7177', mb: 1, fontWeight: 700 }}>
+                  <Typography variant="subtitle2" sx={{ color: 'var(--c-text-2)', mb: 1, fontWeight: 700 }}>
                     Reference Label
                   </Typography>
                   <ArtworkPreview artwork={referenceArtwork} />
                 </Box>
                 <Box>
-                  <Typography variant="subtitle2" sx={{ color: '#6B7177', mb: 1, fontWeight: 700 }}>
+                  <Typography variant="subtitle2" sx={{ color: 'var(--c-text-2)', mb: 1, fontWeight: 700 }}>
                     New Label
                   </Typography>
                   <ArtworkPreview artwork={newArtwork} />
                 </Box>
               </Box>
 
-              <Divider sx={{ borderColor: '#D8DDE3' }} />
+              <Divider sx={{ borderColor: 'var(--c-border)' }} />
 
               <Box>
                 <Typography variant="h6" sx={{ fontWeight: 700, mb: 2 }}>
@@ -341,7 +339,7 @@ export function ApprovalsPage() {
                 </Typography>
                 <TableContainer component={Paper} sx={{ boxShadow: 'none', borderRadius: 3, overflow: 'hidden' }}>
                   <Table size="small">
-                    <TableHead sx={{ bgcolor: '#EEF1F4' }}>
+                    <TableHead sx={{ bgcolor: 'var(--c-surface)' }}>
                       <TableRow>
                         <TableCell sx={{ fontWeight: 700 }}>Parameter</TableCell>
                         <TableCell sx={{ fontWeight: 700 }}>Reference Label</TableCell>
@@ -351,10 +349,14 @@ export function ApprovalsPage() {
                     </TableHead>
                     <TableBody>
                       {selectedItem.parameters.map((param) => (
-                        <TableRow key={param.parameter} hover sx={{ '&:hover': { bgcolor: '#FFF8F2' } }}>
+                        <TableRow key={param.parameter} hover sx={{ '&:hover': { bgcolor: 'var(--c-tint-orange)' } }}>
                           <TableCell>{param.parameter}</TableCell>
-                          <TableCell>{param.referenceValue}</TableCell>
-                          <TableCell>{param.newValue}</TableCell>
+                          <TableCell sx={param.referenceValue ? undefined : { color: 'var(--c-text-3)', fontStyle: 'italic' }}>
+                            {param.referenceValue || MISSING_VALUE_DISPLAY}
+                          </TableCell>
+                          <TableCell sx={param.newValue ? undefined : { color: 'var(--c-text-3)', fontStyle: 'italic' }}>
+                            {param.newValue || MISSING_VALUE_DISPLAY}
+                          </TableCell>
                           <TableCell>
                             <StatusChip status={param.result} />
                           </TableCell>
@@ -365,20 +367,20 @@ export function ApprovalsPage() {
                 </TableContainer>
               </Box>
 
-              <Divider sx={{ borderColor: '#D8DDE3' }} />
+              <Divider sx={{ borderColor: 'var(--c-border)' }} />
 
               <Box>
                 <Typography variant="h6" sx={{ fontWeight: 700, mb: 2 }}>
                   Workflow History
                 </Typography>
                 {selectedItem.history.length === 0 ? (
-                  <Typography variant="body2" sx={{ color: '#9EA4AB' }}>
+                  <Typography variant="body2" sx={{ color: 'var(--c-text-3)' }}>
                     No stage decisions have been recorded yet.
                   </Typography>
                 ) : (
                   <TableContainer component={Paper} sx={{ boxShadow: 'none', borderRadius: 3, overflow: 'hidden' }}>
                     <Table size="small">
-                      <TableHead sx={{ bgcolor: '#EEF1F4' }}>
+                      <TableHead sx={{ bgcolor: 'var(--c-surface)' }}>
                         <TableRow>
                           <TableCell sx={{ fontWeight: 700 }}>Stage</TableCell>
                           <TableCell sx={{ fontWeight: 700 }}>Action</TableCell>
@@ -390,7 +392,7 @@ export function ApprovalsPage() {
                       </TableHead>
                       <TableBody>
                         {selectedItem.history.map((entry, index) => (
-                          <TableRow key={`${entry.stage}-${entry.date}-${index}`} hover sx={{ '&:hover': { bgcolor: '#FFF8F2' } }}>
+                          <TableRow key={`${entry.stage}-${entry.date}-${index}`} hover sx={{ '&:hover': { bgcolor: 'var(--c-tint-orange)' } }}>
                             <TableCell>{entry.stage}</TableCell>
                             <TableCell>{entry.action}</TableCell>
                             <TableCell>{entry.approvalUserId ?? 'Unassigned'}</TableCell>
@@ -398,7 +400,7 @@ export function ApprovalsPage() {
                               {entry.actorName} ({entry.actorRole})
                             </TableCell>
                             <TableCell>{formatDateTime(entry.date)}</TableCell>
-                            <TableCell>{entry.remarks || '—'}</TableCell>
+                            <TableCell>{entry.remarks || 'â€”'}</TableCell>
                           </TableRow>
                         ))}
                       </TableBody>
@@ -407,7 +409,7 @@ export function ApprovalsPage() {
                 )}
               </Box>
 
-              <Divider sx={{ borderColor: '#D8DDE3' }} />
+              <Divider sx={{ borderColor: 'var(--c-border)' }} />
 
               <Box sx={{ display: 'grid', gap: 2 }}>
                 <Typography variant="h6" sx={{ fontWeight: 700 }}>
@@ -432,7 +434,7 @@ export function ApprovalsPage() {
                           </Button>
                           <Button
                             variant="contained"
-                            sx={{ bgcolor: '#00A651', '&:hover': { bgcolor: '#008f45' }, textTransform: 'none' }}
+                            sx={{ bgcolor: 'var(--c-green)', '&:hover': { bgcolor: 'var(--c-green-650)' }, textTransform: 'none' }}
                             onClick={handleLabelFinalApprove}
                           >
                             Send to Technical
@@ -446,7 +448,7 @@ export function ApprovalsPage() {
                           </Button>
                           <Button
                             variant="contained"
-                            sx={{ bgcolor: '#00A651', '&:hover': { bgcolor: '#008f45' }, textTransform: 'none' }}
+                            sx={{ bgcolor: 'var(--c-green)', '&:hover': { bgcolor: 'var(--c-green-650)' }, textTransform: 'none' }}
                             onClick={handleTechnicalApprove}
                           >
                             Approve &amp; Send to QA
@@ -463,7 +465,7 @@ export function ApprovalsPage() {
                           </Button>
                           <Button
                             variant="contained"
-                            sx={{ bgcolor: '#00A651', '&:hover': { bgcolor: '#008f45' }, textTransform: 'none' }}
+                            sx={{ bgcolor: 'var(--c-green)', '&:hover': { bgcolor: 'var(--c-green-650)' }, textTransform: 'none' }}
                             onClick={handleManagerFinalApprove}
                           >
                             Final Approve
@@ -474,19 +476,19 @@ export function ApprovalsPage() {
                   </>
                 ) : isQAStage ? (
                   <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 2 }}>
-                    <Typography variant="body2" sx={{ color: '#9EA4AB' }}>
+                    <Typography variant="body2" sx={{ color: 'var(--c-text-3)' }}>
                       This record is verified from the QA Verification page.
                     </Typography>
                     <Button
                       variant="contained"
-                      sx={{ bgcolor: '#1976D2', '&:hover': { bgcolor: '#135ba1' }, textTransform: 'none' }}
+                      sx={{ bgcolor: 'var(--c-info)', '&:hover': { bgcolor: 'var(--c-info-700)' }, textTransform: 'none' }}
                       onClick={() => navigate('/qa')}
                     >
                       Open in QA Verification
                     </Button>
                   </Box>
                 ) : (
-                  <Typography variant="body2" sx={{ color: '#9EA4AB' }}>
+                  <Typography variant="body2" sx={{ color: 'var(--c-text-3)' }}>
                     No action is available on this record for your role at its current stage.
                   </Typography>
                 )}
@@ -498,8 +500,8 @@ export function ApprovalsPage() {
         <Box sx={{ display: 'grid', gap: 3 }}>
           <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: 'repeat(2, 1fr)', md: 'repeat(4, 1fr)' }, gap: 2 }}>
             {summaryCardOrder.map((card) => (
-              <Paper key={card.key} sx={{ p: 3, borderRadius: 3, boxShadow: '0 10px 30px rgba(0,0,0,0.04)' }}>
-                <Typography variant="subtitle2" sx={{ color: '#6B7177', mb: 1, fontWeight: 700 }}>
+              <Paper key={card.key} sx={{ p: 3, borderRadius: 3, boxShadow: 'var(--c-shadow-card)' }}>
+                <Typography variant="subtitle2" sx={{ color: 'var(--c-text-2)', mb: 1, fontWeight: 700 }}>
                   {card.label}
                 </Typography>
                 <Typography variant="h4" sx={{ fontWeight: 800 }}>
@@ -515,7 +517,7 @@ export function ApprovalsPage() {
             </Typography>
             {queue.length === 0 ? (
               <Box sx={{ py: 6, textAlign: 'center' }}>
-                <Typography variant="body1" sx={{ color: '#9EA4AB' }}>
+                <Typography variant="body1" sx={{ color: 'var(--c-text-3)' }}>
                   No records in your approval queue right now.
                 </Typography>
               </Box>
@@ -524,22 +526,22 @@ export function ApprovalsPage() {
                 <Table>
                   <TableHead>
                     <TableRow>
-                      <TableCell sx={{ fontWeight: 700, color: '#2E3135' }}>Comparison ID</TableCell>
-                      <TableCell sx={{ fontWeight: 700, color: '#2E3135' }}>Product Name</TableCell>
-                      <TableCell sx={{ fontWeight: 700, color: '#2E3135' }}>Party</TableCell>
-                      <TableCell sx={{ fontWeight: 700, color: '#2E3135' }}>Artwork Version</TableCell>
-                      <TableCell sx={{ fontWeight: 700, color: '#2E3135' }}>Comparison Result</TableCell>
-                      <TableCell sx={{ fontWeight: 700, color: '#2E3135' }}>Similarity</TableCell>
-                      <TableCell sx={{ fontWeight: 700, color: '#2E3135' }}>Current Stage</TableCell>
-                      <TableCell sx={{ fontWeight: 700, color: '#2E3135' }}>Approval User ID</TableCell>
-                      <TableCell sx={{ fontWeight: 700, color: '#2E3135' }}>Status</TableCell>
-                      <TableCell sx={{ fontWeight: 700, color: '#2E3135' }}>Submitted Date</TableCell>
-                      <TableCell sx={{ fontWeight: 700, color: '#2E3135' }}>Actions</TableCell>
+                      <TableCell sx={{ fontWeight: 700, color: 'var(--c-text-1)' }}>Comparison ID</TableCell>
+                      <TableCell sx={{ fontWeight: 700, color: 'var(--c-text-1)' }}>Product Name</TableCell>
+                      <TableCell sx={{ fontWeight: 700, color: 'var(--c-text-1)' }}>Party</TableCell>
+                      <TableCell sx={{ fontWeight: 700, color: 'var(--c-text-1)' }}>Artwork Version</TableCell>
+                      <TableCell sx={{ fontWeight: 700, color: 'var(--c-text-1)' }}>Comparison Result</TableCell>
+                      <TableCell sx={{ fontWeight: 700, color: 'var(--c-text-1)' }}>Similarity</TableCell>
+                      <TableCell sx={{ fontWeight: 700, color: 'var(--c-text-1)' }}>Current Stage</TableCell>
+                      <TableCell sx={{ fontWeight: 700, color: 'var(--c-text-1)' }}>Approval User ID</TableCell>
+                      <TableCell sx={{ fontWeight: 700, color: 'var(--c-text-1)' }}>Status</TableCell>
+                      <TableCell sx={{ fontWeight: 700, color: 'var(--c-text-1)' }}>Submitted Date</TableCell>
+                      <TableCell sx={{ fontWeight: 700, color: 'var(--c-text-1)' }}>Actions</TableCell>
                     </TableRow>
                   </TableHead>
                   <TableBody>
                     {queue.map((item) => (
-                      <TableRow key={item.id} hover sx={{ '&:hover': { bgcolor: '#FFF8F2' } }}>
+                      <TableRow key={item.id} hover sx={{ '&:hover': { bgcolor: 'var(--c-tint-orange)' } }}>
                         <TableCell>{item.id}</TableCell>
                         <TableCell>{item.productName}</TableCell>
                         <TableCell>{item.newArtworkCompany}</TableCell>
@@ -559,7 +561,7 @@ export function ApprovalsPage() {
                             variant="contained"
                             size="small"
                             onClick={() => handleOpenItem(item)}
-                            sx={{ textTransform: 'none', bgcolor: '#1976D2', '&:hover': { bgcolor: '#135ba1' } }}
+                            sx={{ textTransform: 'none', bgcolor: 'var(--c-info)', '&:hover': { bgcolor: 'var(--c-info-700)' } }}
                           >
                             Review
                           </Button>

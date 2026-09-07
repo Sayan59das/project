@@ -1,6 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { useMemo, useState } from 'react';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   Box,
   Button,
@@ -26,8 +25,7 @@ import {
   TableHead,
   TableRow,
   TextField,
-  Typography,
-  CircularProgress
+  Typography
 } from '@mui/material';
 import { MdClose } from 'react-icons/md';
 import { PageHeader } from '../components/PageHeader';
@@ -70,6 +68,9 @@ import {
 
 const ALL = 'All';
 
+// Any record from any of the six master collections â€” this page treats them
+// generically by field name, which is safe because each branch below only
+// ever reads/writes the fields that type actually has.
 type MasterRecord = Record<string, any>;
 
 type Column = { header: string; render: (item: MasterRecord) => React.ReactNode };
@@ -141,88 +142,88 @@ function getPrimaryLabel(type: MasterTypeKey, item: MasterRecord): string {
   }
 }
 
-async function getAll(type: MasterTypeKey): Promise<MasterRecord[]> {
+function getAll(type: MasterTypeKey): MasterRecord[] {
   switch (type) {
     case 'marketingCompanies':
-      return await getMarketingCompanies();
+      return getMarketingCompanies();
     case 'manufacturingCompanies':
-      return await getManufacturingCompanies();
+      return getManufacturingCompanies();
     case 'brands':
-      return await getBrands();
+      return getBrands();
     case 'flavours':
-      return await getFlavours();
+      return getFlavours();
     case 'claims':
-      return await getClaims();
+      return getClaims();
     case 'productCategories':
-      return await getProductCategories();
+      return getProductCategories();
   }
 }
 
-async function findDuplicate(type: MasterTypeKey, form: MasterRecord, excludeId?: string): Promise<MasterRecord | undefined> {
+function findDuplicate(type: MasterTypeKey, form: MasterRecord, excludeId?: string): MasterRecord | undefined {
   switch (type) {
     case 'marketingCompanies':
-      return await findDuplicateMarketingCompany(form.companyName, excludeId);
+      return findDuplicateMarketingCompany(form.companyName, excludeId);
     case 'manufacturingCompanies':
-      return await findDuplicateManufacturingCompany(form.companyName, excludeId);
+      return findDuplicateManufacturingCompany(form.companyName, excludeId);
     case 'brands':
-      return await findDuplicateBrand(form.brandName, form.marketingCompany, excludeId);
+      return findDuplicateBrand(form.brandName, form.marketingCompany, excludeId);
     case 'flavours':
-      return await findDuplicateFlavour(form.flavourName, excludeId);
+      return findDuplicateFlavour(form.flavourName, excludeId);
     case 'claims':
-      return await findDuplicateClaim(form.claimText, excludeId);
+      return findDuplicateClaim(form.claimText, excludeId);
     case 'productCategories':
-      return await findDuplicateProductCategory(form.categoryName, excludeId);
+      return findDuplicateProductCategory(form.categoryName, excludeId);
   }
 }
 
-async function persistCreate(type: MasterTypeKey, form: MasterRecord, actor: string): Promise<MasterRecord> {
+function persistCreate(type: MasterTypeKey, form: MasterRecord, actor: string): MasterRecord {
   switch (type) {
     case 'marketingCompanies':
-      return await createMarketingCompany(form as any, actor);
+      return createMarketingCompany(form as any, actor);
     case 'manufacturingCompanies':
-      return await createManufacturingCompany(form as any, actor);
+      return createManufacturingCompany(form as any, actor);
     case 'brands':
-      return await createBrand(form as any, actor);
+      return createBrand(form as any, actor);
     case 'flavours':
-      return await createFlavour(form as any, actor);
+      return createFlavour(form as any, actor);
     case 'claims':
-      return await createClaim(form as any, actor);
+      return createClaim(form as any, actor);
     case 'productCategories':
-      return await createProductCategory(form as any, actor);
+      return createProductCategory(form as any, actor);
   }
 }
 
-async function persistUpdate(type: MasterTypeKey, id: string, form: MasterRecord, actor: string): Promise<MasterRecord | undefined> {
+function persistUpdate(type: MasterTypeKey, id: string, form: MasterRecord, actor: string): MasterRecord | undefined {
   switch (type) {
     case 'marketingCompanies':
-      return await updateMarketingCompany(id, form as any, actor);
+      return updateMarketingCompany(id, form as any, actor);
     case 'manufacturingCompanies':
-      return await updateManufacturingCompany(id, form as any, actor);
+      return updateManufacturingCompany(id, form as any, actor);
     case 'brands':
-      return await updateBrand(id, form as any, actor);
+      return updateBrand(id, form as any, actor);
     case 'flavours':
-      return await updateFlavour(id, form as any, actor);
+      return updateFlavour(id, form as any, actor);
     case 'claims':
-      return await updateClaim(id, form as any, actor);
+      return updateClaim(id, form as any, actor);
     case 'productCategories':
-      return await updateProductCategory(id, form as any, actor);
+      return updateProductCategory(id, form as any, actor);
   }
 }
 
-async function persistDeactivate(type: MasterTypeKey, id: string, actor: string): Promise<MasterRecord | undefined> {
+function persistDeactivate(type: MasterTypeKey, id: string, actor: string): MasterRecord | undefined {
   switch (type) {
     case 'marketingCompanies':
-      return await deactivateMarketingCompany(id, actor);
+      return deactivateMarketingCompany(id, actor);
     case 'manufacturingCompanies':
-      return await deactivateManufacturingCompany(id, actor);
+      return deactivateManufacturingCompany(id, actor);
     case 'brands':
-      return await deactivateBrand(id, actor);
+      return deactivateBrand(id, actor);
     case 'flavours':
-      return await deactivateFlavour(id, actor);
+      return deactivateFlavour(id, actor);
     case 'claims':
-      return await deactivateClaim(id, actor);
+      return deactivateClaim(id, actor);
     case 'productCategories':
-      return await deactivateProductCategory(id, actor);
+      return deactivateProductCategory(id, actor);
   }
 }
 
@@ -286,11 +287,12 @@ export function MasterDataPage() {
   const { currentUser, hasPermission } = useAuth();
   const canManage = hasPermission('MANAGE_MASTERS');
   const actor = currentUser?.fullName ?? 'Unknown User';
-  const queryClient = useQueryClient();
 
   const [activeType, setActiveType] = useState<MasterTypeKey>('marketingCompanies');
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<'All' | MasterStatus>('All');
+  const [version, setVersion] = useState(0);
+  const refresh = () => setVersion((v) => v + 1);
 
   const [formOpen, setFormOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -305,26 +307,19 @@ export function MasterDataPage() {
   const activeConfig = MASTER_TYPES.find((type) => type.key === activeType)!;
   const columns = useMemo(() => getColumns(activeType), [activeType]);
 
-  const { data: allItems = [], isLoading } = useQuery({
-    queryKey: ['masters', activeType],
-    queryFn: () => getAll(activeType)
-  });
-
-  const { data: marketingCompanies = [] } = useQuery({
-    queryKey: ['masters', 'marketingCompanies'],
-    queryFn: () => getMarketingCompanies(),
-    enabled: activeType === 'brands'
-  });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const allItems = useMemo(() => getAll(activeType), [activeType, version]);
 
   const activeMarketingCompanyOptions = useMemo(() => {
-    const active = marketingCompanies
+    const active = getMarketingCompanies()
       .filter((company) => company.status === 'Active')
       .map((company) => company.companyName);
     if (formState.marketingCompany && !active.includes(formState.marketingCompany)) {
       return [...active, formState.marketingCompany];
     }
     return active;
-  }, [marketingCompanies, formState.marketingCompany]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [version, formState.marketingCompany]);
 
   const filteredItems = useMemo(() => {
     const term = search.trim().toLowerCase();
@@ -363,30 +358,24 @@ export function MasterDataPage() {
     setDuplicateMatch(null);
   };
 
-  const persistMutation = useMutation({
-    mutationFn: async () => {
-      if (editingId) {
-        return persistUpdate(activeType, editingId, formState, actor);
-      } else {
-        return persistCreate(activeType, formState, actor);
-      }
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['masters', activeType] });
-      setFormOpen(false);
-      setDuplicateMatch(null);
+  const persist = () => {
+    if (editingId) {
+      persistUpdate(activeType, editingId, formState, actor);
+    } else {
+      persistCreate(activeType, formState, actor);
     }
-  });
+    refresh();
+    setFormOpen(false);
+    setDuplicateMatch(null);
+  };
 
-  const persist = () => persistMutation.mutate();
-
-  const handleSave = async () => {
+  const handleSave = () => {
     const errors = validate(activeType, formState);
     setFormErrors(errors);
     if (Object.keys(errors).length > 0) return;
 
     if (!editingId) {
-      const duplicate = await findDuplicate(activeType, formState);
+      const duplicate = findDuplicate(activeType, formState);
       if (duplicate) {
         setDuplicateMatch(duplicate);
         return;
@@ -400,20 +389,12 @@ export function MasterDataPage() {
     setViewOpen(true);
   };
 
-  const deactivateMutation = useMutation({
-    mutationFn: async () => {
-      if (!deactivateTarget) return;
-      return persistDeactivate(activeType, deactivateTarget.id, actor);
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['masters', activeType] });
-      setViewItem((prev) => (prev && deactivateTarget && prev.id === deactivateTarget.id ? { ...prev, status: 'Inactive' } : prev));
-      setDeactivateTarget(null);
-    }
-  });
-
   const handleConfirmDeactivate = () => {
-    deactivateMutation.mutate();
+    if (!deactivateTarget) return;
+    persistDeactivate(activeType, deactivateTarget.id, actor);
+    refresh();
+    setViewItem((prev) => (prev && prev.id === deactivateTarget.id ? { ...prev, status: 'Inactive' } : prev));
+    setDeactivateTarget(null);
   };
 
   return (
@@ -442,7 +423,7 @@ export function MasterDataPage() {
             {activeConfig.label}
           </Typography>
           {canManage && (
-            <Button variant="contained" sx={{ bgcolor: '#E26737', '&:hover': { bgcolor: '#d55b2f' } }} onClick={handleOpenAdd}>
+            <Button variant="contained" sx={{ bgcolor: 'var(--c-orange)', '&:hover': { bgcolor: 'var(--c-orange-600)' } }} onClick={handleOpenAdd}>
               + Add {activeConfig.addLabel}
             </Button>
           )}
@@ -465,13 +446,9 @@ export function MasterDataPage() {
           </FormControl>
         </Stack>
 
-        {isLoading ? (
-          <Box sx={{ py: 6, display: 'flex', justifyContent: 'center' }}>
-            <CircularProgress />
-          </Box>
-        ) : filteredItems.length === 0 ? (
+        {filteredItems.length === 0 ? (
           <Box sx={{ py: 6, textAlign: 'center' }}>
-            <Typography variant="body1" sx={{ color: '#9EA4AB' }}>
+            <Typography variant="body1" sx={{ color: 'var(--c-text-3)' }}>
               {emptyMessage}
             </Typography>
           </Box>
@@ -491,7 +468,7 @@ export function MasterDataPage() {
               </TableHead>
               <TableBody>
                 {filteredItems.map((item) => (
-                  <TableRow key={item.id} hover sx={{ '&:hover': { bgcolor: '#EEF1F4' } }}>
+                  <TableRow key={item.id} hover sx={{ '&:hover': { bgcolor: 'var(--c-surface)' } }}>
                     {columns.map((column) => (
                       <TableCell key={column.header}>{column.render(item)}</TableCell>
                     ))}
@@ -567,7 +544,7 @@ export function MasterDataPage() {
                   value={formState.brandName}
                   onChange={(event) => setFormState((prev) => ({ ...prev, brandName: event.target.value }))}
                   error={Boolean(formErrors.brandName)}
-                  helperText={formErrors.brandName || 'Stored exactly as typed — casing is not auto-changed.'}
+                  helperText={formErrors.brandName || 'Stored exactly as typed â€” casing is not auto-changed.'}
                 />
                 <FormControl error={Boolean(formErrors.marketingCompany)}>
                   <InputLabel>Party *</InputLabel>
@@ -652,7 +629,7 @@ export function MasterDataPage() {
             <Button onClick={handleCloseForm} sx={{ textTransform: 'none' }}>
               Cancel
             </Button>
-            <Button variant="contained" sx={{ textTransform: 'none' }} onClick={handleSave} disabled={persistMutation.isPending}>
+            <Button variant="contained" sx={{ textTransform: 'none' }} onClick={handleSave}>
               {editingId ? 'Save Changes' : 'Save'}
             </Button>
           </Box>
@@ -663,11 +640,11 @@ export function MasterDataPage() {
       <Dialog open={Boolean(duplicateMatch)} onClose={() => setDuplicateMatch(null)} maxWidth="xs" fullWidth>
         <DialogTitle sx={{ fontWeight: 700 }}>Similar master record already exists</DialogTitle>
         <DialogContent>
-          <Typography variant="body2" sx={{ color: '#9EA4AB', mb: 2 }}>
+          <Typography variant="body2" sx={{ color: 'var(--c-text-3)', mb: 2 }}>
             An active {activeConfig.addLabel.toLowerCase()} with this information already exists:
           </Typography>
           {duplicateMatch && (
-            <Paper sx={{ p: 2, bgcolor: '#EEF1F4' }}>
+            <Paper sx={{ p: 2, bgcolor: 'var(--c-surface)' }}>
               <Typography variant="body2">
                 <strong>{getPrimaryLabel(activeType, duplicateMatch)}</strong> ({duplicateMatch.id})
               </Typography>
@@ -680,7 +657,7 @@ export function MasterDataPage() {
           <Button onClick={() => setDuplicateMatch(null)} sx={{ textTransform: 'none' }}>
             Cancel
           </Button>
-          <Button variant="contained" sx={{ textTransform: 'none' }} onClick={persist} disabled={persistMutation.isPending}>
+          <Button variant="contained" sx={{ textTransform: 'none' }} onClick={persist}>
             Continue Anyway
           </Button>
         </DialogActions>
@@ -690,7 +667,7 @@ export function MasterDataPage() {
       <Dialog open={Boolean(deactivateTarget)} onClose={() => setDeactivateTarget(null)} maxWidth="xs" fullWidth>
         <DialogTitle sx={{ fontWeight: 700 }}>Deactivate {activeConfig.addLabel}</DialogTitle>
         <DialogContent>
-          <Typography variant="body2" sx={{ color: '#9EA4AB' }}>
+          <Typography variant="body2" sx={{ color: 'var(--c-text-3)' }}>
             Are you sure you want to deactivate this {activeConfig.addLabel.toLowerCase()}?
           </Typography>
           {deactivateTarget && (
@@ -703,7 +680,7 @@ export function MasterDataPage() {
           <Button onClick={() => setDeactivateTarget(null)} sx={{ textTransform: 'none' }}>
             Cancel
           </Button>
-          <Button variant="contained" color="error" sx={{ textTransform: 'none' }} onClick={handleConfirmDeactivate} disabled={deactivateMutation.isPending}>
+          <Button variant="contained" color="error" sx={{ textTransform: 'none' }} onClick={handleConfirmDeactivate}>
             Deactivate
           </Button>
         </DialogActions>
@@ -723,8 +700,8 @@ export function MasterDataPage() {
 
           {viewItem && (
             <Box sx={{ display: 'grid', gap: 3 }}>
-              <Paper sx={{ p: 3, borderRadius: 3, bgcolor: '#EEF1F4' }}>
-                <Typography variant="subtitle2" sx={{ color: '#6B7177', mb: 1 }}>
+              <Paper sx={{ p: 3, borderRadius: 3, bgcolor: 'var(--c-surface)' }}>
+                <Typography variant="subtitle2" sx={{ color: 'var(--c-text-2)', mb: 1 }}>
                   {viewItem.id}
                 </Typography>
                 <Typography variant="h6" sx={{ fontWeight: 700, mb: 1 }}>
@@ -734,7 +711,7 @@ export function MasterDataPage() {
               </Paper>
 
               <Box>
-                <Typography variant="subtitle2" sx={{ color: '#6B7177', mb: 1, fontWeight: 700 }}>
+                <Typography variant="subtitle2" sx={{ color: 'var(--c-text-2)', mb: 1, fontWeight: 700 }}>
                   Details
                 </Typography>
                 <Box sx={{ display: 'grid', gap: 0.5 }}>
@@ -751,7 +728,7 @@ export function MasterDataPage() {
               <Divider />
 
               <Box>
-                <Typography variant="subtitle2" sx={{ color: '#6B7177', mb: 1, fontWeight: 700 }}>
+                <Typography variant="subtitle2" sx={{ color: 'var(--c-text-2)', mb: 1, fontWeight: 700 }}>
                   Audit Information
                 </Typography>
                 <Box sx={{ display: 'grid', gap: 0.5 }}>

@@ -1,4 +1,3 @@
-// @ts-nocheck
 // Unit tests for labelIntakeService.findExactProductMatch — the function
 // Quick Label Comparison relies on to identify which Product an uploaded
 // artwork belongs to (see labelComparisonWorkflowService.ts). No fuzzy or

@@ -1,7 +1,40 @@
+// Orchestrates the Label Comparison workflow:
+//
+//   Select an existing label (Product) -> does it have an Approved/Final
+//   Approved artwork? -> YES: Version Comparison (its own highest-versioned
+//   artwork vs. that latest approved one) / NO: skip, note why -> always
+//   run Cross-Company Comparison (this label vs. every other marketing
+//   company's approved artwork for the same product name) -> one combined
+//   result.
+//
+// There is no file upload anywhere in this workflow — every artwork
+// compared is an EXISTING Artwork Management record the user already has
+// (selected by product, never by hand-picking a version or company). This
+// deliberately reuses existing app logic rather than reinventing any of it:
+//   - getArtworksByProduct / getLatestApprovedArtworkForProduct /
+//     parseVersionNumber (artworkService.ts) resolve which two artworks to
+//     compare, and comparisonService.getCrossCompanyCandidates resolves
+//     which other companies' labels are relevant.
+//   - Extraction reuses labelExtractionService.extractLabel (the same OCR
+//     endpoint used everywhere else) exactly once per file.
+//   - The actual field-by-field comparison reuses
+//     labelComparisonService.compareExtractedLabels — no comparison logic
+//     is duplicated on the client.
+//
+// A run (version comparison, if applicable, plus every cross-company
+// result) is persisted as ONE LabelComparisonRun via
+// labelComparisonHistoryService — that's what feeds the Label Comparison
+// page's history table and its Detail page.
+//
+// Honesty note: Artwork records are frontend-only (localStorage). Seed/demo
+// Artwork records have no real file behind them (see artworkService.ts's
+// file-storage-limitation comment) — filePath is only a usable browser
+// object URL for artwork uploaded earlier in THIS session. When an artwork
+// needed for comparison has no retrievable file, this module reports that
+// plainly rather than faking a comparison.
 import { extractLabel, LabelExtractionError, type LabelExtractionApiResult } from './labelExtractionService';
 import { compareExtractedLabels, LabelComparisonError } from './labelComparisonService';
-import { getArtworkById, getArtworksByProduct, parseVersionNumber } from './artworkService';
-// In the future this should be exposed from artworkService async. Let's add it.
+import { getArtworkById, getArtworksByProduct, getLatestApprovedArtworkForProduct, parseVersionNumber } from './artworkService';
 import { getCrossCompanyCandidates } from './comparisonService';
 import { getProductById, getProducts } from './productService';
 import { saveLabelComparisonRun } from './labelComparisonHistoryService';
@@ -16,9 +49,8 @@ export { LabelExtractionError, LabelComparisonError };
 // Label selection
 // ---------------------------------------------------------------------
 
-export async function getSelectableLabels(): Promise<Product[]> {
-  const products = await getProducts();
-  return products.filter((product) => product.status !== 'Inactive');
+export function getSelectableLabels(): Product[] {
+  return getProducts().filter((product) => product.status !== 'Inactive');
 }
 
 export function formatLabelName(product: Product): string {
@@ -30,31 +62,28 @@ export function formatLabelName(product: Product): string {
 // ---------------------------------------------------------------------
 
 export type ComparisonPlan =
+  // This label has no artwork at all yet — nothing exists to compare.
   | { status: 'no_artwork'; product: Product }
+  // The label's own highest-versioned artwork IS already the approved
+  // one — there is no newer/pending version to check.
   | { status: 'up_to_date'; product: Product; approvedArtwork: Artwork }
+  // No Approved/Final Approved artwork exists yet for this label —
+  // version comparison will be skipped; cross-company still runs.
   | { status: 'no_approved_baseline'; product: Product; candidateArtwork: Artwork }
+  // A newer candidate artwork and an approved baseline both exist.
   | { status: 'ready'; product: Product; candidateArtwork: Artwork; approvedArtwork: Artwork };
 
-// Helper we'll include here since it wasn't moved to the async artworkService rewrite yet
-async function getLatestApprovedArtworkForProduct(productId: string, marketingCompany: string): Promise<Artwork | undefined> {
-  const artworks = await getArtworksByProduct(productId);
-  const approved = artworks.filter((a) => a.marketingCompany === marketingCompany && (a.status === 'Approved' || a.status === 'Final Approved'));
-  if (approved.length === 0) return undefined;
-  return approved.sort((a, b) => parseVersionNumber(b.version) - parseVersionNumber(a.version))[0];
-}
-
-export async function identifyComparisonPlan(productId: string): Promise<ComparisonPlan | undefined> {
-  const product = await getProductById(productId);
+export function identifyComparisonPlan(productId: string): ComparisonPlan | undefined {
+  const product = getProductById(productId);
   if (!product) return undefined;
 
-  const artworks = await getArtworksByProduct(productId);
-  const activeArtworks = artworks.filter((artwork) => artwork.status !== 'Archived');
-  if (activeArtworks.length === 0) {
+  const artworks = getArtworksByProduct(productId).filter((artwork) => artwork.status !== 'Archived');
+  if (artworks.length === 0) {
     return { status: 'no_artwork', product };
   }
 
-  const candidateArtwork = activeArtworks.sort((a, b) => parseVersionNumber(b.version) - parseVersionNumber(a.version))[0];
-  const approvedArtwork = await getLatestApprovedArtworkForProduct(productId, product.marketingCompany);
+  const candidateArtwork = artworks.sort((a, b) => parseVersionNumber(b.version) - parseVersionNumber(a.version))[0];
+  const approvedArtwork = getLatestApprovedArtworkForProduct(productId, product.marketingCompany);
 
   if (!approvedArtwork) {
     return { status: 'no_approved_baseline', product, candidateArtwork };
@@ -70,6 +99,10 @@ export async function identifyComparisonPlan(productId: string): Promise<Compari
 // then cross-company comparison against every relevant candidate.
 // ---------------------------------------------------------------------
 
+// Resolves an Artwork's stored filePath to a real File the browser can
+// still read. Returns undefined (never throws) for a blank filePath or one
+// that can no longer be fetched — both are the same honest outcome from the
+// caller's point of view: "there is no retrievable file for this artwork."
 async function fetchArtworkFile(artwork: Artwork): Promise<File | undefined> {
   if (!artwork.filePath.trim()) return undefined;
   try {
@@ -88,30 +121,6 @@ async function extractArtwork(artwork: Artwork): Promise<LabelExtractionApiResul
   return extractLabel(file);
 }
 
-// Helper we'll include here since it wasn't moved to the async comparisonService rewrite yet
-async function getCrossCompanyCandidatesAsync(productId: string): Promise<CrossCompanyCandidate[]> {
-  const product = await getProductById(productId);
-  if (!product) return [];
-  const products = await getProducts();
-  const otherProducts = products.filter((p) => p.brandName === product.brandName && p.marketingCompany !== product.marketingCompany);
-  
-  const candidates: CrossCompanyCandidate[] = [];
-  for (const other of otherProducts) {
-    const artwork = await getLatestApprovedArtworkForProduct(other.id, other.marketingCompany);
-    if (artwork) {
-      candidates.push({
-        productId: other.id,
-        productName: other.productName,
-        marketingCompany: other.marketingCompany,
-        artworkId: artwork.id,
-        artworkVersion: artwork.version
-      });
-    }
-  }
-  return candidates;
-}
-
-
 async function compareCandidate(subjectExtraction: LabelExtractionApiResult, candidate: CrossCompanyCandidate): Promise<CrossCompanyResultEntry> {
   const base = {
     candidateProductId: candidate.productId,
@@ -120,7 +129,7 @@ async function compareCandidate(subjectExtraction: LabelExtractionApiResult, can
     candidateArtworkId: candidate.artworkId,
     candidateArtworkVersion: candidate.artworkVersion
   };
-  const candidateArtwork = await getArtworkById(candidate.artworkId);
+  const candidateArtwork = getArtworkById(candidate.artworkId);
   if (!candidateArtwork) return { ...base, outcome: { status: 'file_unavailable' } };
   const candidateExtraction = await extractArtwork(candidateArtwork);
   if (!candidateExtraction) return { ...base, outcome: { status: 'file_unavailable' } };
@@ -129,7 +138,7 @@ async function compareCandidate(subjectExtraction: LabelExtractionApiResult, can
 }
 
 export type RunOutcome =
-  | { status: 'file_unavailable'; artwork: Artwork }
+  | { status: 'file_unavailable'; artwork: Artwork } // the candidate or approved artwork itself has no retrievable file
   | { status: 'success'; run: LabelComparisonRun };
 
 export async function runComparisonWorkflow(plan: ComparisonPlan, actor: string): Promise<RunOutcome> {
@@ -159,13 +168,13 @@ export async function runComparisonWorkflow(plan: ComparisonPlan, actor: string)
     };
   }
 
-  const candidates = await getCrossCompanyCandidatesAsync(plan.product.id);
+  const candidates = getCrossCompanyCandidates(plan.product.id);
   const crossCompanyResults: CrossCompanyResultEntry[] = [];
   for (const candidate of candidates) {
     crossCompanyResults.push(await compareCandidate(candidateExtraction, candidate));
   }
 
-  const run = await saveLabelComparisonRun({
+  const run = saveLabelComparisonRun({
     productId: plan.product.id,
     productName: plan.product.productName,
     brandName: plan.product.brandName,

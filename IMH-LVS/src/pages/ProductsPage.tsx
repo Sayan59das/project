@@ -1,6 +1,5 @@
 import { useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   Box,
   Button,
@@ -21,8 +20,7 @@ import {
   Stack,
   TextField,
   Tooltip,
-  Typography,
-  CircularProgress
+  Typography
 } from '@mui/material';
 import { DataGrid, GridColDef } from '@mui/x-data-grid';
 import {
@@ -96,17 +94,8 @@ export function ProductsPage() {
   const canEdit = hasPermission('EDIT');
   const actor = currentUser?.fullName ?? 'Unknown User';
   const defaultPageSize = getSettings(currentUser?.id ?? '').pageSize;
-  const queryClient = useQueryClient();
 
-  const { data: products = [], isLoading: isLoadingProducts } = useQuery({
-    queryKey: ['products'],
-    queryFn: getProducts
-  });
-
-  const { data: marketingCompanies = [] } = useQuery({ queryKey: ['masters', 'marketingCompanies'], queryFn: getMarketingCompanies });
-  const { data: brands = [] } = useQuery({ queryKey: ['masters', 'brands'], queryFn: getBrands });
-  const { data: flavours = [] } = useQuery({ queryKey: ['masters', 'flavours'], queryFn: getFlavours });
-
+  const [products, setProducts] = useState<Product[]>(() => getProducts());
   const [searchParams] = useSearchParams();
   const [search, setSearch] = useState(() => searchParams.get('search') ?? '');
   const [filterDraft, setFilterDraft] = useState<FilterState>(EMPTY_FILTERS);
@@ -122,15 +111,24 @@ export function ProductsPage() {
   const [viewFullscreen, setViewFullscreen] = useState(false);
   const [deactivateTarget, setDeactivateTarget] = useState<Product | null>(null);
 
+  // Filter dropdowns reflect whatever values actually exist across products
+  // today (active or historical/inactive master values alike).
   const productNameOptions = useMemo(() => Array.from(new Set(products.map((product) => product.productName))).sort(), [products]);
   const brandOptions = useMemo(() => Array.from(new Set(products.map((product) => product.brandName))).sort(), [products]);
-  const marketingCompanyOptions = useMemo(() => Array.from(new Set(products.map((product) => product.marketingCompany))).sort(), [products]);
+  const marketingCompanyOptions = useMemo(
+    () => Array.from(new Set(products.map((product) => product.marketingCompany))).sort(),
+    [products]
+  );
   const flavourOptions = useMemo(() => Array.from(new Set(products.map((product) => product.flavour))).sort(), [products]);
   const fssaiNumberOptions = useMemo(() => Array.from(new Set(products.map((product) => product.fssaiNumber))).sort(), [products]);
 
-  const activeMarketingCompanies = useMemo(() => marketingCompanies.filter((c) => c.status === 'Active').map((c) => c.companyName), [marketingCompanies]);
-  const activeBrands = useMemo(() => brands.filter((b) => b.status === 'Active').map((b) => b.brandName), [brands]);
-  const activeFlavours = useMemo(() => flavours.filter((f) => f.status === 'Active').map((f) => f.flavourName), [flavours]);
+  // Add/Edit form dropdowns only offer ACTIVE master records for new
+  // selections, but always keep the record's current saved value selectable
+  // even if that master has since gone inactive â€” so editing a product never
+  // silently blanks out its historical value.
+  const activeMarketingCompanies = useMemo(() => getMarketingCompanies().filter((company) => company.status === 'Active').map((company) => company.companyName), []);
+  const activeBrands = useMemo(() => getBrands().filter((brand) => brand.status === 'Active').map((brand) => brand.brandName), []);
+  const activeFlavours = useMemo(() => getFlavours().filter((flavour) => flavour.status === 'Active').map((flavour) => flavour.flavourName), []);
 
   const withCurrentValue = (options: string[], current: string) => (current && !options.includes(current) ? [...options, current] : options);
 
@@ -150,7 +148,7 @@ export function ProductsPage() {
           product.manufacturingCompany,
           product.flavour,
           product.fssaiNumber
-        ].some((value) => value && value.toLowerCase().includes(term));
+        ].some((value) => value.toLowerCase().includes(term));
 
       const matchesProductName = appliedFilters.productName === ALL || product.productName === appliedFilters.productName;
       const matchesMarketing = appliedFilters.marketingCompany === ALL || product.marketingCompany === appliedFilters.marketingCompany;
@@ -173,6 +171,8 @@ export function ProductsPage() {
       : filtersActive
       ? 'No products match the selected filters.'
       : 'No products found.';
+
+  const refresh = () => setProducts(getProducts());
 
   const handleApplyFilters = () => setAppliedFilters(filterDraft);
   const handleClearFilters = () => {
@@ -218,19 +218,14 @@ export function ProductsPage() {
     return Object.keys(errors).length === 0;
   };
 
-  const updateMutation = useMutation({
-    mutationFn: async () => {
-      if (editingId) return updateProduct(editingId, formState, actor);
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['products'] });
-      setFormOpen(false);
-    }
-  });
-
+  // Product Management no longer creates products manually â€” every record
+  // comes from the label upload pipeline (see ArtworkPage / labelIntakeService).
+  // This drawer/handleSave path only ever runs against an existing product.
   const handleSave = () => {
     if (!editingId || !validate()) return;
-    updateMutation.mutate();
+    updateProduct(editingId, formState, actor);
+    refresh();
+    setFormOpen(false);
   };
 
   const handleOpenView = (product: Product) => {
@@ -238,19 +233,12 @@ export function ProductsPage() {
     setViewOpen(true);
   };
 
-  const deactivateMutation = useMutation({
-    mutationFn: async () => {
-      if (deactivateTarget) return deactivateProduct(deactivateTarget.id, actor);
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['products'] });
-      setViewProduct((prev) => (prev && deactivateTarget && prev.id === deactivateTarget.id ? { ...prev, status: 'Inactive' } : prev));
-      setDeactivateTarget(null);
-    }
-  });
-
   const handleConfirmDeactivate = () => {
-    deactivateMutation.mutate();
+    if (!deactivateTarget) return;
+    deactivateProduct(deactivateTarget.id, actor);
+    refresh();
+    setViewProduct((prev) => (prev && prev.id === deactivateTarget.id ? { ...prev, status: 'Inactive' } : prev));
+    setDeactivateTarget(null);
   };
 
   const columns: GridColDef<Product>[] = [
@@ -264,13 +252,13 @@ export function ProductsPage() {
       renderCell: (params) => (
         <Box sx={{ display: 'flex', gap: 0.5 }}>
           <Tooltip title="View">
-            <IconButton size="small" sx={{ color: '#E26737' }} onClick={() => handleOpenView(params.row)}>
+            <IconButton size="small" sx={{ color: 'var(--c-orange)' }} onClick={() => handleOpenView(params.row)}>
               <MdRemoveRedEye size={18} />
             </IconButton>
           </Tooltip>
           {canEdit && (
             <Tooltip title="Edit">
-              <IconButton size="small" sx={{ color: '#00A651' }} onClick={() => handleOpenEdit(params.row)}>
+              <IconButton size="small" sx={{ color: 'var(--c-green)' }} onClick={() => handleOpenEdit(params.row)}>
                 <MdEdit size={18} />
               </IconButton>
             </Tooltip>
@@ -293,13 +281,13 @@ export function ProductsPage() {
     { field: 'updatedDate', headerName: 'Last Updated', minWidth: 130, flex: 0.9, renderCell: (params) => formatDateTime(String(params.value ?? '')) }
   ];
 
-  // We are skipping the real backend queries for artwork/comparison for now just to render the view details quickly. 
-  // Normally we would useQuery for these too inside a separate component.
-  const viewArtworks: any[] = [];
-  const viewComparisons: any[] = [];
+  // Product Details drawer's audit sections â€” sourced from the real
+  // artwork/comparison records for this product, not placeholder text.
+  const viewArtworks = viewProduct ? getArtworksByProduct(viewProduct.id) : [];
+  const viewComparisons = viewProduct ? getComparisonsByProduct(viewProduct.id) : [];
   const viewVersions = Array.from(new Set(viewArtworks.map((artwork) => artwork.version))).sort();
   const viewApprovalHistory = viewComparisons
-    .flatMap((comparison) => comparison.history.map((entry: any) => ({ ...entry, comparisonId: comparison.id })))
+    .flatMap((comparison) => comparison.history.map((entry) => ({ ...entry, comparisonId: comparison.id })))
     .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
 
   return (
@@ -311,9 +299,9 @@ export function ProductsPage() {
           component="form"
           onSubmit={(event) => event.preventDefault()}
           elevation={0}
-          sx={{ display: 'flex', alignItems: 'center', p: '10px 14px', borderRadius: 3, bgcolor: '#F6F9F3', border: '1px solid #EAEFE7', mb: 3 }}
+          sx={{ display: 'flex', alignItems: 'center', p: '10px 14px', borderRadius: 3, bgcolor: 'var(--c-tint-green)', border: '1px solid var(--c-border-green)', mb: 3 }}
         >
-          <MdSearch size={18} color="#9EA4AB" />
+          <MdSearch size={18} color="var(--c-text-3)" />
           <InputBase
             sx={{ ml: 1.5, flex: 1, fontSize: 14 }}
             placeholder="Search by name, brand, company, flavour, or FSSAI number"
@@ -322,7 +310,7 @@ export function ProductsPage() {
           />
         </Paper>
 
-        <Typography variant="subtitle2" sx={{ fontWeight: 700, mb: 1.5, color: '#6B7177' }}>
+        <Typography variant="subtitle2" sx={{ fontWeight: 700, mb: 1.5, color: 'var(--c-text-2)' }}>
           Filters
         </Typography>
         <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 2, alignItems: 'center' }}>
@@ -417,23 +405,19 @@ export function ProductsPage() {
             </Select>
           </FormControl>
 
-          <Button variant="contained" sx={{ bgcolor: '#00A651', '&:hover': { bgcolor: '#00913f' } }} onClick={handleApplyFilters}>
+          <Button variant="contained" sx={{ bgcolor: 'var(--c-green)', '&:hover': { bgcolor: 'var(--c-green-600)' } }} onClick={handleApplyFilters}>
             Apply Filters
           </Button>
-          <Button variant="outlined" sx={{ borderColor: '#D8DDE3', color: '#9EA4AB' }} onClick={handleClearFilters}>
+          <Button variant="outlined" sx={{ borderColor: 'var(--c-border)', color: 'var(--c-text-3)' }} onClick={handleClearFilters}>
             Clear Filters
           </Button>
         </Box>
       </Paper>
 
       <Paper sx={{ p: 3, mb: 3 }}>
-        {isLoadingProducts ? (
-          <Box sx={{ py: 6, display: 'flex', justifyContent: 'center' }}>
-            <CircularProgress />
-          </Box>
-        ) : filteredRows.length === 0 ? (
+        {filteredRows.length === 0 ? (
           <Box sx={{ py: 6, textAlign: 'center' }}>
-            <Typography variant="body1" sx={{ color: '#9EA4AB' }}>
+            <Typography variant="body1" sx={{ color: 'var(--c-text-3)' }}>
               {emptyMessage}
             </Typography>
           </Box>
@@ -447,13 +431,13 @@ export function ProductsPage() {
               disableRowSelectionOnClick
               sx={{
                 borderRadius: 3,
-                borderColor: '#D8DDE3',
+                borderColor: 'var(--c-border)',
                 '& .MuiDataGrid-columnHeaders': {
-                  bgcolor: '#F3F7FA',
-                  borderBottom: '1px solid #D8DDE3'
+                  bgcolor: 'var(--c-tint-blue)',
+                  borderBottom: '1px solid var(--c-border)'
                 },
                 '& .MuiDataGrid-cell': {
-                  borderBottom: '1px solid #D8DDE3'
+                  borderBottom: '1px solid var(--c-border)'
                 }
               }}
             />
@@ -530,7 +514,7 @@ export function ProductsPage() {
             <Button onClick={handleCloseForm} sx={{ textTransform: 'none' }}>
               Cancel
             </Button>
-            <Button variant="contained" sx={{ textTransform: 'none' }} onClick={handleSave} disabled={updateMutation.isPending}>
+            <Button variant="contained" sx={{ textTransform: 'none' }} onClick={handleSave}>
               Save Changes
             </Button>
           </Box>
@@ -541,7 +525,7 @@ export function ProductsPage() {
       <Dialog open={Boolean(deactivateTarget)} onClose={() => setDeactivateTarget(null)} maxWidth="xs" fullWidth>
         <DialogTitle sx={{ fontWeight: 700 }}>Deactivate Product</DialogTitle>
         <DialogContent>
-          <Typography variant="body2" sx={{ color: '#9EA4AB' }}>
+          <Typography variant="body2" sx={{ color: 'var(--c-text-3)' }}>
             Are you sure you want to deactivate this product?
           </Typography>
           {deactivateTarget && (
@@ -554,7 +538,7 @@ export function ProductsPage() {
           <Button onClick={() => setDeactivateTarget(null)} sx={{ textTransform: 'none' }}>
             Cancel
           </Button>
-          <Button variant="contained" color="error" sx={{ textTransform: 'none' }} onClick={handleConfirmDeactivate} disabled={deactivateMutation.isPending}>
+          <Button variant="contained" color="error" sx={{ textTransform: 'none' }} onClick={handleConfirmDeactivate}>
             Deactivate
           </Button>
         </DialogActions>
@@ -572,7 +556,7 @@ export function ProductsPage() {
           <>
             <DialogTitle sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', pb: 1 }}>
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                <MdInventory2 color="#E26737" size={22} />
+                <MdInventory2 color="var(--c-orange)" size={22} />
                 <Typography variant="h6" sx={{ fontWeight: 700 }}>
                   Product Details
                 </Typography>
@@ -589,39 +573,39 @@ export function ProductsPage() {
 
             <DialogContent dividers>
               <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-                <Typography variant="body2" sx={{ color: '#9EA4AB', fontWeight: 700 }}>
-                  {viewProduct.id} — {viewProduct.productName}
+                <Typography variant="body2" sx={{ color: 'var(--c-text-3)', fontWeight: 700 }}>
+                  {viewProduct.id} â€” {viewProduct.productName}
                 </Typography>
                 <StatusChip status={viewProduct.status} />
               </Box>
 
               <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', md: '1fr 1fr' }, gap: 2, mb: 3 }}>
-                <Paper variant="outlined" sx={{ p: 2, borderRadius: 3, borderColor: '#F3D9C9' }}>
+                <Paper variant="outlined" sx={{ p: 2, borderRadius: 3, borderColor: 'var(--c-border-orange)' }}>
                   <Box
                     sx={{
                       width: 64,
                       height: 64,
                       borderRadius: '50%',
-                      bgcolor: '#FFF3EA',
+                      bgcolor: 'var(--c-tint-orange-3)',
                       display: 'flex',
                       alignItems: 'center',
                       justifyContent: 'center',
                       mb: 1.5
                     }}
                   >
-                    <MdInventory2 color="#E26737" size={30} />
+                    <MdInventory2 color="var(--c-orange)" size={30} />
                   </Box>
                   <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>
                     {viewProduct.productName}
                   </Typography>
-                  <Typography variant="body2" sx={{ color: '#9EA4AB', mb: 1.5 }}>
+                  <Typography variant="body2" sx={{ color: 'var(--c-text-3)', mb: 1.5 }}>
                     {viewProduct.marketingCompany}
                   </Typography>
                   <Box sx={{ display: 'flex', gap: 3 }}>
                     <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
-                      <MdLocalOffer color="#9EA4AB" size={16} />
+                      <MdLocalOffer color="var(--c-text-3)" size={16} />
                       <Box>
-                        <Typography variant="caption" sx={{ color: '#9EA4AB', display: 'block', lineHeight: 1.2 }}>
+                        <Typography variant="caption" sx={{ color: 'var(--c-text-3)', display: 'block', lineHeight: 1.2 }}>
                           Brand
                         </Typography>
                         <Typography variant="body2" sx={{ fontWeight: 600 }}>
@@ -630,9 +614,9 @@ export function ProductsPage() {
                       </Box>
                     </Box>
                     <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
-                      <MdIcecream color="#9EA4AB" size={16} />
+                      <MdIcecream color="var(--c-text-3)" size={16} />
                       <Box>
-                        <Typography variant="caption" sx={{ color: '#9EA4AB', display: 'block', lineHeight: 1.2 }}>
+                        <Typography variant="caption" sx={{ color: 'var(--c-text-3)', display: 'block', lineHeight: 1.2 }}>
                           Flavour
                         </Typography>
                         <Typography variant="body2" sx={{ fontWeight: 600 }}>
@@ -656,8 +640,8 @@ export function ProductsPage() {
                       ] as [typeof MdInventory2, string, number][]
                     ).map(([Icon, label, count]) => (
                       <Box key={label} sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                        <Icon color="#9EA4AB" size={16} />
-                        <Typography variant="body2" sx={{ flex: 1, color: '#9EA4AB' }}>
+                        <Icon color="var(--c-text-3)" size={16} />
+                        <Typography variant="body2" sx={{ flex: 1, color: 'var(--c-text-3)' }}>
                           {label}
                         </Typography>
                         <Typography variant="body2" sx={{ fontWeight: 700 }}>
@@ -698,9 +682,9 @@ export function ProductsPage() {
                       ] as [typeof MdBadge, string, string][]
                     ).map(([Icon, label, value]) => (
                       <Box key={label} sx={{ display: 'flex', alignItems: 'flex-start', gap: 1 }}>
-                        <Icon color="#9EA4AB" size={16} style={{ marginTop: 3, flexShrink: 0 }} />
+                        <Icon color="var(--c-text-3)" size={16} style={{ marginTop: 3, flexShrink: 0 }} />
                         <Box sx={{ minWidth: 0 }}>
-                          <Typography variant="caption" sx={{ color: '#9EA4AB', display: 'block', lineHeight: 1.2 }}>
+                          <Typography variant="caption" sx={{ color: 'var(--c-text-3)', display: 'block', lineHeight: 1.2 }}>
                             {label}
                           </Typography>
                           <Typography variant="body2" sx={{ fontWeight: 600, wordBreak: 'break-word' }}>
@@ -717,7 +701,7 @@ export function ProductsPage() {
                     Artwork
                   </Typography>
                   {viewArtworks.length === 0 ? (
-                    <Typography variant="body2" sx={{ color: '#9EA4AB' }}>
+                    <Typography variant="body2" sx={{ color: 'var(--c-text-3)' }}>
                       No artwork available.
                     </Typography>
                   ) : (
@@ -727,9 +711,9 @@ export function ProductsPage() {
                           <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 2 }}>
                             <Box>
                               <Typography variant="body2" sx={{ fontWeight: 700 }}>
-                                {artwork.version} — {artwork.artworkType}
+                                {artwork.version} â€” {artwork.artworkType}
                               </Typography>
-                              <Typography variant="caption" sx={{ color: '#9EA4AB' }}>
+                              <Typography variant="caption" sx={{ color: 'var(--c-text-3)' }}>
                                 {artwork.id}
                               </Typography>
                             </Box>
@@ -745,10 +729,10 @@ export function ProductsPage() {
               <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', md: '1fr 1fr' }, gap: 3 }}>
                 <Box>
                   <Typography variant="subtitle2" sx={{ fontWeight: 700, mb: 1.5, display: 'flex', alignItems: 'center', gap: 0.75 }}>
-                    <MdCompareArrows color="#9EA4AB" size={18} /> Comparison History
+                    <MdCompareArrows color="var(--c-text-3)" size={18} /> Comparison History
                   </Typography>
                   {viewComparisons.length === 0 ? (
-                    <Typography variant="body2" sx={{ color: '#9EA4AB' }}>
+                    <Typography variant="body2" sx={{ color: 'var(--c-text-3)' }}>
                       No comparison history available.
                     </Typography>
                   ) : (
@@ -760,7 +744,7 @@ export function ProductsPage() {
                               <Typography variant="body2" sx={{ fontWeight: 700 }}>
                                 {comparison.id}
                               </Typography>
-                              <Typography variant="caption" sx={{ color: '#9EA4AB' }}>
+                              <Typography variant="caption" sx={{ color: 'var(--c-text-3)' }}>
                                 {formatDateTime(comparison.updatedDate)}
                               </Typography>
                             </Box>
@@ -774,10 +758,10 @@ export function ProductsPage() {
 
                 <Box>
                   <Typography variant="subtitle2" sx={{ fontWeight: 700, mb: 1.5, display: 'flex', alignItems: 'center', gap: 0.75 }}>
-                    <MdAssignment color="#9EA4AB" size={18} /> Approval History
+                    <MdAssignment color="var(--c-text-3)" size={18} /> Approval History
                   </Typography>
                   {viewApprovalHistory.length === 0 ? (
-                    <Typography variant="body2" sx={{ color: '#9EA4AB' }}>
+                    <Typography variant="body2" sx={{ color: 'var(--c-text-3)' }}>
                       No approval history available.
                     </Typography>
                   ) : (
@@ -785,10 +769,10 @@ export function ProductsPage() {
                       {viewApprovalHistory.slice(0, 5).map((entry, index) => (
                         <Paper key={`${entry.comparisonId}-${index}`} variant="outlined" sx={{ p: 1.5, borderRadius: 2 }}>
                           <Typography variant="body2" sx={{ fontWeight: 700 }}>
-                            {entry.stage} — {entry.action}
+                            {entry.stage} â€” {entry.action}
                           </Typography>
-                          <Typography variant="caption" sx={{ color: '#9EA4AB' }}>
-                            {entry.actorName} · {formatDateTime(entry.date)}
+                          <Typography variant="caption" sx={{ color: 'var(--c-text-3)' }}>
+                            {entry.actorName} Â· {formatDateTime(entry.date)}
                           </Typography>
                         </Paper>
                       ))}
