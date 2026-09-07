@@ -1,7 +1,7 @@
 // Regression tests for the comparison engine's handling of label attributes
 // that were never captured.
 //
-// getLabelAttributes() falls back to the literal string 'Not specified' for
+// buildLabelAttributes() falls back to the literal string 'Not specified' for
 // every field it cannot resolve (9 of the 13 compared parameters). Because
 // classifyParameterValues() compares those fallbacks as ordinary strings,
 // "we don't know" on both sides is indistinguishable from "both labels say
@@ -16,11 +16,15 @@ import type { Artwork } from '../../types/artwork';
 
 installMemoryLocalStorage();
 
-const { getLabelAttributes, compareParameters, calculateSimilarity, generateComparisonResult, countComparableParameters } =
+// buildLabelAttributes, not getLabelAttributes: the reading an artwork
+// actually has is stored server-side now, and the branch these tests pin is the
+// one taken when there is no reading at all — which is pure, and needs no
+// backend to ask.
+const { buildLabelAttributes, compareParameters, calculateSimilarity, generateComparisonResult, countComparableParameters } =
   await import('../comparisonService');
 
 // An artwork id deliberately absent from SEED_LABEL_ATTRIBUTES, so
-// getLabelAttributes() takes its 'Not specified' fallback branch — the same
+// buildLabelAttributes() takes its 'Not specified' fallback branch — the same
 // branch 6 of the 12 seeded artworks take today.
 function artwork(overrides: Partial<Artwork> & Pick<Artwork, 'id'>): Artwork {
   return {
@@ -50,8 +54,8 @@ test('two artworks with no captured label data are NOT reported as a perfect mat
   // which has had its label content captured. Same product means brand,
   // name, flavour and FSSAI agree legitimately — every other parameter is
   // simply unknown on both sides.
-  const v1 = getLabelAttributes(artwork({ id: 'ART-9001', version: 'V1' }));
-  const v2 = getLabelAttributes(artwork({ id: 'ART-9002', version: 'V2' }));
+  const v1 = buildLabelAttributes(artwork({ id: 'ART-9001', version: 'V1' }));
+  const v2 = buildLabelAttributes(artwork({ id: 'ART-9002', version: 'V2' }));
 
   const parameters = compareParameters(v1, v2);
   const similarity = calculateSimilarity(parameters);
@@ -98,8 +102,8 @@ test('a known value on one side and no data on the other is not a CONFLICT', () 
   // 'Not specified' placeholder is compared as if it were a real value, so a
   // genuine value scores zero token overlap against it and is reported as a
   // business conflict rather than as missing information.
-  const captured = getLabelAttributes(artwork({ id: 'ART-9003' }));
-  const uncaptured = getLabelAttributes(artwork({ id: 'ART-9004' }));
+  const captured = buildLabelAttributes(artwork({ id: 'ART-9003' }));
+  const uncaptured = buildLabelAttributes(artwork({ id: 'ART-9004' }));
 
   const withValue = { ...captured, claims: 'Supports Immunity' };
   const parameters = compareParameters(withValue, uncaptured);

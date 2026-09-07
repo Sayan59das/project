@@ -22,6 +22,7 @@ import { useAuth } from '../auth/AuthContext';
 import { useProducts } from '../hooks/useProducts';
 import { parseVersionNumber } from '../services/artworkService';
 import { useArtworks } from '../hooks/useArtworks';
+import { useComparisons } from '../hooks/useComparisons';
 import { useBrands, useManufacturingCompanies, useMarketingCompanies } from '../hooks/useMasterData';
 import { useUserDirectory } from '../hooks/useUserDirectory';
 import { getSettings } from '../services/settingsService';
@@ -342,6 +343,14 @@ export function ReportsPage() {
   const { users: directoryUsers } = useUserDirectory();
   const { products } = useProducts();
   const { artworks } = useArtworks();
+  const { comparisons } = useComparisons();
+
+  // One bundle for every report — see reportService.ReportData for why they
+  // take their data rather than fetching it.
+  const reportData = useMemo(
+    () => ({ products, artworks, comparisons, users: directoryUsers }),
+    [products, artworks, comparisons, directoryUsers]
+  );
   const brands = useBrands();
   const marketingCompanies = useMarketingCompanies();
   const manufacturingCompanies = useManufacturingCompanies();
@@ -386,19 +395,19 @@ export function ReportsPage() {
     try {
       switch (activeReport) {
         case 'comparison':
-          return getComparisonReport(effectiveFilters, products) as unknown as Record<string, unknown>[];
+          return getComparisonReport(effectiveFilters, reportData) as unknown as Record<string, unknown>[];
         case 'pending':
-          return getPendingVerificationReport(effectiveFilters, products) as unknown as Record<string, unknown>[];
+          return getPendingVerificationReport(effectiveFilters, reportData) as unknown as Record<string, unknown>[];
         case 'approved':
-          return getApprovedLabelsReport(effectiveFilters, products) as unknown as Record<string, unknown>[];
+          return getApprovedLabelsReport(effectiveFilters, reportData) as unknown as Record<string, unknown>[];
         case 'revision':
-          return getRevisionRejectionReport(effectiveFilters, products, revisionScope) as unknown as Record<string, unknown>[];
+          return getRevisionRejectionReport(effectiveFilters, reportData, revisionScope) as unknown as Record<string, unknown>[];
         case 'artwork':
-          return getArtworkHistoryReport(effectiveFilters, artworks) as unknown as Record<string, unknown>[];
+          return getArtworkHistoryReport(effectiveFilters, reportData) as unknown as Record<string, unknown>[];
         case 'approvalHistory':
-          return getApprovalHistoryReport(effectiveFilters) as unknown as Record<string, unknown>[];
+          return getApprovalHistoryReport(effectiveFilters, reportData) as unknown as Record<string, unknown>[];
         case 'userActivity':
-          return getUserActivityReport(effectiveFilters, directoryUsers, artworks) as unknown as Record<string, unknown>[];
+          return getUserActivityReport(effectiveFilters, reportData) as unknown as Record<string, unknown>[];
         default:
           return [];
       }
@@ -406,7 +415,7 @@ export function ReportsPage() {
       setLoadError(true);
       return [];
     }
-  }, [activeReport, effectiveFilters, revisionScope, directoryUsers, products, artworks]);
+  }, [activeReport, effectiveFilters, revisionScope, reportData]);
 
   const gridRows = useMemo(() => rows.map((row, index) => ({ id: index, ...row })), [rows]);
   const columns = useMemo(() => columnsFor(activeReport), [activeReport]);

@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
 import {
+  Alert,
   Box,
   Button,
   Card,
@@ -22,7 +23,8 @@ import { ArtworkPreview } from '../components/ArtworkPreview';
 import { useAuth } from '../auth/AuthContext';
 import { useUserDirectory } from '../hooks/useUserDirectory';
 import { useArtworks } from '../hooks/useArtworks';
-import { Actor, getComparisons, qaRejectComparison, qaVerifyComparison } from '../services/comparisonService';
+import { Actor, qaRejectComparison, qaVerifyComparison } from '../services/comparisonService';
+import { useComparisonsByStatus, useInvalidateComparisons } from '../hooks/useComparisons';
 import { Comparison, ParameterResult } from '../types/comparison';
 import { formatDateTime } from '../utils/dateFormat';
 
@@ -68,8 +70,17 @@ export function QAPage() {
     role: currentUser?.role ?? 'qa'
   };
 
-  const [comparisons, setComparisons] = useState<Comparison[]>(() => getComparisons());
-  const refresh = () => setComparisons(getComparisons());
+  // The statuses this screen actually shows: its own queue, plus the two it
+  // reports counts for. Asked for by status rather than pulling every
+  // comparison in the system to display a queue of a few.
+  const {
+    comparisons,
+    isError: comparisonsFailed,
+    error: comparisonsError
+  } = useComparisonsByStatus(['Pending QA', 'Pending Manager Approval', 'Revision Required']);
+  const refresh = useInvalidateComparisons();
+  const [decisionError, setDecisionError] = useState<string | null>(null);
+  const [isDeciding, setIsDeciding] = useState(false);
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [remarks, setRemarks] = useState('');
@@ -111,23 +122,50 @@ export function QAPage() {
     setChecked(false);
   };
 
+  // The panel stays open until the server has recorded the decision. Closing
+  // it first would tell a QA reviewer their verification went through on a
+  // request that may have failed.
+  const runDecision = async (fn: () => Promise<unknown>) => {
+    setDecisionError(null);
+    setIsDeciding(true);
+    try {
+      await fn();
+      refresh();
+      handleBack();
+    } catch (error) {
+      setDecisionError(error instanceof Error ? error.message : 'Could not record this decision.');
+    } finally {
+      setIsDeciding(false);
+    }
+  };
+
   const handleVerify = () => {
     if (!selectedItem) return;
-    qaVerifyComparison(selectedItem.id, remarks, actor);
-    refresh();
-    handleBack();
+    void runDecision(() => qaVerifyComparison(selectedItem.id, remarks, actor));
   };
 
   const handleSendBack = () => {
     if (!selectedItem) return;
-    qaRejectComparison(selectedItem.id, remarks, actor);
-    refresh();
-    handleBack();
+    void runDecision(() => qaRejectComparison(selectedItem.id, remarks, actor));
   };
 
   return (
     <Box>
       <PageHeader title="QA Verification" subtitle="Verify label comparison results before final approval." />
+
+      {/* An approvals queue that renders empty because a request failed tells a
+          reviewer there is nothing waiting for them, and the work then sits
+          where nobody is looking. */}
+      {comparisonsFailed && (
+        <Alert severity="error" sx={{ mb: 2 }}>
+          {comparisonsError instanceof Error ? comparisonsError.message : 'Could not load comparisons.'}
+        </Alert>
+      )}
+      {decisionError && (
+        <Alert severity="error" sx={{ mb: 2 }} onClose={() => setDecisionError(null)}>
+          {decisionError}
+        </Alert>
+      )}
 
       {selectedItem ? (
         <Box sx={{ display: 'grid', gap: 3 }}>
@@ -250,14 +288,14 @@ export function QAPage() {
 
               <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 2, justifyContent: 'flex-end' }}>
                 {canReject && (
-                  <Button variant="outlined" color="error" sx={{ textTransform: 'none' }} onClick={handleSendBack}>
+                  <Button variant="outlined" color="error" sx={{ textTransform: 'none' }} onClick={handleSendBack} disabled={isDeciding}>
                     Send Back
                   </Button>
                 )}
                 {canVerify && (
                   <Button
                     variant="contained"
-                    disabled={!checked}
+                    disabled={!checked || isDeciding}
                     onClick={handleVerify}
                     sx={{
                       textTransform: 'none',

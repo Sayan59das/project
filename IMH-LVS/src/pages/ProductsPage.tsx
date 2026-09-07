@@ -52,7 +52,7 @@ import { deactivateProduct, updateProduct } from '../services/productService';
 import { useInvalidateProducts, useProducts } from '../hooks/useProducts';
 import { useBrands, useFlavours, useMarketingCompanies } from '../hooks/useMasterData';
 import { useProductArtworks } from '../hooks/useArtworks';
-import { getComparisonsByProduct } from '../services/comparisonService';
+import { useProductComparisons } from '../hooks/useComparisons';
 import { getSettings } from '../services/settingsService';
 import { PRODUCT_STATUS_OPTIONS, Product, ProductInput } from '../types/product';
 import { formatDateTime } from '../utils/dateFormat';
@@ -327,7 +327,7 @@ export function ProductsPage() {
   // The drawer's own query, by product, rather than a filter over every
   // artwork in the system — and it only runs while a product is open.
   const viewArtworks = useProductArtworks(viewProduct?.id).artworks;
-  const viewComparisons = viewProduct ? getComparisonsByProduct(viewProduct.id) : [];
+  const viewComparisons = useProductComparisons(viewProduct?.id).comparisons;
   const viewVersions = Array.from(new Set(viewArtworks.map((artwork) => artwork.version))).sort();
   const viewApprovalHistory = viewComparisons
     .flatMap((comparison) => comparison.history.map((entry) => ({ ...entry, comparisonId: comparison.id })))

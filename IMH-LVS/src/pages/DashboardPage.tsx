@@ -11,9 +11,10 @@ import { getArtworks, selectFinalApprovedArtworks } from '../services/artworkSer
 import type { Artwork } from '../types/artwork';
 import {
   getDashboardSummary,
-  getMyPendingWork,
-  getRecentActivity,
-  getUnsubmittedComparisons,
+  getComparisons,
+  selectMyPendingWork,
+  selectRecentActivity,
+  selectUnsubmittedComparisons,
   DashboardSummary,
   RecentActivityItem
 } from '../services/comparisonService';
@@ -42,9 +43,9 @@ const PENDING_WORK_CONFIG: Record<RoleId, PendingWorkConfig> = {
 // approval stages to unassigned-or-assigned-to-me items (see
 // comparisonService). Account Manager has no assignable stage â€” their
 // "pending work" is comparisons they haven't submitted yet.
-function getPendingWorkForRole(role: RoleId, userId: string): Comparison[] {
-  if (role === 'account_manager') return getUnsubmittedComparisons();
-  return getMyPendingWork(userId, role);
+function getPendingWorkForRole(comparisons: Comparison[], role: RoleId, userId: string): Comparison[] {
+  if (role === 'account_manager') return selectUnsubmittedComparisons(comparisons);
+  return selectMyPendingWork(comparisons, userId, role);
 }
 
 type QuickAction = { label: string; route: string; action: ActionId };
@@ -103,12 +104,18 @@ type DashboardData = {
 // is still localStorage; when artworks and comparisons move, this stays the one
 // place the dashboard's data is assembled.
 async function loadDashboardData(role: RoleId, userId: string): Promise<DashboardData> {
+  // Four reads, in parallel, then everything else is derived from them. The
+  // dashboard is the one screen that legitimately needs all of it at once, so
+  // it fetches once rather than letting five widgets each ask for the same
+  // lists.
+  const [summary, artworks, comparisons] = await Promise.all([getDashboardSummary(), getArtworks(), getComparisons()]);
+
   return {
-    summary: await getDashboardSummary(),
-    finalApprovedArtworks: selectFinalApprovedArtworks(await getArtworks()),
-    recentActivity: getRecentActivity(8),
-    unsubmittedCount: getUnsubmittedComparisons().length,
-    pendingWork: getPendingWorkForRole(role, userId)
+    summary,
+    finalApprovedArtworks: selectFinalApprovedArtworks(artworks),
+    recentActivity: selectRecentActivity(comparisons, 8),
+    unsubmittedCount: selectUnsubmittedComparisons(comparisons).length,
+    pendingWork: getPendingWorkForRole(comparisons, role, userId)
   };
 }
 

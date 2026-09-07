@@ -228,7 +228,10 @@ export async function submitLabelIntake(input: LabelIntakeInput): Promise<LabelI
     fssaiNumber: extracted.fssaiNumber,
     ingredients: 'Not specified'
   };
-  saveLabelAttributes(labelAttributes);
+  // Awaited: this is what the comparison engine reads later, and an intake that
+  // reported success while the reading failed to store would produce a
+  // comparison against MISSING values with no sign anything went wrong.
+  await saveLabelAttributes(labelAttributes);
 
   return { product, artwork, isNewProduct };
 }
