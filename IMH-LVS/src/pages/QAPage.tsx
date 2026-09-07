@@ -65,9 +65,8 @@ export function QAPage() {
     role: currentUser?.role ?? 'qa'
   };
 
-  
-  const refresh = () => setComparisons(comparisons);
-
+  const { comparisons, artworks, refetchComparisons } = useMasterData();
+  const refresh = () => refetchComparisons();
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [remarks, setRemarks] = useState('');
   const [checked, setChecked] = useState(false);

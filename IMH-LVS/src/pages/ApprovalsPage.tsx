@@ -39,7 +39,7 @@ import {
 } from '../services/comparisonService';
 import { ApprovalStageKey, Comparison, ComparisonStatus } from '../types/comparison';
 import { formatDateTime } from '../utils/dateFormat';
-
+import { useMasterData } from '../hooks/useMasterData';
 // The four approval stages, in pipeline order — reused for both the
 // assignment panel (Manager-only editing) and for resolving a comparison's
 // CURRENT stage's Approval User ID for display. `label` names the stage
@@ -115,8 +115,8 @@ export function ApprovalsPage() {
     role: role ?? 'account_manager'
   };
 
-  const [comparisons, setComparisons] = useState<Comparison[]>(() => comparisons);
-  const refresh = () => setComparisons(comparisons);
+  const { comparisons, refetchComparisons } = useMasterData();
+  const refresh = () => refetchComparisons();
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [remarks, setRemarks] = useState('');
