@@ -63,7 +63,8 @@ export const TEST_ACCOUNTS = {
   extract: { id: 'USR-T-EXTRACT', role: 'qa' },
   compare: { id: 'USR-T-COMPARE', role: 'qa' },
   compareExtracted: { id: 'USR-T-COMPARE-EXTRACTED', role: 'qa' },
-  compareVisual: { id: 'USR-T-COMPARE-VISUAL', role: 'qa' }
+  compareVisual: { id: 'USR-T-COMPARE-VISUAL', role: 'qa' },
+  compareVisualBatch: { id: 'USR-T-COMPARE-VISUAL-BATCH', role: 'qa' }
 } as const;
 
 export type TestAccount = (typeof TEST_ACCOUNTS)[keyof typeof TEST_ACCOUNTS];

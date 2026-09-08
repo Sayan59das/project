@@ -81,6 +81,18 @@ export type LabelExtractionResult = {
   claims: string;
   ingredients: string;
   nutritionTableFormat: string;
+
+  // The nutrition panel's actual rows (nutrient name -> amount+unit, e.g.
+  // {"Vitamin C (as Ascorbic Acid)": "12 mg"}), JSON-encoded to keep this
+  // type uniformly string-valued like every other field here. Tesseract has
+  // no row-structure parser for a nutrition table — this stays '' from that
+  // path, the same absence-is-blank convention as every other unread field
+  // — and is only ever filled in via the AI backend's vision-model fallback
+  // (see aiExtraction.service.ts), which already extracts this structure.
+  // labelComparison.service.ts's compareNutritionTables() is what turns two
+  // of these into a real per-nutrient CONFLICT/MATCH, rather than the
+  // coarse nutritionTableFormat classification comparing as one string.
+  nutritionTable: string;
 };
 
 /**
@@ -128,7 +140,8 @@ export function buildPlaceholderExtraction(): LabelExtractionResult {
     colourTheme: '',
     claims: '',
     ingredients: '',
-    nutritionTableFormat: ''
+    nutritionTableFormat: '',
+    nutritionTable: ''
   };
 }
 
@@ -141,7 +154,7 @@ function toResult(fields: ExtractedLabelFields, extended: ExtendedFields): Label
 }
 
 type ExtendedFields = {
-  values: Pick<LabelExtractionResult, 'colourTheme' | 'claims' | 'ingredients' | 'nutritionTableFormat'>;
+  values: Pick<LabelExtractionResult, 'colourTheme' | 'claims' | 'ingredients' | 'nutritionTableFormat' | 'nutritionTable'>;
   unknownClaims: string[];
 };
 
@@ -181,7 +194,10 @@ async function extractExtendedFields(
       colourTheme,
       claims: claims.claims,
       ingredients: extractIngredients(text),
-      nutritionTableFormat: extractNutritionTableFormat(text)
+      nutritionTableFormat: extractNutritionTableFormat(text),
+      // Never read from OCR text — see LabelExtractionResult's own comment
+      // on nutritionTable; only the AI backend fallback ever fills this in.
+      nutritionTable: ''
     },
     unknownClaims: claims.unmatched
   };

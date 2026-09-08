@@ -73,7 +73,11 @@ const RESPONSE_FIELD_KEYS = [
   'colourTheme',
   'claims',
   'ingredients',
-  'nutritionTableFormat'
+  'nutritionTableFormat',
+  // The nutrition panel's actual rows (JSON-encoded) — only ever populated
+  // via the AI backend's vision-model fallback, '' from Tesseract alone,
+  // same as every other key here when nothing was read.
+  'nutritionTable'
 ];
 
 function assertWellFormedSuccessResponse(body: any) {

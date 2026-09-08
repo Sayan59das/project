@@ -33,16 +33,16 @@
 // needed for comparison has no retrievable file, this module reports that
 // plainly rather than faking a comparison.
 import { extractLabel, LabelExtractionError, type LabelExtractionApiResult } from './labelExtractionService';
-import { compareExtractedLabels, compareVisual, LabelComparisonError } from './labelComparisonService';
+import { compareExtractedLabels, compareVisual, compareVisualBatch, LabelComparisonError } from './labelComparisonService';
 import { getArtworkById, getArtworksByProduct, getLatestApprovedArtworkForProduct, parseVersionNumber } from './artworkService';
 import { getCrossCompanyCandidates } from './comparisonService';
 import { getProductById, getProducts } from './productService';
 import { saveLabelComparisonRun } from './labelComparisonHistoryService';
 import type { Product } from '../types/product';
 import type { Artwork } from '../types/artwork';
-import type { CrossCompanyResultEntry, LabelComparisonRun } from '../types/labelComparisonRecord';
+import type { BestCrossCompanyMatch, CrossCompanyResultEntry, LabelComparisonRun } from '../types/labelComparisonRecord';
 import type { CrossCompanyCandidate } from '../types/comparison';
-import type { VisualComparisonSummary } from '../types/labelComparison';
+import type { VisualComparisonResult } from '../types/labelComparison';
 
 export { LabelExtractionError, LabelComparisonError };
 
@@ -121,7 +121,7 @@ async function fetchArtworkFile(artwork: Artwork): Promise<File | undefined> {
 // touches. Deliberately never throws and never blocks the base comparison:
 // a vision-model-style capability being unreachable must cost this one row,
 // not the whole run — same principle as aiExtraction.service.ts's fallback.
-async function tryCompareVisual(fileA: File | undefined, fileB: File | undefined): Promise<VisualComparisonSummary | undefined> {
+async function tryCompareVisual(fileA: File | undefined, fileB: File | undefined): Promise<VisualComparisonResult | undefined> {
   if (!fileA || !fileB) return undefined;
   try {
     return await compareVisual(fileA, fileB);
@@ -131,11 +131,15 @@ async function tryCompareVisual(fileA: File | undefined, fileB: File | undefined
   }
 }
 
-async function compareCandidate(
-  subjectFile: File | undefined,
+// Text comparison only — deliberately does NOT also call compareVisual per
+// candidate. With several cross-company candidates, that would re-upload
+// and re-hash the identical subject artwork once per candidate; the visual
+// side is batched once for the whole list afterwards, see
+// attachVisualComparisons below.
+async function resolveCandidateText(
   subjectExtraction: LabelExtractionApiResult,
   candidate: CrossCompanyCandidate
-): Promise<CrossCompanyResultEntry> {
+): Promise<{ entry: CrossCompanyResultEntry; candidateFile: File | undefined }> {
   const base = {
     candidateProductId: candidate.productId,
     candidateProductName: candidate.productName,
@@ -147,15 +151,67 @@ async function compareCandidate(
   // Also the honest answer when the artwork exists but its file does not: the
   // rows are shared now, the bytes are not, so a candidate uploaded in somebody
   // else's session has no file this browser can read.
-  if (!candidateArtwork) return { ...base, outcome: { status: 'file_unavailable' } };
+  if (!candidateArtwork) return { entry: { ...base, outcome: { status: 'file_unavailable' } }, candidateFile: undefined };
   const candidateFile = await fetchArtworkFile(candidateArtwork);
-  if (!candidateFile) return { ...base, outcome: { status: 'file_unavailable' } };
+  if (!candidateFile) return { entry: { ...base, outcome: { status: 'file_unavailable' } }, candidateFile: undefined };
   const candidateExtraction = await extractLabel(candidateFile);
-  const [result, visualComparison] = await Promise.all([
-    compareExtractedLabels(subjectExtraction, candidateExtraction, 'cross_company'),
-    tryCompareVisual(subjectFile, candidateFile)
-  ]);
-  return { ...base, outcome: { status: 'success', result, visualComparison } };
+  const result = await compareExtractedLabels(subjectExtraction, candidateExtraction, 'cross_company');
+  return { entry: { ...base, outcome: { status: 'success', result } }, candidateFile };
+}
+
+// Attaches Artwork Similarity to every successfully-text-compared
+// candidate in ONE batched request (see compareVisualBatch's own comment
+// on why) rather than one request per candidate. Never throws and never
+// drops an entry: a batch failure, or the subject/every candidate having
+// no retrievable file, just leaves visualComparison unset on each entry —
+// the same outcome a single failed comparison already produces via
+// tryCompareVisual elsewhere in this module.
+async function attachVisualComparisons(
+  subjectFile: File | undefined,
+  resolved: { entry: CrossCompanyResultEntry; candidateFile: File | undefined }[]
+): Promise<CrossCompanyResultEntry[]> {
+  const withFile = resolved.filter(
+    (item): item is { entry: CrossCompanyResultEntry; candidateFile: File } => !!item.candidateFile
+  );
+  if (!subjectFile || withFile.length === 0) return resolved.map((item) => item.entry);
+
+  let visualResults: VisualComparisonResult[];
+  try {
+    visualResults = await compareVisualBatch(subjectFile, withFile.map((item) => item.candidateFile));
+  } catch (error) {
+    console.warn('[labelComparisonWorkflowService] Batch visual comparison did not complete — omitting Artwork Similarity for this run.', error);
+    return resolved.map((item) => item.entry);
+  }
+
+  const visualByArtworkId = new Map(withFile.map((item, index) => [item.entry.candidateArtworkId, visualResults[index]]));
+  return resolved.map(({ entry }) => {
+    if (entry.outcome.status !== 'success') return entry;
+    return { ...entry, outcome: { ...entry.outcome, visualComparison: visualByArtworkId.get(entry.candidateArtworkId) } };
+  });
+}
+
+// AI module brief §6/§8 — the highest-similarity SUCCESSFUL cross-company
+// result, or undefined when there's nothing to pick from (no candidates at
+// all, or every candidate's file was unavailable) — "No Comparison
+// Available" is still the honest answer for zero real comparisons, never a
+// best match named among none.
+export function findBestCrossCompanyMatch(results: CrossCompanyResultEntry[]): BestCrossCompanyMatch | undefined {
+  let best: BestCrossCompanyMatch | undefined;
+  for (const entry of results) {
+    if (entry.outcome.status !== 'success') continue;
+    const overallPercentage = entry.outcome.result.comparison.overallPercentage;
+    if (!best || overallPercentage > best.overallPercentage) {
+      best = {
+        candidateProductId: entry.candidateProductId,
+        candidateProductName: entry.candidateProductName,
+        candidateMarketingCompany: entry.candidateMarketingCompany,
+        candidateArtworkId: entry.candidateArtworkId,
+        candidateArtworkVersion: entry.candidateArtworkVersion,
+        overallPercentage
+      };
+    }
+  }
+  return best;
 }
 
 export type RunOutcome =
@@ -196,10 +252,11 @@ export async function runComparisonWorkflow(plan: ComparisonPlan, actor: string)
   }
 
   const candidates = await getCrossCompanyCandidates(plan.product.id);
-  const crossCompanyResults: CrossCompanyResultEntry[] = [];
+  const resolvedCandidates: { entry: CrossCompanyResultEntry; candidateFile: File | undefined }[] = [];
   for (const candidate of candidates) {
-    crossCompanyResults.push(await compareCandidate(candidateFile, candidateExtraction, candidate));
+    resolvedCandidates.push(await resolveCandidateText(candidateExtraction, candidate));
   }
+  const crossCompanyResults = await attachVisualComparisons(candidateFile, resolvedCandidates);
 
   const run = saveLabelComparisonRun({
     productId: plan.product.id,
@@ -212,7 +269,8 @@ export async function runComparisonWorkflow(plan: ComparisonPlan, actor: string)
     candidateArtworkVersion: candidateArtwork.version,
     candidateArtworkFileName: candidateArtwork.fileName,
     versionComparison,
-    crossCompanyResults
+    crossCompanyResults,
+    bestCrossCompanyMatch: findBestCrossCompanyMatch(crossCompanyResults)
   });
 
   return { status: 'success', run };

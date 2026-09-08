@@ -14,3 +14,4 @@ nest_asyncio
 einops
 timm
 attrdict
+pytest

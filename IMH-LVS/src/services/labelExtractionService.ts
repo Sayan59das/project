@@ -17,6 +17,19 @@ export type LabelExtractionApiResult = {
   productName: string;
   packageSize: string;
   manufacturingCompany: string;
+  // These five were missing from this type until now, which meant Quick
+  // Label Comparison (labelComparisonWorkflowService.ts, the only caller of
+  // extractLabel() outside the raw two-file /compare flow) silently
+  // stripped them before ever calling compareExtractedLabels — so
+  // colourTheme/claims/ingredients/nutritionTableFormat always compared as
+  // NOT_COMPARED in the live app, and nutritionTable's per-row comparison
+  // (labelComparison.service.ts's compareNutritionTables) could never fire
+  // at all, regardless of what the backend itself was capable of.
+  colourTheme: string;
+  claims: string;
+  ingredients: string;
+  nutritionTableFormat: string;
+  nutritionTable: string;
 };
 
 // Thrown only for transport/server-side problems (network unreachable,
@@ -41,7 +54,12 @@ export async function extractLabel(file: File): Promise<LabelExtractionApiResult
 
   let response: Response;
   try {
-    response = await fetch(extractUrl, { method: 'POST', body: formData });
+    // credentials: 'include' — /api/labels/* sits behind requireSession
+    // (backend/src/routes/index.ts); without this the browser holds a
+    // valid session cookie but never presents it cross-origin (5173 ->
+    // 4000), and every call 401s. See apiClient.ts's own comment on why
+    // this is the point, not an incidental option.
+    response = await fetch(extractUrl, { method: 'POST', body: formData, credentials: 'include' });
   } catch (err) {
     // Visible in the browser console/DevTools for diagnosing a
     // misconfigured VITE_API_BASE_URL or an unreachable backend — never
@@ -74,6 +92,11 @@ export async function extractLabel(file: File): Promise<LabelExtractionApiResult
     flavour: readString(data.flavour),
     productName: readString(data.productName),
     packageSize: readString(data.packageSize),
-    manufacturingCompany: readString(data.manufacturingCompany)
+    manufacturingCompany: readString(data.manufacturingCompany),
+    colourTheme: readString(data.colourTheme),
+    claims: readString(data.claims),
+    ingredients: readString(data.ingredients),
+    nutritionTableFormat: readString(data.nutritionTableFormat),
+    nutritionTable: readString(data.nutritionTable)
   };
 }

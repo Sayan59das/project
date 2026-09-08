@@ -50,6 +50,7 @@ function extraction(overrides: Partial<Record<string, string>> = {}) {
     claims: 'Supports Immunity',
     ingredients: 'Apple Cider Vinegar, Pectin, Sugar',
     nutritionTableFormat: 'Standard (per 2 gummies)',
+    nutritionTable: '',
     ...overrides
   };
 }
@@ -64,7 +65,7 @@ async function postCompareExtracted(body: unknown): Promise<{ status: number; bo
   return { status: res.status, body: parsedBody };
 }
 
-test('Compares two already-extracted labels: identical inputs report a 100% match with no DIFFERENT/MISSING fields', { skip: SKIP }, async () => {
+test('Compares two already-extracted labels: identical inputs report a 100% match with no CONFLICT/SIMILAR/MISSING fields', { skip: SKIP }, async () => {
   const labelA = extraction();
   const labelB = extraction();
   const { status, body } = await postCompareExtracted({ labelA, labelB });
@@ -74,19 +75,55 @@ test('Compares two already-extracted labels: identical inputs report a 100% matc
   assert.deepEqual(body.data.labelA, labelA);
   assert.deepEqual(body.data.labelB, labelB);
   assert.equal(body.data.comparison.overallPercentage, 100);
-  assert.equal(body.data.comparison.differentFields, 0);
+  assert.equal(body.data.comparison.similarFields, 0);
+  assert.equal(body.data.comparison.conflictingFields, 0);
   assert.equal(body.data.comparison.missingFields, 0);
   assert.equal(body.data.comparison.fields.length, 14);
 });
 
-test('Reports DIFFERENT for a genuinely conflicting field between the new artwork and the approved baseline', { skip: SKIP }, async () => {
+test('Reports CONFLICT for a genuinely conflicting field between the new artwork and the approved baseline', { skip: SKIP }, async () => {
   const labelA = extraction({ productName: 'Apple Cider Vinegar Gummies' });
   const labelB = extraction({ productName: 'Chyawanprash Gummies' });
   const { body } = await postCompareExtracted({ labelA, labelB });
 
   const productNameField = body.data.comparison.fields.find((f: any) => f.field === 'productName');
-  assert.equal(productNameField.status, 'DIFFERENT');
+  assert.equal(productNameField.status, 'CONFLICT');
   assert.ok(body.data.comparison.overallPercentage < 100);
+});
+
+test('Reports SIMILAR for a spelling/wording variant rather than CONFLICT', { skip: SKIP }, async () => {
+  const labelA = extraction({ claims: 'Boost Immunity' });
+  const labelB = extraction({ claims: 'Boosts Immunity' });
+  const { body } = await postCompareExtracted({ labelA, labelB });
+
+  const claimsField = body.data.comparison.fields.find((f: any) => f.field === 'claims');
+  assert.equal(claimsField.status, 'SIMILAR');
+});
+
+test('A structured nutrition table compares row by row: a changed Protein value is a real CONFLICT, unchanged rows MATCH', { skip: SKIP }, async () => {
+  const labelA = extraction({
+    nutritionTable: JSON.stringify({ 'Vitamin C': '12 mg', Protein: '2 g', Calories: '7.5 kcal' })
+  });
+  const labelB = extraction({
+    nutritionTable: JSON.stringify({ 'Vitamin C': '12 mg', Protein: '5 g', Calories: '7.5 kcal' })
+  });
+  const { body } = await postCompareExtracted({ labelA, labelB });
+
+  const nutrition = body.data.comparison.nutritionComparison;
+  assert.ok(nutrition, 'nutritionComparison should be present when both sides have a structured table');
+  const byNutrient = Object.fromEntries(nutrition.rows.map((row: any) => [row.nutrient, row.status]));
+  assert.equal(byNutrient['Vitamin C'], 'MATCH');
+  assert.equal(byNutrient.Calories, 'MATCH');
+  assert.equal(byNutrient.Protein, 'CONFLICT');
+  assert.equal(nutrition.conflictingRows, 1);
+  assert.equal(nutrition.matchingRows, 2);
+});
+
+test('nutritionComparison is absent, not empty, when neither side has a structured table', { skip: SKIP }, async () => {
+  const labelA = extraction();
+  const labelB = extraction();
+  const { body } = await postCompareExtracted({ labelA, labelB });
+  assert.equal(body.data.comparison.nutritionComparison, undefined);
 });
 
 test('Reports MISSING when only one side states a field', { skip: SKIP }, async () => {

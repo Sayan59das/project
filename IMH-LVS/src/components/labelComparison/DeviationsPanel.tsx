@@ -12,16 +12,16 @@ import { MdExpandLess, MdExpandMore } from 'react-icons/md';
 import { StatusChip } from '../StatusChip';
 import type { LabelComparisonFieldResult } from '../../types/labelComparison';
 
-export type DeviationStatus = 'MODIFIED' | 'CONFLICTING' | 'MISSING' | 'NOT_COMPARED';
+export type DeviationStatus = 'SIMILAR' | 'CONFLICT' | 'MISSING' | 'NOT_COMPARED';
 
-// A DIFFERENT field is split into MODIFIED vs. CONFLICTING using the
-// backend's own per-field `importance` (HIGH/MEDIUM/LOW) â€” a real signal
-// already returned by the comparison API, not an invented distinction.
+// The field's own status IS the real classification now: the backend
+// computes SIMILAR vs. CONFLICT itself from actual text similarity (edit
+// distance and word overlap, see labelComparison.service.ts's
+// isSimilarText), not from a UI-layer guess based on the field's
+// importance the way this used to work. This function exists only so call
+// sites have one place naming "every non-MATCH status".
 export function classifyDeviation(field: LabelComparisonFieldResult): DeviationStatus | 'MATCH' {
-  if (field.status === 'MATCH') return 'MATCH';
-  if (field.status === 'MISSING') return 'MISSING';
-  if (field.status === 'NOT_COMPARED') return 'NOT_COMPARED';
-  return field.importance === 'HIGH' ? 'CONFLICTING' : 'MODIFIED';
+  return field.status;
 }
 
 type Props = {

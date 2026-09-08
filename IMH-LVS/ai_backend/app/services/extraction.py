@@ -41,27 +41,71 @@ def _validate_logo(value, other_fields=()):
     return value
 
 
-_KNOWN_COLOUR_WORDS = (
-    "red", "orange", "yellow", "green", "blue", "purple", "pink", "magenta",
-    "cyan", "brown", "black", "white", "gray", "grey", "gold", "golden",
-    "silver", "maroon", "navy", "teal", "beige", "turquoise", "violet",
-    "indigo", "lavender", "peach", "crimson", "scarlet", "lime", "olive",
-    "tan", "cream", "ivory", "coral", "burgundy", "mint", "amber", "rust"
-)
+def _looks_like_colour_name(text):
+    """Structural check, not a word list — a fixed vocabulary of English
+    colour words is the same hardcoding the brief's §3 forbids (and already
+    removed for flavours), and it would silently reject perfectly real
+    colours like "charcoal", "saffron", "fuchsia" or "off-white" just for
+    not appearing in whoever wrote the list's head. Instead this rejects the
+    actual observed failure shape: the model reading an unrelated printed
+    code (a batch-code placeholder stamp like "UVZ") into this field.
+
+    - A dimension/date/batch code contains digits; a colour name never does.
+    - A short (<=3 letter) ALL-CAPS alphabetic token reads as a stamped
+      placeholder code, not a colour description — every colour name this
+      model has actually produced in testing came back in Title Case
+      ("Red", "White", "Green & Orange"), never as a bare short all-caps
+      token, which is how "UVZ" was rendered because that is how it is
+      printed on the label itself. This is an initial, documented
+      calibration against the one real failure seen so far, not a proof;
+      revisit if a genuine false rejection shows up against real data.
+    - A long, multi-word string reads as a sentence fragment, not a colour
+      name.
+    """
+    text = text.strip()
+    if not text or len(text) > 30:
+        return False
+    if any(ch.isdigit() for ch in text):
+        return False
+    words = [w for w in re.split(r"[\s/&-]+", text) if w]
+    if not words or len(words) > 4:
+        return False
+    for word in words:
+        if word.isalpha() and word.isupper() and len(word) <= 3:
+            return False
+    return True
 
 
 def _validate_colour_theme(value):
     """colour_theme should name print/branding colours actually used on the
-    packaging design. The model has been observed to instead read an
-    unrelated printed code (e.g. a batch-code placeholder stamp like "UVZ")
-    as if it were a colour — keep only entries that contain a recognisable
-    colour word, and drop the rest, rather than pass a non-colour value
-    through as if it were real data."""
+    packaging design. See _looks_like_colour_name for what "looks like a
+    colour" means structurally — drop anything that doesn't, rather than
+    pass a non-colour value through as if it were real data."""
     if value is None:
         return None
     items = value if isinstance(value, list) else [part.strip() for part in str(value).split(",") if part.strip()]
-    kept = [item for item in items if re.search(r"\b(" + "|".join(_KNOWN_COLOUR_WORDS) + r")\b", str(item), re.IGNORECASE)]
+    kept = [item for item in items if _looks_like_colour_name(str(item))]
     return kept if kept else None
+
+def _resolve_inference_device(cuda_available, allow_cpu_env):
+    """Which device _load_model should use, or raises if neither a GPU nor
+    the explicit ALLOW_CPU_INFERENCE opt-in is available. Pure and
+    parameter-driven (rather than reading torch.cuda.is_available()/
+    os.environ itself) so this decision is testable without a real GPU or
+    loading the actual model."""
+    if cuda_available:
+        return "cuda"
+    if allow_cpu_env.strip().lower() in ("1", "true", "yes"):
+        return "cpu"
+    raise RuntimeError(
+        "CUDA GPU not available — refusing to fall back to CPU inference. "
+        "Install the CUDA build of torch (e.g. `pip install torch --index-url "
+        "https://download.pytorch.org/whl/cu128`) and verify with "
+        "`torch.cuda.is_available()` before retrying. To explicitly allow slow "
+        "CPU-only inference instead (e.g. for smoke-testing on a machine with no "
+        "GPU), set ALLOW_CPU_INFERENCE=1."
+    )
+
 
 class ExtractionService:
     def __init__(self, use_mock: bool = True):
@@ -74,33 +118,51 @@ class ExtractionService:
         Only loads when an actual inference request is made.
 
         This deployment only ever runs on this machine's own GPU — never
-        silently on CPU. device_map="auto" would otherwise let accelerate
+        SILENTLY on CPU. device_map="auto" would otherwise let accelerate
         quietly place the model on CPU (or split it CPU/GPU) whenever CUDA
         isn't available, which already happened once from a CPU-only torch
         build and made inference unusably slow without any visible error.
         Failing loudly here surfaces that misconfiguration immediately
-        instead of degrading silently."""
+        instead of degrading silently.
+
+        The one deliberate escape hatch is ALLOW_CPU_INFERENCE=1: without
+        it, this service cannot start inference at all on a machine with no
+        NVIDIA GPU, which blocks anyone from smoke-testing it on a laptop
+        without one. Setting it is an explicit, opt-in choice to accept
+        CPU's much slower inference — never the default — and it still logs
+        a loud warning every time, so it's obvious from the console output
+        that a real deployment is not accidentally running this way."""
         if self.model is None and not self.use_mock:
-            if not torch.cuda.is_available():
-                raise RuntimeError(
-                    "CUDA GPU not available — refusing to fall back to CPU inference. "
-                    "Install the CUDA build of torch (e.g. `pip install torch --index-url "
-                    "https://download.pytorch.org/whl/cu128`) and verify with "
-                    "`torch.cuda.is_available()` before retrying."
-                )
-            print(f"Lazy loading Qwen2-VL-2B model into GPU ({torch.cuda.get_device_name(0)})... This will use HF_HOME cache.")
+            device = _resolve_inference_device(torch.cuda.is_available(), os.environ.get("ALLOW_CPU_INFERENCE", ""))
+
             model_path = "Qwen/Qwen2-VL-2B-Instruct"
             self.processor = AutoProcessor.from_pretrained(model_path)
 
-            # Using float16 to fit in 6GB VRAM. Pinned to the single local GPU
-            # (device_map={"": 0}) rather than "auto" — "auto" is meant for
-            # multi-GPU/CPU-offload setups and can silently split the model
-            # onto CPU under VRAM pressure instead of erroring.
-            self.model = Qwen2VLForConditionalGeneration.from_pretrained(
-                model_path,
-                torch_dtype=torch.float16,
-                device_map={"": 0}
-            )
+            if device == "cuda":
+                print(f"Lazy loading Qwen2-VL-2B model into GPU ({torch.cuda.get_device_name(0)})... This will use HF_HOME cache.")
+                # Using float16 to fit in 6GB VRAM. Pinned to the single local
+                # GPU (device_map={"": 0}) rather than "auto" — "auto" is meant
+                # for multi-GPU/CPU-offload setups and can silently split the
+                # model onto CPU under VRAM pressure instead of erroring.
+                self.model = Qwen2VLForConditionalGeneration.from_pretrained(
+                    model_path,
+                    torch_dtype=torch.float16,
+                    device_map={"": 0}
+                )
+            else:
+                print(
+                    "WARNING: ALLOW_CPU_INFERENCE=1 is set and no CUDA GPU is available — "
+                    "loading Qwen2-VL-2B onto CPU. This is dramatically slower than GPU "
+                    "inference (minutes per label, not seconds) and is intended for "
+                    "smoke-testing only, never a real deployment."
+                )
+                # float32, not float16: CPU kernels for float16 are either
+                # unsupported or far slower on most CPUs than float32.
+                self.model = Qwen2VLForConditionalGeneration.from_pretrained(
+                    model_path,
+                    torch_dtype=torch.float32,
+                    device_map="cpu"
+                )
 
     def extract_from_image(self, image: Image.Image) -> ExtractedLabel:
         if not self.use_mock:

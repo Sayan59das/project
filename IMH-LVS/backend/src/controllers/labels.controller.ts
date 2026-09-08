@@ -2,8 +2,21 @@ import fs from 'fs';
 import { Request, Response } from 'express';
 import { buildPlaceholderExtraction, extractLabelFromFile, LabelExtractionResult } from '../services/labelExtraction.service';
 import { compareLabels as compareLabelData, ComparisonStage } from '../services/labelComparison.service';
-import { compareArtworkImages, VisualComparisonResult } from '../services/imageSimilarity.service';
+import { compareArtworkImages, compareHashes, hashArtworkImage, VisualComparisonResult } from '../services/imageSimilarity.service';
 import { claims as claimsMaster, flavours as flavoursMaster } from '../repositories/masters.repository';
+
+type KnownMasterNames = { knownClaims: string[]; knownFlavours: string[] };
+
+// Short TTL, not "load once and keep forever": Master Data is edited
+// through its own admin page (activating/deactivating a Claim or Flavour,
+// or adding a new one) while the server keeps running, and a cache with no
+// expiry would keep serving OCR extraction against a stale candidate list
+// until the next restart. 30s bounds that staleness to something a reviewer
+// would never notice mid-task, while still saving a masters-table round
+// trip on every single /extract and /compare call — this endpoint is on
+// the hot path for every label upload.
+const MASTER_NAMES_CACHE_TTL_MS = 30_000;
+let masterNamesCache: { value: KnownMasterNames; expiresAt: number } | undefined;
 
 /**
  * The Claims/Flavours master lists, if a database is reachable — never
@@ -14,22 +27,40 @@ import { claims as claimsMaster, flavours as flavoursMaster } from '../repositor
  * real master data instead of anything baked into the OCR module. A
  * missing/unreachable database is not an error here — the extraction is
  * still complete, just without those two tiers.
+ *
+ * Only Active masters seed the OCR candidate list — an Inactive Claim or
+ * Flavour was deliberately retired (see masters.repository's own status
+ * field) and OCR treating it as a live candidate to match against would
+ * quietly resurrect it.
  */
-async function loadKnownMasterNames(): Promise<{ knownClaims: string[]; knownFlavours: string[] }> {
+export async function loadKnownMasterNames(): Promise<KnownMasterNames> {
+  if (masterNamesCache && masterNamesCache.expiresAt > Date.now()) {
+    return masterNamesCache.value;
+  }
+
   try {
     const [claimRecords, flavourRecords] = await Promise.all([claimsMaster.list(), flavoursMaster.list()]);
-    return {
-      knownClaims: claimRecords.map((claim) => claim.claimText),
-      knownFlavours: flavourRecords.map((flavour) => flavour.flavourName)
+    const value: KnownMasterNames = {
+      knownClaims: claimRecords.filter((claim) => claim.status === 'Active').map((claim) => claim.claimText),
+      knownFlavours: flavourRecords.filter((flavour) => flavour.status === 'Active').map((flavour) => flavour.flavourName)
     };
+    masterNamesCache = { value, expiresAt: Date.now() + MASTER_NAMES_CACHE_TTL_MS };
+    return value;
   } catch (error) {
     console.warn(
       '[labels.controller] Could not load Claims/Flavours master data (no database configured, or unreachable) — ' +
         'continuing with OCR-only extraction for those fields.',
       error instanceof Error ? error.message : error
     );
+    // Not cached: a database outage should not lock this endpoint out of
+    // trying again on the very next request once it recovers.
     return { knownClaims: [], knownFlavours: [] };
   }
+}
+
+/** Test-only: clears the cache so a test's freshly-seeded master data is visible immediately rather than waiting out the TTL. */
+export function _resetMasterNamesCacheForTests(): void {
+  masterNamesCache = undefined;
 }
 
 const EXTRACTION_RESULT_KEYS: (keyof LabelExtractionResult)[] = [
@@ -46,7 +77,8 @@ const EXTRACTION_RESULT_KEYS: (keyof LabelExtractionResult)[] = [
   'colourTheme',
   'claims',
   'ingredients',
-  'nutritionTableFormat'
+  'nutritionTableFormat',
+  'nutritionTable'
 ];
 
 // Accepts only a plain object whose extraction-result fields are all
@@ -144,35 +176,44 @@ export async function compareLabels(req: Request, res: Response) {
   }
 }
 
-// Logo and Design/Layout (AI module brief §7/§9) — compared on the actual
+// Logo / Design-Layout (AI module brief §7/§9) — compared on the actual
 // artwork pixels, never on a vision model's text description of them. See
-// imageSimilarity.service.ts's module comment for why, and for the honest
-// limitation this relies on: one whole-image similarity score currently
-// backs both rows, since there is no logo/layout region-detection step to
-// measure them independently. Never throws — an unreadable file on either
-// side resolves to MISSING via compareArtworkImages itself.
-export type VisualComparisonSummary = {
-  logo: VisualComparisonResult;
-  designLayout: VisualComparisonResult;
-};
-
-async function buildVisualComparison(fileA: Express.Multer.File, fileB: Express.Multer.File): Promise<VisualComparisonSummary> {
-  const [bufferA, bufferB] = await Promise.all([fs.promises.readFile(fileA.path), fs.promises.readFile(fileB.path)]);
-  const result = await compareArtworkImages(
-    { buffer: bufferA, mimeType: fileA.mimetype },
-    { buffer: bufferB, mimeType: fileB.mimetype }
-  );
-  return { logo: result, designLayout: result };
+// imageSimilarity.service.ts's module comment for why.
+//
+// Reported as ONE "Artwork Similarity" result, not separate Logo and
+// Design/Layout rows: both would be driven by the identical whole-image
+// hash, which would show as two independently-passing checks in the UI
+// when only one real measurement was ever taken. Collapsing it into a
+// single honest row until a logo-localisation step exists is the
+// no-fabrication-consistent choice; splitting it into two numbers that
+// happen to always agree would not be.
+//
+// Never throws: fs.readFile can fail for an unreadable temp file just like
+// any other I/O, and extractLabelFromFile's own no-throw guarantee (see its
+// header comment) must not be undone by this running alongside it in the
+// same Promise.all — a visual-comparison failure degrades to MISSING, the
+// same contract the frontend's tryCompareVisual already holds itself to.
+async function buildVisualComparison(fileA: Express.Multer.File, fileB: Express.Multer.File): Promise<VisualComparisonResult> {
+  try {
+    const [bufferA, bufferB] = await Promise.all([fs.promises.readFile(fileA.path), fs.promises.readFile(fileB.path)]);
+    return await compareArtworkImages(
+      { buffer: bufferA, mimeType: fileA.mimetype },
+      { buffer: bufferB, mimeType: fileB.mimetype }
+    );
+  } catch (error) {
+    console.error('[labels.controller] Could not build the visual comparison — reporting MISSING instead of failing the request:', error instanceof Error ? error.message : error);
+    return { status: 'MISSING' };
+  }
 }
 
 // POST /api/labels/compare-visual — the visual counterpart to
 // /compare-extracted for Quick Label Comparison. That endpoint compares
 // already-extracted TEXT fields and has no file bytes to work with; this
 // endpoint is the reverse — it takes the two raw artwork files the
-// frontend already fetched for extraction and returns ONLY the Logo/Design
-// visual comparison, so the text and visual comparisons can be requested
-// independently without changing /compare-extracted's existing JSON-only
-// contract.
+// frontend already fetched for extraction and returns ONLY the Artwork
+// Similarity visual comparison, so the text and visual comparisons can be
+// requested independently without changing /compare-extracted's existing
+// JSON-only contract.
 export async function compareVisual(req: Request, res: Response) {
   const files = req.files as { labelA?: Express.Multer.File[]; labelB?: Express.Multer.File[] } | undefined;
   const fileA = files?.labelA?.[0];
@@ -195,6 +236,54 @@ export async function compareVisual(req: Request, res: Response) {
   } finally {
     removeTempFile(fileA);
     removeTempFile(fileB);
+  }
+}
+
+// Reads and hashes one uploaded file, never throwing — an unreadable file
+// hashes to null, which compareHashes reports as MISSING rather than
+// crashing the batch.
+async function hashUploadedFile(file: Express.Multer.File): Promise<bigint | null> {
+  try {
+    const buffer = await fs.promises.readFile(file.path);
+    return await hashArtworkImage({ buffer, mimeType: file.mimetype });
+  } catch (error) {
+    console.error('[labels.controller] Could not hash an uploaded file for batch visual comparison:', error instanceof Error ? error.message : error);
+    return null;
+  }
+}
+
+// POST /api/labels/compare-visual-batch — one subject artwork against every
+// cross-company candidate in a single request. Exists because the Quick
+// Label Comparison workflow's cross-company step compares one subject
+// against N other marketing companies' artwork; calling /compare-visual
+// once per candidate would re-upload and re-hash the identical subject file
+// N times. The subject is hashed exactly once here and reused for every
+// candidate. Results are returned in the same order candidates were sent.
+export async function compareVisualBatch(req: Request, res: Response) {
+  const files = req.files as { subject?: Express.Multer.File[]; candidates?: Express.Multer.File[] } | undefined;
+  const subjectFile = files?.subject?.[0];
+  const candidateFiles = files?.candidates ?? [];
+  const cleanup = () => {
+    removeTempFile(subjectFile);
+    candidateFiles.forEach(removeTempFile);
+  };
+
+  if (!subjectFile || candidateFiles.length === 0) {
+    cleanup();
+    const message = !subjectFile ? 'A subject artwork file is required.' : 'At least one candidate artwork file is required.';
+    res.status(400).json({ success: false, message });
+    return;
+  }
+
+  try {
+    const subjectHash = await hashUploadedFile(subjectFile);
+    const results = await Promise.all(candidateFiles.map(async (candidateFile) => compareHashes(subjectHash, await hashUploadedFile(candidateFile))));
+    res.status(200).json({ success: true, data: { results } });
+  } catch (error) {
+    console.error('[labels.controller] Unexpected failure building the batch visual comparison result:', error instanceof Error ? error.message : error);
+    res.status(500).json({ success: false, message: 'Could not compare the uploaded artwork images. Please try again.' });
+  } finally {
+    cleanup();
   }
 }
 

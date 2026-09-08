@@ -10,8 +10,9 @@ import type {
   LabelComparisonApiResult,
   LabelComparisonFieldResult,
   LabelComparisonSummary,
+  NutritionRowComparison,
+  NutritionTableComparison,
   VisualComparisonResult,
-  VisualComparisonSummary,
   VisualComparisonStatus
 } from '../types/labelComparison';
 import type { LabelExtractionApiResult } from './labelExtractionService';
@@ -40,7 +41,12 @@ function readExtractionResult(data: unknown): LabelExtractionApiResult {
     flavour: readString(record.flavour),
     productName: readString(record.productName),
     packageSize: readString(record.packageSize),
-    manufacturingCompany: readString(record.manufacturingCompany)
+    manufacturingCompany: readString(record.manufacturingCompany),
+    colourTheme: readString(record.colourTheme),
+    claims: readString(record.claims),
+    ingredients: readString(record.ingredients),
+    nutritionTableFormat: readString(record.nutritionTableFormat),
+    nutritionTable: readString(record.nutritionTable)
   };
 }
 
@@ -66,9 +72,33 @@ function readComparisonSummary(data: unknown): LabelComparisonSummary {
     overallPercentage: typeof record.overallPercentage === 'number' ? record.overallPercentage : 0,
     totalFieldsCompared: typeof record.totalFieldsCompared === 'number' ? record.totalFieldsCompared : 0,
     matchingFields: typeof record.matchingFields === 'number' ? record.matchingFields : 0,
-    differentFields: typeof record.differentFields === 'number' ? record.differentFields : 0,
+    similarFields: typeof record.similarFields === 'number' ? record.similarFields : 0,
+    conflictingFields: typeof record.conflictingFields === 'number' ? record.conflictingFields : 0,
     missingFields: typeof record.missingFields === 'number' ? record.missingFields : 0,
-    notComparedFields: typeof record.notComparedFields === 'number' ? record.notComparedFields : 0
+    notComparedFields: typeof record.notComparedFields === 'number' ? record.notComparedFields : 0,
+    nutritionComparison: readNutritionComparison(record.nutritionComparison)
+  };
+}
+
+function readNutritionComparison(data: unknown): NutritionTableComparison | undefined {
+  if (!data || typeof data !== 'object') return undefined;
+  const record = data as Record<string, unknown>;
+  const rawRows = Array.isArray(record.rows) ? record.rows : [];
+  const rows: NutritionRowComparison[] = rawRows.map((raw) => {
+    const row = raw as Record<string, unknown>;
+    return {
+      nutrient: readString(row.nutrient),
+      valueA: readString(row.valueA),
+      valueB: readString(row.valueB),
+      status: readString(row.status) as NutritionRowComparison['status']
+    };
+  });
+  return {
+    rows,
+    matchingRows: typeof record.matchingRows === 'number' ? record.matchingRows : 0,
+    similarRows: typeof record.similarRows === 'number' ? record.similarRows : 0,
+    conflictingRows: typeof record.conflictingRows === 'number' ? record.conflictingRows : 0,
+    missingRows: typeof record.missingRows === 'number' ? record.missingRows : 0
   };
 }
 
@@ -85,7 +115,9 @@ export async function compareLabels(labelAFile: File, labelBFile: File): Promise
 
   let response: Response;
   try {
-    response = await fetch(compareUrl, { method: 'POST', body: formData });
+    // credentials: 'include' — see labelExtractionService.ts's extractLabel
+    // for why this is required, not optional, on every /api/labels/* call.
+    response = await fetch(compareUrl, { method: 'POST', body: formData, credentials: 'include' });
   } catch (err) {
     console.error(`[labelComparisonService] Request to ${compareUrl} failed:`, err);
     throw new LabelComparisonError('Label comparison service is currently unavailable. Please try again.');
@@ -121,20 +153,12 @@ function readVisualComparisonResult(data: unknown): VisualComparisonResult {
   };
 }
 
-function readVisualComparisonSummary(data: unknown): VisualComparisonSummary {
-  const record = (data ?? {}) as Record<string, unknown>;
-  return {
-    logo: readVisualComparisonResult(record.logo),
-    designLayout: readVisualComparisonResult(record.designLayout)
-  };
-}
-
-// Posts both artwork files for Logo/Design-Layout visual comparison (POST
+// Posts both artwork files for Artwork Similarity visual comparison (POST
 // /api/labels/compare-visual) — the visual counterpart to
 // compareExtractedLabels below. Kept separate because it needs the actual
 // image bytes, not extracted text fields; see
 // backend/src/services/imageSimilarity.service.ts for what it measures.
-export async function compareVisual(labelAFile: File, labelBFile: File): Promise<VisualComparisonSummary> {
+export async function compareVisual(labelAFile: File, labelBFile: File): Promise<VisualComparisonResult> {
   const formData = new FormData();
   formData.append('labelA', labelAFile);
   formData.append('labelB', labelBFile);
@@ -143,7 +167,9 @@ export async function compareVisual(labelAFile: File, labelBFile: File): Promise
 
   let response: Response;
   try {
-    response = await fetch(compareUrl, { method: 'POST', body: formData });
+    // credentials: 'include' — see labelExtractionService.ts's extractLabel
+    // for why this is required, not optional, on every /api/labels/* call.
+    response = await fetch(compareUrl, { method: 'POST', body: formData, credentials: 'include' });
   } catch (err) {
     console.error(`[labelComparisonService] Request to ${compareUrl} failed:`, err);
     throw new LabelComparisonError('Visual comparison service is currently unavailable. Please try again.');
@@ -162,7 +188,45 @@ export async function compareVisual(labelAFile: File, labelBFile: File): Promise
     throw new LabelComparisonError(readString(parsed?.message) || 'Could not compare the uploaded artwork images. Please try again.');
   }
 
-  return readVisualComparisonSummary(parsed.data?.visualComparison);
+  return readVisualComparisonResult(parsed.data?.visualComparison);
+}
+
+// Posts ONE subject artwork against MANY candidates (POST
+// /api/labels/compare-visual-batch) in a single request — used by the
+// cross-company comparison loop, which otherwise re-uploads and re-hashes
+// the identical subject file once per candidate. Returns results in the
+// same order `candidateFiles` was given, so the caller can zip them back
+// onto whichever candidates they came from.
+export async function compareVisualBatch(subjectFile: File, candidateFiles: File[]): Promise<VisualComparisonResult[]> {
+  const formData = new FormData();
+  formData.append('subject', subjectFile);
+  candidateFiles.forEach((file) => formData.append('candidates', file));
+
+  const compareUrl = `${API_BASE_URL}/api/labels/compare-visual-batch`;
+
+  let response: Response;
+  try {
+    response = await fetch(compareUrl, { method: 'POST', body: formData, credentials: 'include' });
+  } catch (err) {
+    console.error(`[labelComparisonService] Request to ${compareUrl} failed:`, err);
+    throw new LabelComparisonError('Visual comparison service is currently unavailable. Please try again.');
+  }
+
+  let body: unknown;
+  try {
+    body = await response.json();
+  } catch {
+    throw new LabelComparisonError('The visual comparison service returned an unexpected response.');
+  }
+
+  const parsed = body as { success?: boolean; message?: string; data?: Record<string, unknown> } | null;
+
+  if (!response.ok || !parsed?.success) {
+    throw new LabelComparisonError(readString(parsed?.message) || 'Could not compare the uploaded artwork images. Please try again.');
+  }
+
+  const rawResults = Array.isArray(parsed.data?.results) ? (parsed.data!.results as unknown[]) : [];
+  return rawResults.map(readVisualComparisonResult);
 }
 
 // Posts two ALREADY-EXTRACTED labels for comparison (POST
@@ -184,7 +248,8 @@ export async function compareExtractedLabels(
     response = await fetch(compareUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ labelA, labelB, stage })
+      body: JSON.stringify({ labelA, labelB, stage }),
+      credentials: 'include'
     });
   } catch (err) {
     console.error(`[labelComparisonService] Request to ${compareUrl} failed:`, err);

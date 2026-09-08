@@ -14,7 +14,7 @@ import type { Product } from '../../types/product';
 // under test no longer touches it — the products are handed to it directly.
 installMemoryLocalStorage();
 
-const { findExactProductMatch } = await import('../labelIntakeService');
+const { findExactProductMatch, buildLabelAttributesFromIntake } = await import('../labelIntakeService');
 
 // The real Product type, not a local stand-in. The matcher takes the list as an
 // argument now, so nothing has to be shaped like a stored row any more — and a
@@ -85,4 +85,37 @@ test('Returns undefined (never guesses) when required identity fields were not r
 
   const match = findExactProductMatch(products, extractedFields({ brand: '' }));
   assert.equal(match, undefined);
+});
+
+// Regression test for a real bug found during live verification: this
+// intake path used to hardcode the literal string 'Not specified' for the
+// six fields it doesn't extract, which the backend's own CHECK constraint
+// (artwork.repository.ts) correctly rejects as a fabricated placeholder —
+// that made every single artwork upload through this form fail to save.
+test('buildLabelAttributesFromIntake leaves unextracted fields as empty strings, never the literal "Not specified"', () => {
+  const attributes = buildLabelAttributesFromIntake('ART-0001', extractedFields() as any);
+
+  assert.equal(attributes.artworkId, 'ART-0001');
+  assert.equal(attributes.colourTheme, '');
+  assert.equal(attributes.claims, '');
+  assert.equal(attributes.logo, '');
+  assert.equal(attributes.labelDesign, '');
+  assert.equal(attributes.nutritionTableFormat, '');
+  assert.equal(attributes.ingredients, '');
+  for (const value of Object.values(attributes)) {
+    assert.notEqual(value, 'Not specified');
+  }
+});
+
+test('buildLabelAttributesFromIntake carries through the fields this form does extract, unchanged', () => {
+  const extracted = extractedFields({ brand: 'Nutrinol', productName: 'Apple Cider Vinegar Gummies' });
+  const attributes = buildLabelAttributesFromIntake('ART-0002', extracted as any);
+
+  assert.equal(attributes.brandName, 'Nutrinol');
+  assert.equal(attributes.productName, 'Apple Cider Vinegar Gummies');
+  assert.equal(attributes.address, extracted.address);
+  assert.equal(attributes.customerCareNumber, extracted.customerCareNumber);
+  assert.equal(attributes.customerCareEmail, extracted.email);
+  assert.equal(attributes.flavour, extracted.flavour);
+  assert.equal(attributes.fssaiNumber, extracted.fssaiNumber);
 });

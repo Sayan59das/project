@@ -72,16 +72,16 @@ const TRIGGER_FIELDS = ['brand', 'productName', 'marketingCompany', 'fssaiNumber
  *  - `logo` and `layout` have no destination. Both are genuinely visual and
  *    want a same/different verdict between two artworks rather than a
  *    description, which is why LabelExtractionResult has no field for either
- *    (see its own comment). A prose description of a logo stored as if it were
- *    an extracted value would compare as CONFLICT against every other label.
+ *    (see its own comment) — see imageSimilarity.service.ts instead, which
+ *    compares them on the actual artwork pixels.
  *
- *  - `nutrition_table` has no destination either, and this one is a trap.
- *    Their field holds the table's CONTENTS (a nutrient -> amount map); our
- *    similarly-named `nutritionTableFormat` holds a CLASSIFICATION of the
- *    panel ('Detailed per 100g'), produced by extractNutritionTableFormat().
- *    Serialising their map into our field would put a JSON blob where a
- *    reviewer expects a category, and every comparison against it would be a
- *    conflict.
+ *  - `nutrition_table` maps to our dedicated `nutritionTable` field, kept
+ *    JSON-encoded (see LabelExtractionResult's own comment on why) rather
+ *    than joined into a display string the way the list fields below are —
+ *    labelComparison.service.ts's compareNutritionTables() parses it back
+ *    out to compare row by row. This is a SEPARATE field from
+ *    `nutritionTableFormat`, which stays the coarse panel-format
+ *    classification ('Detailed per 100g') Tesseract already produces.
  *
  * The list separators match what our own extractors emit, so an AI-filled
  * value and a Tesseract-read one compare on equal terms: ' | ' for claims
@@ -103,8 +103,24 @@ const FIELD_MAP: {
   packageSize: (ai) => ai.package_size,
   claims: (ai) => joinList(ai.claims, ' | '),
   colourTheme: (ai) => joinList(ai.colour_theme, ' & '),
-  ingredients: (ai) => joinList(ai.ingredients, ', ')
+  ingredients: (ai) => joinList(ai.ingredients, ', '),
+  nutritionTable: (ai) => encodeNutritionTable(ai.nutrition_table)
 };
+
+// Keeps only rows with both a real nutrient name and a real value — the
+// model has been observed to leave a row with a null/blank amount when it
+// couldn't read that one line, and a row like that is noise, not data.
+// Returns undefined (never '{}') when nothing usable is left, so this
+// behaves like every other absent field rather than encoding an empty
+// object as if it were a real (blank) nutrition table.
+function encodeNutritionTable(value: Record<string, unknown> | null | undefined): string | undefined {
+  if (!value || typeof value !== 'object') return undefined;
+  const rows = Object.entries(value)
+    .map(([nutrient, amount]): [string, string] => [nutrient.trim(), amount === null || amount === undefined ? '' : String(amount).trim()])
+    .filter(([nutrient, amount]) => nutrient.length > 0 && amount.length > 0);
+  if (rows.length === 0) return undefined;
+  return JSON.stringify(Object.fromEntries(rows));
+}
 
 function joinList(value: string[] | null | undefined, separator: string): string | undefined {
   if (!Array.isArray(value)) return undefined;

@@ -117,6 +117,29 @@ function classify(distance: number): VisualComparisonStatus {
 }
 
 /**
+ * Hashes one artwork file. Exported separately from compareArtworkImages
+ * (which wraps this for the common two-file case) so a caller comparing
+ * ONE subject against MANY candidates — the cross-company comparison loop —
+ * can hash the subject exactly once and reuse it, rather than re-uploading
+ * and re-hashing the same subject image once per candidate. Never throws:
+ * an unreadable file resolves to null, which compareHashes below treats as
+ * MISSING rather than a crash.
+ */
+export async function hashArtworkImage(file: { buffer: Buffer; mimeType: string }): Promise<bigint | null> {
+  return computeDifferenceHash(file.buffer, file.mimeType);
+}
+
+/** Compares two already-computed hashes — the shared core both compareArtworkImages and a batch (one subject, many candidates) caller use. */
+export function compareHashes(hashA: bigint | null, hashB: bigint | null): VisualComparisonResult {
+  if (hashA === null || hashB === null) {
+    return { status: 'MISSING' };
+  }
+  const distance = hammingDistance(hashA, hashB);
+  const similarityPercentage = Math.round(((HASH_BITS - distance) / HASH_BITS) * 100);
+  return { status: classify(distance), similarityPercentage };
+}
+
+/**
  * Compares two artwork files' overall visual appearance (see the module
  * comment above for exactly what this does and does not measure). Never
  * throws: either file being unreadable is reported as MISSING, the same
@@ -127,16 +150,6 @@ export async function compareArtworkImages(
   fileA: { buffer: Buffer; mimeType: string },
   fileB: { buffer: Buffer; mimeType: string }
 ): Promise<VisualComparisonResult> {
-  const [hashA, hashB] = await Promise.all([
-    computeDifferenceHash(fileA.buffer, fileA.mimeType),
-    computeDifferenceHash(fileB.buffer, fileB.mimeType)
-  ]);
-
-  if (hashA === null || hashB === null) {
-    return { status: 'MISSING' };
-  }
-
-  const distance = hammingDistance(hashA, hashB);
-  const similarityPercentage = Math.round(((HASH_BITS - distance) / HASH_BITS) * 100);
-  return { status: classify(distance), similarityPercentage };
+  const [hashA, hashB] = await Promise.all([hashArtworkImage(fileA), hashArtworkImage(fileB)]);
+  return compareHashes(hashA, hashB);
 }

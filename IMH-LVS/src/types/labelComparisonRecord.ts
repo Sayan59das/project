@@ -22,13 +22,13 @@
 // model that isn't backed by real extraction. That type/workflow/store is
 // untouched by this feature.
 import type { ArtworkStatus } from './artwork';
-import type { LabelComparisonApiResult, VisualComparisonSummary } from './labelComparison';
+import type { LabelComparisonApiResult, VisualComparisonResult } from './labelComparison';
 
 export type CrossCompanyOutcome =
   // The candidate's or the subject's artwork file has no retrievable bytes
   // in this session (see artworkService.ts's file-storage-limitation note).
   | { status: 'file_unavailable' }
-  | { status: 'success'; result: LabelComparisonApiResult; visualComparison?: VisualComparisonSummary };
+  | { status: 'success'; result: LabelComparisonApiResult; visualComparison?: VisualComparisonResult };
 
 export type CrossCompanyResultEntry = {
   candidateProductId: string;
@@ -37,6 +37,21 @@ export type CrossCompanyResultEntry = {
   candidateArtworkId: string;
   candidateArtworkVersion: string;
   outcome: CrossCompanyOutcome;
+};
+
+// AI module brief §6/§8 — "the system should identify the Best Match Label
+// based on similarity" and report its Marketing Company alongside it.
+// Undefined when there is nothing to pick a best match from at all (no
+// candidates, or every candidate's file was unavailable) — "No Comparison
+// Available" stays the honest answer rather than naming a best match among
+// zero real comparisons.
+export type BestCrossCompanyMatch = {
+  candidateProductId: string;
+  candidateProductName: string;
+  candidateMarketingCompany: string;
+  candidateArtworkId: string;
+  candidateArtworkVersion: string;
+  overallPercentage: number;
 };
 
 export type VersionComparisonResult = {
@@ -49,11 +64,12 @@ export type VersionComparisonResult = {
   approvedArtworkStatus: ArtworkStatus;
   approvedArtworkApprovedDate: string;
   result: LabelComparisonApiResult;
-  // Logo / Design-Layout (AI module brief §7/§9) — undefined only when the
-  // visual comparison call itself failed (service unreachable, unsupported
-  // file); a readable-but-different image pair still gets a real
-  // MATCH/SIMILAR/CONFLICT here, never a silently-skipped row.
-  visualComparison?: VisualComparisonSummary;
+  // Artwork Similarity (Logo / Design-Layout, AI module brief §7/§9) —
+  // undefined only when the visual comparison call itself failed (service
+  // unreachable, unsupported file); a readable-but-different image pair
+  // still gets a real MATCH/SIMILAR/CONFLICT here, never a silently-skipped
+  // row.
+  visualComparison?: VisualComparisonResult;
 };
 
 export type LabelComparisonRun = {
@@ -79,4 +95,8 @@ export type LabelComparisonRun = {
   // exist at all, so the UI can tell "ran, found nothing" apart from
   // "didn't run".
   crossCompanyResults: CrossCompanyResultEntry[];
+  // The highest-similarity successful cross-company result — see
+  // BestCrossCompanyMatch above. Undefined, never fabricated, when
+  // crossCompanyResults has no successful entry to pick from.
+  bestCrossCompanyMatch?: BestCrossCompanyMatch;
 };

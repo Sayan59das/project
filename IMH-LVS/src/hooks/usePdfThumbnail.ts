@@ -17,6 +17,29 @@ function getPdfjs() {
   return pdfjsLibPromise;
 }
 
+// Renders a PDF's first page (given its object/blob/data URL) to a static
+// PNG data URL. Extracted as a plain function (not just inlined in the hook
+// below) so non-React callers — the comparison PDF report generator, which
+// runs from a button click handler, not a component render — can reuse the
+// exact same rendering path rather than duplicating it.
+export async function renderPdfFirstPageToDataUrl(fileUrl: string): Promise<string | null> {
+  try {
+    const pdfjsLib = await getPdfjs();
+    const pdf = await pdfjsLib.getDocument(fileUrl).promise;
+    const page = await pdf.getPage(1);
+    const viewport = page.getViewport({ scale: 1.5 });
+    const canvas = document.createElement('canvas');
+    canvas.width = viewport.width;
+    canvas.height = viewport.height;
+    const context = canvas.getContext('2d');
+    if (!context) throw new Error('Canvas 2D context unavailable');
+    await page.render({ canvasContext: context, viewport }).promise;
+    return canvas.toDataURL('image/png');
+  } catch {
+    return null;
+  }
+}
+
 type ThumbnailState = { url: string | null; loading: boolean; error: boolean };
 
 // Renders a PDF's first page (given its object/blob URL) to a static PNG
@@ -38,21 +61,10 @@ export function usePdfThumbnail(fileUrl: string | undefined, enabled: boolean): 
     setState({ url: null, loading: true, error: false });
 
     (async () => {
-      try {
-        const pdfjsLib = await getPdfjs();
-        const pdf = await pdfjsLib.getDocument(fileUrl).promise;
-        const page = await pdf.getPage(1);
-        const viewport = page.getViewport({ scale: 1.5 });
-        const canvas = document.createElement('canvas');
-        canvas.width = viewport.width;
-        canvas.height = viewport.height;
-        const context = canvas.getContext('2d');
-        if (!context) throw new Error('Canvas 2D context unavailable');
-        await page.render({ canvasContext: context, viewport }).promise;
-        if (!cancelled) setState({ url: canvas.toDataURL('image/png'), loading: false, error: false });
-      } catch {
-        if (!cancelled) setState({ url: null, loading: false, error: true });
-      }
+      const url = await renderPdfFirstPageToDataUrl(fileUrl);
+      if (cancelled) return;
+      if (url) setState({ url, loading: false, error: false });
+      else setState({ url: null, loading: false, error: true });
     })();
 
     return () => {

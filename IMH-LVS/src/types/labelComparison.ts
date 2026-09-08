@@ -9,7 +9,13 @@
 // files, compare their extracted data" utility.
 import type { LabelExtractionApiResult } from '../services/labelExtractionService';
 
-export type LabelComparisonFieldStatus = 'MATCH' | 'DIFFERENT' | 'MISSING' | 'NOT_COMPARED';
+// MATCH/SIMILAR/CONFLICT/MISSING is the AI module brief's §8 vocabulary.
+// NOT_COMPARED is the backend engine's own addition on top of it — see
+// labelComparison.service.ts's own comment on why neither label stating a
+// field at all is a different situation from a genuine mismatch. SIMILAR
+// is a real, computed spelling/wording-variant detection (edit distance +
+// token overlap), not a UI-layer guess — see the backend's isSimilarText.
+export type LabelComparisonFieldStatus = 'MATCH' | 'SIMILAR' | 'CONFLICT' | 'MISSING' | 'NOT_COMPARED';
 
 export type LabelComparisonFieldImportance = 'HIGH' | 'MEDIUM' | 'LOW';
 
@@ -24,14 +30,38 @@ export type LabelComparisonFieldResult = {
   importance: LabelComparisonFieldImportance;
 };
 
+// AI module brief §7/§12 — the nutrition panel's actual rows compared
+// nutrient by nutrient. Undefined when neither side has a structured table
+// to compare (today: only the AI backend's vision-model fallback ever
+// populates one — see backend/src/services/labelExtraction.service.ts's
+// nutritionTable comment), not an empty/fabricated result.
+export type NutritionRowStatus = 'MATCH' | 'SIMILAR' | 'CONFLICT' | 'MISSING';
+
+export type NutritionRowComparison = {
+  nutrient: string;
+  valueA: string;
+  valueB: string;
+  status: NutritionRowStatus;
+};
+
+export type NutritionTableComparison = {
+  rows: NutritionRowComparison[];
+  matchingRows: number;
+  similarRows: number;
+  conflictingRows: number;
+  missingRows: number;
+};
+
 export type LabelComparisonSummary = {
   fields: LabelComparisonFieldResult[];
   overallPercentage: number;
   totalFieldsCompared: number;
   matchingFields: number;
-  differentFields: number;
+  similarFields: number;
+  conflictingFields: number;
   missingFields: number;
   notComparedFields: number;
+  nutritionComparison?: NutritionTableComparison;
 };
 
 export type LabelComparisonApiResult = {
@@ -40,23 +70,21 @@ export type LabelComparisonApiResult = {
   comparison: LabelComparisonSummary;
 };
 
-// Logo / Design-Layout — POST /api/labels/compare-visual (see
-// backend/src/services/imageSimilarity.service.ts). A separate three-tier
-// status from LabelComparisonFieldStatus above: this is a continuous pixel
-// similarity score bucketed into MATCH/SIMILAR/CONFLICT, not an exact-text
-// match, so "SIMILAR" is a real, meaningful middle state here in a way it
-// deliberately isn't for the text fields.
+// Artwork Similarity (Logo / Design-Layout, AI module brief §7/§9) — POST
+// /api/labels/compare-visual (see backend/src/services/imageSimilarity.service.ts).
+// Same MATCH/SIMILAR/CONFLICT/MISSING vocabulary as LabelComparisonFieldStatus
+// above, but computed from a continuous PIXEL similarity score (a
+// perceptual hash's Hamming distance) rather than text — a genuinely
+// different measurement, kept as its own type rather than reusing
+// LabelComparisonFieldStatus so the two are never accidentally conflated.
+//
+// Reported as ONE result, not separate Logo and Design/Layout rows: both
+// would be driven by the identical whole-image hash today (no logo
+// localisation step exists to measure them independently), so showing two
+// numbers would misrepresent one real measurement as two independent ones.
 export type VisualComparisonStatus = 'MATCH' | 'SIMILAR' | 'CONFLICT' | 'MISSING';
 
 export type VisualComparisonResult = {
   status: VisualComparisonStatus;
   similarityPercentage?: number;
-};
-
-// One real similarity score currently backs both rows — see
-// imageSimilarity.service.ts's module comment for why (no logo/layout
-// region-detection step exists yet to measure them independently).
-export type VisualComparisonSummary = {
-  logo: VisualComparisonResult;
-  designLayout: VisualComparisonResult;
 };

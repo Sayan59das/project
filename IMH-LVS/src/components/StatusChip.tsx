@@ -36,18 +36,16 @@ const statusMap: Record<string, { color: 'success' | 'warning' | 'default' | 'er
   Archived: { color: 'default', label: 'Archived' },
   'In Progress': { color: 'info', label: 'In Progress' },
   Completed: { color: 'success', label: 'Completed' },
+  // MATCH/SIMILAR/CONFLICT/MISSING is the AI module brief's §8 vocabulary —
+  // shared by the older Label Final->Technical->QA->Manager approval
+  // pipeline's own ParameterResult (types/comparison.ts) and the newer
+  // Quick Label Comparison engine's LabelComparisonFieldStatus/
+  // VisualComparisonStatus alike, so one set of chip styles covers both.
   MATCH: { color: 'success', label: 'Match' },
-  DIFFERENT: { color: 'error', label: 'Different' },
-  MISSING: { color: 'warning', label: 'Missing' },
-  NOT_COMPARED: { color: 'default', label: 'Not Compared' },
   SIMILAR: { color: 'warning', label: 'Similar' },
   CONFLICT: { color: 'error', label: 'Conflict' },
-  // Label Comparison Detail's Deviations/Field Comparison terminology — a
-  // DIFFERENT field split by its backend-reported `importance`: HIGH is
-  // shown as Conflicting, MEDIUM/LOW as Modified (see
-  // pages/ComparisonDetailPage.tsx's classifyDeviation).
-  MODIFIED: { color: 'warning', label: 'Modified' },
-  CONFLICTING: { color: 'error', label: 'Conflicting' },
+  MISSING: { color: 'warning', label: 'Missing' },
+  NOT_COMPARED: { color: 'default', label: 'Not Compared' },
   'REVIEW REQUIRED': { color: 'warning', label: 'Review Required' },
   Verified: { color: 'success', label: 'Verified' },
   Fixed: { color: 'info', label: 'Fixed' }

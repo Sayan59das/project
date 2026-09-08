@@ -61,10 +61,10 @@ function fieldResult(body: any, field: string) {
 // (see labels.extract.test.ts for the full extraction expectations this
 // relies on) — genuinely different products, so this exercises MATCH (the
 // fields that are actually identical, e.g. brand/marketing company/FSSAI),
-// DIFFERENT (product name), and MISSING (flavour: Apple Cider Vinegar
+// CONFLICT (product name), and MISSING (flavour: Apple Cider Vinegar
 // Gummy states one, Chyawanprash Gummies states none) all in one real,
 // non-synthetic comparison.
-test('Compare two different real label PDFs: MATCH/DIFFERENT/MISSING all correctly distinguished', { skip: SKIP }, async () => {
+test('Compare two different real label PDFs: MATCH/CONFLICT/MISSING all correctly distinguished', { skip: SKIP }, async () => {
   const { status, body } = await postCompare('apple-cider-vinegar-gummy.pdf', 'chyawanprash-gummies.pdf');
   assert.equal(status, 200);
   assert.equal(body.success, true);
@@ -89,8 +89,9 @@ test('Compare two different real label PDFs: MATCH/DIFFERENT/MISSING all correct
   // Genuinely different products — never reported as merely "different"
   // when one side has nothing to compare (that's MISSING, per the
   // business rule below), but productName differs on BOTH sides so it
-  // must be DIFFERENT, not MISSING.
-  assert.equal(fieldResult(body, 'productName').status, 'DIFFERENT');
+  // must be CONFLICT, not MISSING. The two names share no meaningful words
+  // and aren't a close spelling variant, so this isn't a SIMILAR case either.
+  assert.equal(fieldResult(body, 'productName').status, 'CONFLICT');
 
   // Apple Cider Vinegar Gummy states a flavour; Chyawanprash Gummies
   // states none at all — a gap on one side, not two conflicting values.
@@ -109,7 +110,8 @@ test('Compare two different real label PDFs: MATCH/DIFFERENT/MISSING all correct
   // hardcoded/demo figure.
   const fields = comparison.fields;
   assert.equal(comparison.matchingFields, fields.filter((f: any) => f.status === 'MATCH').length);
-  assert.equal(comparison.differentFields, fields.filter((f: any) => f.status === 'DIFFERENT').length);
+  assert.equal(comparison.similarFields, fields.filter((f: any) => f.status === 'SIMILAR').length);
+  assert.equal(comparison.conflictingFields, fields.filter((f: any) => f.status === 'CONFLICT').length);
   assert.equal(comparison.missingFields, fields.filter((f: any) => f.status === 'MISSING').length);
   assert.equal(comparison.notComparedFields, fields.filter((f: any) => f.status === 'NOT_COMPARED').length);
   assert.equal(comparison.totalFieldsCompared, fields.length - comparison.notComparedFields);
@@ -118,9 +120,9 @@ test('Compare two different real label PDFs: MATCH/DIFFERENT/MISSING all correct
 
 // The same file compared against itself must report every field that has
 // a real value as MATCH (case/whitespace-insensitive normalization aside,
-// this is byte-identical content), never DIFFERENT or MISSING — and a
-// 100% overall score, since every field that was actually compared
-// matched.
+// this is byte-identical content), never CONFLICT, SIMILAR or MISSING —
+// and a 100% overall score, since every field that was actually compared
+// matched exactly.
 test('Compare a real label against itself: every populated field matches, overall score is 100%', { skip: SKIP }, async () => {
   const { status, body } = await postCompare('apple-cider-vinegar-gummy.pdf', 'apple-cider-vinegar-gummy.pdf');
   assert.equal(status, 200);
@@ -128,10 +130,12 @@ test('Compare a real label against itself: every populated field matches, overal
 
   const comparison = body.data.comparison;
   for (const field of comparison.fields) {
-    assert.notEqual(field.status, 'DIFFERENT', `${field.field} must not be DIFFERENT when comparing a label against itself`);
+    assert.notEqual(field.status, 'CONFLICT', `${field.field} must not be CONFLICT when comparing a label against itself`);
+    assert.notEqual(field.status, 'SIMILAR', `${field.field} must not be SIMILAR when comparing a label against itself — identical text is an exact MATCH`);
     assert.notEqual(field.status, 'MISSING', `${field.field} must not be MISSING when comparing a label against itself`);
   }
-  assert.equal(comparison.differentFields, 0);
+  assert.equal(comparison.similarFields, 0);
+  assert.equal(comparison.conflictingFields, 0);
   assert.equal(comparison.missingFields, 0);
   assert.equal(comparison.overallPercentage, 100);
 });

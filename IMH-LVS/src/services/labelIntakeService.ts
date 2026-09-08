@@ -212,26 +212,41 @@ export async function submitLabelIntake(input: LabelIntakeInput): Promise<LabelI
     product = (await setProductSourceArtwork(product.id, artwork.id).catch(() => undefined)) ?? product;
   }
 
-  const labelAttributes: LabelAttributes = {
-    artworkId: artwork.id,
+  // Awaited: this is what the comparison engine reads later, and an intake that
+  // reported success while the reading failed to store would produce a
+  // comparison against MISSING values with no sign anything went wrong.
+  await saveLabelAttributes(buildLabelAttributesFromIntake(artwork.id, extracted));
+
+  return { product, artwork, isNewProduct };
+}
+
+// colourTheme/claims/logo/labelDesign/nutritionTableFormat/ingredients are
+// not among the fields this intake form extracts or asks the user to
+// verify (see LabelIntakeExtractedFields above) — '' is the honest "not
+// read", the same convention buildLabelAttributes (comparisonService.ts)
+// falls back to for an artwork nobody has ever read. A literal
+// 'Not specified' is exactly the fabricated-placeholder-as-content defect
+// the backend's own CHECK constraint (artwork.repository.ts) exists to
+// reject — see its "An extractor that cannot read a field must leave it
+// absent" message — and using it here made this endpoint reject every
+// single intake. Exported as its own pure function so this mapping is
+// unit-testable without mocking the network calls submitLabelIntake makes
+// around it.
+export function buildLabelAttributesFromIntake(artworkId: string, extracted: LabelIntakeExtractedFields): LabelAttributes {
+  return {
+    artworkId,
     brandName: extracted.brand,
     productName: extracted.productName,
     address: extracted.address,
     customerCareNumber: extracted.customerCareNumber,
     customerCareEmail: extracted.email,
-    colourTheme: 'Not specified',
+    colourTheme: '',
     flavour: extracted.flavour,
-    claims: 'Not specified',
-    logo: 'Not specified',
-    labelDesign: 'Not specified',
-    nutritionTableFormat: 'Not specified',
+    claims: '',
+    logo: '',
+    labelDesign: '',
+    nutritionTableFormat: '',
     fssaiNumber: extracted.fssaiNumber,
-    ingredients: 'Not specified'
+    ingredients: ''
   };
-  // Awaited: this is what the comparison engine reads later, and an intake that
-  // reported success while the reading failed to store would produce a
-  // comparison against MISSING values with no sign anything went wrong.
-  await saveLabelAttributes(labelAttributes);
-
-  return { product, artwork, isNewProduct };
 }

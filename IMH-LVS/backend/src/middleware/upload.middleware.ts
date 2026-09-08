@@ -59,3 +59,15 @@ export const labelPairUpload = labelUpload.fields([
   { name: 'labelA', maxCount: 1 },
   { name: 'labelB', maxCount: 1 }
 ]);
+
+// POST /api/labels/compare-visual-batch — one subject artwork against
+// every cross-company candidate in a single request, so the subject's
+// bytes are uploaded and hashed once rather than once per candidate (the
+// Quick Label Comparison workflow can have several candidates per run).
+// 20 is comfortably above any real number of other marketing companies'
+// approved artwork for one product name; it exists to bound the request,
+// not because more candidates are expected.
+export const labelBatchUpload = labelUpload.fields([
+  { name: 'subject', maxCount: 1 },
+  { name: 'candidates', maxCount: 20 }
+]);

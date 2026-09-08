@@ -6,6 +6,7 @@
 // business workflow: Select Label -> Version Comparison (or skip) ->
 // Cross-Company Comparison -> Final Result. See components/labelComparison/*
 // for the individual pieces this composes.
+import { useState } from 'react';
 import { Link as RouterLink, useParams } from 'react-router-dom';
 import { Box, Button, Paper, Typography } from '@mui/material';
 import { MdArrowBack, MdFileDownload } from 'react-icons/md';
@@ -14,15 +15,17 @@ import { ArtworkCompareViewer } from '../components/labelComparison/ArtworkCompa
 import { DeviationsPanel, classifyDeviation } from '../components/labelComparison/DeviationsPanel';
 import { CrossCompanyResults } from '../components/labelComparison/CrossCompanyResults';
 import { VisualComparisonSection } from '../components/labelComparison/VisualComparisonSection';
+import { NutritionComparisonSection } from '../components/labelComparison/NutritionComparisonSection';
 import { getLabelComparisonById } from '../services/labelComparisonHistoryService';
 import { useArtworks } from '../hooks/useArtworks';
 import { formatDateTime } from '../utils/dateFormat';
+import { generateComparisonReportPdf } from '../utils/comparisonReportPdf';
 import type { LabelComparisonFieldResult } from '../types/labelComparison';
 import type { VersionComparisonResult } from '../types/labelComparisonRecord';
 
-const SUMMARY_METRICS: { key: 'matching' | 'modified' | 'conflicting' | 'missing'; label: string; color: string }[] = [
+const SUMMARY_METRICS: { key: 'matching' | 'similar' | 'conflicting' | 'missing'; label: string; color: string }[] = [
   { key: 'matching', label: 'Matching', color: 'var(--c-green)' },
-  { key: 'modified', label: 'Modified', color: 'var(--c-warn)' },
+  { key: 'similar', label: 'Similar', color: 'var(--c-warn)' },
   { key: 'conflicting', label: 'Conflicting', color: 'var(--c-error)' },
   { key: 'missing', label: 'Missing', color: 'var(--c-info)' }
 ];
@@ -36,26 +39,16 @@ function formatVersionLabel(version: string): string {
 }
 
 function summarizeFields(fields: LabelComparisonFieldResult[]) {
-  const counts = { matching: 0, modified: 0, conflicting: 0, missing: 0, notCompared: 0 };
+  const counts = { matching: 0, similar: 0, conflicting: 0, missing: 0, notCompared: 0 };
   fields.forEach((field) => {
     const status = classifyDeviation(field);
     if (status === 'MATCH') counts.matching += 1;
-    else if (status === 'MODIFIED') counts.modified += 1;
-    else if (status === 'CONFLICTING') counts.conflicting += 1;
+    else if (status === 'SIMILAR') counts.similar += 1;
+    else if (status === 'CONFLICT') counts.conflicting += 1;
     else if (status === 'MISSING') counts.missing += 1;
     else counts.notCompared += 1;
   });
   return counts;
-}
-
-function buildReportSection(title: string, fields: LabelComparisonFieldResult[], overallPercentage: number): string[] {
-  const lines = [title, '='.repeat(title.length), `Overall Match: ${overallPercentage}%`, ''];
-  fields.forEach((field) => {
-    lines.push(`${field.label}: ${classifyDeviation(field)}`);
-    lines.push(`  Label Artwork: ${field.labelA || '(blank)'}`);
-    lines.push(`  Compared Against: ${field.labelB || '(blank)'}`);
-  });
-  return lines;
 }
 
 export function ComparisonDetailPage() {
@@ -88,44 +81,20 @@ export function ComparisonDetailPage() {
     );
   }
 
-  const handleDownloadReport = () => {
-    const lines = [
-      `COMPARISON ID: ${run.id}`,
-      `PRODUCT: ${run.productName}`,
-      `PARTY: ${run.marketingCompany}`,
-      `LABEL ARTWORK: ${run.candidateArtworkFileName} (${formatVersionLabel(run.candidateArtworkVersion)})`,
-      `COMPARED BY: ${run.comparedBy}`,
-      `COMPARED ON: ${formatDateTime(run.comparisonDate)}`,
-      ''
-    ];
-    if (run.versionComparison) {
-      lines.push(
-        ...buildReportSection(
-          `VERSION COMPARISON (vs. Latest Approved ${formatVersionLabel(run.versionComparison.approvedArtworkVersion)})`,
-          run.versionComparison.result.comparison.fields,
-          run.versionComparison.result.comparison.overallPercentage
-        ),
-        ''
-      );
-    } else {
-      lines.push('VERSION COMPARISON: Skipped â€” no previous approved version found for this label.', '');
+  const [reportGenerating, setReportGenerating] = useState(false);
+  const [reportError, setReportError] = useState<string | null>(null);
+
+  const handleDownloadReport = async () => {
+    setReportError(null);
+    setReportGenerating(true);
+    try {
+      await generateComparisonReportPdf(run, { candidate: candidateArtwork, approved: approvedArtwork });
+    } catch (error) {
+      console.error('[ComparisonDetailPage] Could not generate the comparison PDF report:', error);
+      setReportError('Could not generate the PDF report. Please try again.');
+    } finally {
+      setReportGenerating(false);
     }
-    lines.push('CROSS-COMPANY COMPARISON', '========================');
-    if (run.crossCompanyResults.length === 0) {
-      lines.push('No comparable labels from other marketing companies were found.');
-    } else {
-      run.crossCompanyResults.forEach((entry) => {
-        const score = entry.outcome.status === 'success' ? `${entry.outcome.result.comparison.overallPercentage}%` : 'File unavailable';
-        lines.push(`${entry.candidateMarketingCompany} (${entry.candidateProductName}): ${score}`);
-      });
-    }
-    const blob = new Blob([lines.join('\n')], { type: 'text/plain' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = `${run.id}-comparison-report.txt`;
-    link.click();
-    URL.revokeObjectURL(url);
   };
 
   const versionComparison: VersionComparisonResult | undefined = run.versionComparison;
@@ -181,11 +150,28 @@ export function ComparisonDetailPage() {
                   {formatDateTime(run.comparisonDate)}
                 </Typography>
               </Box>
+              <Box>
+                <Typography variant="caption" sx={{ color: 'var(--c-text-3)', display: 'block' }}>
+                  Best Cross-Company Match
+                </Typography>
+                <Typography variant="body2" sx={{ fontWeight: 600, color: 'var(--c-text-1)' }}>
+                  {run.bestCrossCompanyMatch
+                    ? `${run.bestCrossCompanyMatch.candidateMarketingCompany} (${run.bestCrossCompanyMatch.overallPercentage}%)`
+                    : 'No Comparison Available'}
+                </Typography>
+              </Box>
             </Box>
           </Box>
-          <Button variant="outlined" startIcon={<MdFileDownload />} sx={{ textTransform: 'none' }} onClick={handleDownloadReport}>
-            Download Report
-          </Button>
+          <Box sx={{ textAlign: 'right' }}>
+            <Button variant="outlined" startIcon={<MdFileDownload />} sx={{ textTransform: 'none' }} onClick={handleDownloadReport} disabled={reportGenerating}>
+              {reportGenerating ? 'Generating PDF...' : 'Download Report (PDF)'}
+            </Button>
+            {reportError && (
+              <Typography variant="caption" sx={{ color: 'var(--c-error)', display: 'block', mt: 0.5 }}>
+                {reportError}
+              </Typography>
+            )}
+          </Box>
         </Box>
       </Paper>
 
@@ -250,6 +236,11 @@ export function ComparisonDetailPage() {
           </Paper>
 
           <VisualComparisonSection visualComparison={versionComparison.visualComparison} />
+          <NutritionComparisonSection
+            nutritionComparison={versionComparison.result.comparison.nutritionComparison}
+            newLabel="Label Artwork"
+            approvedLabel="Latest Approved"
+          />
 
           <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', lg: '1fr 1fr' }, gap: 3, mb: 3 }}>
             <Paper sx={{ p: 2.5 }}>
