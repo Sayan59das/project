@@ -46,6 +46,37 @@ export async function findPossibleDuplicate(
   return match ?? undefined;
 }
 
+export type ProductIdentificationResult =
+  | { status: 'existing_product_found'; product: Product }
+  | { status: 'new_product_no_match' }
+  | { status: 'unavailable' };
+
+/**
+ * AI module brief Step 2: asks the AI backend whether a label's extracted
+ * identity fields match an existing product — by FSSAI number or by
+ * (Product Name + Marketing Company) — via POST /api/labels/identify-product
+ * (see backend/src/services/productIdentification.service.ts for the full
+ * contract and why this is a separate, additional check from
+ * findPossibleDuplicate above: that one only ever matches on name/brand/
+ * company text; this one also catches a label whose product name was
+ * misread but whose FSSAI number still matches).
+ *
+ * 'unavailable' is ordinary, expected data (the AI backend is optional
+ * on-prem infra that may not be running) — this only throws ApiError for a
+ * genuinely malformed request, the same as every other apiRequest call.
+ */
+export function identifyProduct(input: {
+  productName: string;
+  brand: string;
+  marketingCompany: string;
+  fssaiNumber?: string;
+}): Promise<ProductIdentificationResult> {
+  return apiRequest<ProductIdentificationResult>('/labels/identify-product', {
+    method: 'POST',
+    body: input
+  });
+}
+
 /**
  * Products sharing a brand and marketing company, whatever their product name.
  *

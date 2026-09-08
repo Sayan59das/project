@@ -23,6 +23,7 @@ import {
   createProduct,
   findPossibleDuplicate,
   getProductById,
+  identifyProduct as identifyProductByAi,
   selectByBrandAndCompany,
   selectExactMatch,
   setProductSourceArtwork,
@@ -156,6 +157,30 @@ export async function submitLabelIntake(input: LabelIntakeInput): Promise<LabelI
       brandName: extracted.brand,
       marketingCompany: extracted.marketingCompanyName
     });
+
+    // Last-resort check before falling through to "genuinely new product":
+    // findPossibleDuplicate above only ever matches on name/brand/company
+    // text, so a label whose product name OCR misread would fall through as
+    // a false new product even when it's really a version of one already on
+    // file. The AI backend's identify-product ALSO matches by FSSAI number
+    // (a government-issued, effectively unique ID) — a signal the SQL check
+    // above has no way to use. Best-effort: an AI-backend outage must not
+    // block or fail the intake, so 'unavailable' (or a thrown network error)
+    // is treated exactly like "no match found" and this falls through to
+    // creating a new product, same as it always did before this check
+    // existed.
+    if (!product) {
+      const aiMatch = await identifyProductByAi({
+        productName: extracted.productName,
+        brand: extracted.brand,
+        marketingCompany: extracted.marketingCompanyName,
+        fssaiNumber: extracted.fssaiNumber
+      }).catch((err) => {
+        console.error('[labelIntakeService] Could not run the AI-backed product identification check:', err);
+        return { status: 'unavailable' as const };
+      });
+      if (aiMatch.status === 'existing_product_found') product = aiMatch.product;
+    }
   }
 
   if (product) {

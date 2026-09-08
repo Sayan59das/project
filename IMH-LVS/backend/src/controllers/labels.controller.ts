@@ -3,7 +3,9 @@ import { Request, Response } from 'express';
 import { buildPlaceholderExtraction, extractLabelFromFile, LabelExtractionResult } from '../services/labelExtraction.service';
 import { compareLabels as compareLabelData, ComparisonStage } from '../services/labelComparison.service';
 import { compareArtworkImages, compareFingerprints, fingerprintArtworkImage, ArtworkVisualComparison } from '../services/imageSimilarity.service';
+import { identifyProduct as identifyProductWithAi, ProductIdentificationInput } from '../services/productIdentification.service';
 import { claims as claimsMaster, flavours as flavoursMaster } from '../repositories/masters.repository';
+import { getProducts } from '../repositories/product.repository';
 
 type KnownMasterNames = { knownClaims: string[]; knownFlavours: string[] };
 
@@ -327,4 +329,46 @@ export function compareExtractedLabels(req: Request, res: Response) {
 
   const comparison = compareLabelData(labelA, labelB, parseComparisonStage(body?.stage));
   res.status(200).json({ success: true, data: { labelA, labelB, comparison } });
+}
+
+// Accepts only the four fields the identify-product check actually needs —
+// deliberately not the full LabelExtractionResult shape, since the check has
+// no use for the other ten-plus extraction fields, and validating a narrower
+// shape catches a caller sending the wrong data sooner.
+function parseIdentifyProductInput(value: unknown): ProductIdentificationInput | null {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return null;
+  const record = value as Record<string, unknown>;
+  const { productName, brand, marketingCompany, fssaiNumber } = record;
+  if (typeof productName !== 'string' || typeof brand !== 'string' || typeof marketingCompany !== 'string') return null;
+  if (fssaiNumber !== undefined && typeof fssaiNumber !== 'string') return null;
+  return { productName, brand, marketingCompany, fssaiNumber };
+}
+
+// POST /api/labels/identify-product — AI module brief Step 2: given a
+// label's already-extracted identity fields, checks whether it matches an
+// existing Product by FSSAI number or by (Product Name + Marketing
+// Company), via ai_backend's /api/v1/identify-product. Distinct from
+// productService.findPossibleDuplicate (the SQL-based check the intake form
+// already runs on every keystroke): that one only ever matches by name/
+// brand/company; this one ALSO matches by FSSAI number, which catches a
+// label whose product name was misread but whose FSSAI (a government-issued,
+// effectively unique ID) still matches an existing product. See
+// labelIntakeService.ts's submitLabelIntake for where this is consulted, as
+// a last-resort check before a genuinely new product gets created.
+//
+// Never fails the request over an AI-backend outage: identifyProductWithAi's
+// own no-throw guarantee (see productIdentification.service.ts's header
+// comment) means 'unavailable' comes back as ordinary data, not a caught
+// error — the response always carries success: true, and the caller decides
+// what an "unavailable" verdict means for it.
+export async function identifyProduct(req: Request, res: Response) {
+  const input = parseIdentifyProductInput(req.body);
+  if (!input) {
+    res.status(400).json({ success: false, message: 'productName, brand, and marketingCompany (strings) are required.' });
+    return;
+  }
+
+  const existingProducts = await getProducts();
+  const result = await identifyProductWithAi(input, existingProducts);
+  res.status(200).json({ success: true, data: result });
 }
