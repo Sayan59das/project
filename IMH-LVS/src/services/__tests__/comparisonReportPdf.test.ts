@@ -4,7 +4,7 @@
 // smoke-testing rather than here; this covers what CAN run in plain Node.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { cell, fieldRows, formatVersionLabel } from '../../utils/comparisonReportPdf';
+import { cell, fieldRows, formatVersionLabel, visualCell } from '../../utils/comparisonReportPdf';
 import type { LabelComparisonFieldResult } from '../../types/labelComparison';
 
 test('cell renders a blank value as an em dash, not an empty string', () => {
@@ -28,4 +28,9 @@ test('fieldRows builds one Parameter/Current/Compared/Result row per field, matc
     ['Brand', 'VitaFit', 'VitaFit', 'MATCH'],
     ['Flavour', 'Strawberry', '—', 'MISSING']
   ]);
+});
+
+test('visualCell renders a real percentage when present, an em dash for MISSING (no percentage computed)', () => {
+  assert.equal(visualCell({ status: 'MATCH', similarityPercentage: 97 }), '97%');
+  assert.equal(visualCell({ status: 'MISSING' }), '—');
 });

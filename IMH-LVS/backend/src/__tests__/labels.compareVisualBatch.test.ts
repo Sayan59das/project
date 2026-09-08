@@ -53,16 +53,20 @@ test('One subject against three candidates returns three results in the same ord
   assert.equal(status, 200);
   assert.equal(body.success, true);
   assert.equal(body.data.results.length, 3);
-  assert.equal(body.data.results[0].status, 'MATCH');
-  assert.equal(body.data.results[1].status, 'CONFLICT');
-  assert.equal(body.data.results[2].status, 'MISSING');
+  assert.equal(body.data.results[0].artworkSimilarity.status, 'MATCH');
+  assert.equal(body.data.results[0].colourSimilarity.status, 'MATCH');
+  assert.equal(body.data.results[1].artworkSimilarity.status, 'CONFLICT');
+  assert.equal(body.data.results[2].artworkSimilarity.status, 'MISSING');
+  assert.equal(body.data.results[2].colourSimilarity.status, 'MISSING');
 });
 
 test('A corrupt subject reports MISSING for every candidate rather than failing the batch', { skip: SKIP }, async () => {
   const { status, body } = await postBatch('corrupt.pdf', ['apple-cider-vinegar-gummy.pdf', 'chyawanprash-gummies.pdf']);
   assert.equal(status, 200);
-  assert.equal(body.data.results[0].status, 'MISSING');
-  assert.equal(body.data.results[1].status, 'MISSING');
+  assert.equal(body.data.results[0].artworkSimilarity.status, 'MISSING');
+  assert.equal(body.data.results[0].colourSimilarity.status, 'MISSING');
+  assert.equal(body.data.results[1].artworkSimilarity.status, 'MISSING');
+  assert.equal(body.data.results[1].colourSimilarity.status, 'MISSING');
 });
 
 test('Missing subject returns a controlled 400', { skip: SKIP }, async () => {

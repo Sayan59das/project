@@ -22,13 +22,13 @@
 // model that isn't backed by real extraction. That type/workflow/store is
 // untouched by this feature.
 import type { ArtworkStatus } from './artwork';
-import type { LabelComparisonApiResult, VisualComparisonResult } from './labelComparison';
+import type { LabelComparisonApiResult, ArtworkVisualComparison } from './labelComparison';
 
 export type CrossCompanyOutcome =
   // The candidate's or the subject's artwork file has no retrievable bytes
   // in this session (see artworkService.ts's file-storage-limitation note).
   | { status: 'file_unavailable' }
-  | { status: 'success'; result: LabelComparisonApiResult; visualComparison?: VisualComparisonResult };
+  | { status: 'success'; result: LabelComparisonApiResult; visualComparison?: ArtworkVisualComparison };
 
 export type CrossCompanyResultEntry = {
   candidateProductId: string;
@@ -64,12 +64,12 @@ export type VersionComparisonResult = {
   approvedArtworkStatus: ArtworkStatus;
   approvedArtworkApprovedDate: string;
   result: LabelComparisonApiResult;
-  // Artwork Similarity (Logo / Design-Layout, AI module brief §7/§9) —
-  // undefined only when the visual comparison call itself failed (service
-  // unreachable, unsupported file); a readable-but-different image pair
-  // still gets a real MATCH/SIMILAR/CONFLICT here, never a silently-skipped
-  // row.
-  visualComparison?: VisualComparisonResult;
+  // Artwork/Colour Similarity (Logo / Design-Layout / Colour, AI module
+  // brief §7/§9) — undefined only when the visual comparison call itself
+  // failed (service unreachable, unsupported file); a readable-but-different
+  // image pair still gets real MATCH/SIMILAR/CONFLICT for both signals
+  // here, never a silently-skipped row.
+  visualComparison?: ArtworkVisualComparison;
 };
 
 export type LabelComparisonRun = {

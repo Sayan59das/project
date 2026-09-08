@@ -16,7 +16,7 @@ import autoTable from 'jspdf-autotable';
 import { renderPdfFirstPageToDataUrl } from '../hooks/usePdfThumbnail';
 import { formatDateTime } from './dateFormat';
 import type { LabelComparisonRun } from '../types/labelComparisonRecord';
-import type { LabelComparisonFieldResult } from '../types/labelComparison';
+import type { LabelComparisonFieldResult, VisualComparisonResult } from '../types/labelComparison';
 
 type PreviewableFile = { fileName: string; fileType: string; filePath: string };
 
@@ -76,6 +76,13 @@ export function cell(value: string): string {
 
 export function fieldRows(fields: LabelComparisonFieldResult[]): string[][] {
   return fields.map((field) => [field.label, cell(field.labelA), cell(field.labelB), field.status]);
+}
+
+// MISSING (the visual comparison call never completed for this pair) has
+// no percentage to show — an em dash there, not "undefined%" or a blank
+// cell that reads as a rendering bug.
+export function visualCell(result: VisualComparisonResult): string {
+  return typeof result.similarityPercentage === 'number' ? `${result.similarityPercentage}%` : '—';
 }
 
 export type ArtworkImageInputs = {
@@ -229,6 +236,31 @@ export async function generateComparisonReportPdf(run: LabelComparisonRun, artwo
         startY: y,
         head: [['Nutrient', 'Current', 'Compared', 'Result']],
         body: nutrition.rows.map((row) => [row.nutrient, cell(row.valueA), cell(row.valueB), row.status]),
+        styles: { fontSize: BASE_FONT_PT, cellPadding: 2.5 },
+        headStyles: { fillColor: [40, 40, 40], textColor: 255, fontStyle: 'bold' },
+        margin: { left: MARGIN_MM, right: MARGIN_MM }
+      });
+      // @ts-expect-error see above
+      y = (doc.lastAutoTable?.finalY ?? y) + 10;
+    }
+
+    if (run.versionComparison.visualComparison) {
+      const visual = run.versionComparison.visualComparison;
+      if (y > 240) {
+        doc.addPage();
+        y = MARGIN_MM;
+      }
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(13);
+      doc.text('Visual Comparison', MARGIN_MM, y);
+      y += 4;
+      autoTable(doc, {
+        startY: y,
+        head: [['Parameter', 'Similarity', 'Result']],
+        body: [
+          ['Logo & Design/Layout', visualCell(visual.artworkSimilarity), visual.artworkSimilarity.status],
+          ['Colour', visualCell(visual.colourSimilarity), visual.colourSimilarity.status]
+        ],
         styles: { fontSize: BASE_FONT_PT, cellPadding: 2.5 },
         headStyles: { fillColor: [40, 40, 40], textColor: 255, fontStyle: 'bold' },
         margin: { left: MARGIN_MM, right: MARGIN_MM }

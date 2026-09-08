@@ -85,11 +85,19 @@ export function CrossCompanyResults({ results }: Props) {
                     </Typography>
                   )}
                   {entry.outcome.visualComparison && (
-                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, justifyContent: 'flex-end', mt: 0.5 }}>
-                      <Typography variant="caption" sx={{ color: 'var(--c-text-3)' }}>
-                        Artwork
-                      </Typography>
-                      <StatusChip status={entry.outcome.visualComparison.status} />
+                    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5, alignItems: 'flex-end', mt: 0.5 }}>
+                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                        <Typography variant="caption" sx={{ color: 'var(--c-text-3)' }}>
+                          Artwork
+                        </Typography>
+                        <StatusChip status={entry.outcome.visualComparison.artworkSimilarity.status} />
+                      </Box>
+                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                        <Typography variant="caption" sx={{ color: 'var(--c-text-3)' }}>
+                          Colour
+                        </Typography>
+                        <StatusChip status={entry.outcome.visualComparison.colourSimilarity.status} />
+                      </Box>
                     </Box>
                   )}
                 </Box>

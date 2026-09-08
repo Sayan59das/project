@@ -2,7 +2,7 @@ import fs from 'fs';
 import { Request, Response } from 'express';
 import { buildPlaceholderExtraction, extractLabelFromFile, LabelExtractionResult } from '../services/labelExtraction.service';
 import { compareLabels as compareLabelData, ComparisonStage } from '../services/labelComparison.service';
-import { compareArtworkImages, compareHashes, hashArtworkImage, VisualComparisonResult } from '../services/imageSimilarity.service';
+import { compareArtworkImages, compareFingerprints, fingerprintArtworkImage, ArtworkVisualComparison } from '../services/imageSimilarity.service';
 import { claims as claimsMaster, flavours as flavoursMaster } from '../repositories/masters.repository';
 
 type KnownMasterNames = { knownClaims: string[]; knownFlavours: string[] };
@@ -176,24 +176,29 @@ export async function compareLabels(req: Request, res: Response) {
   }
 }
 
-// Logo / Design-Layout (AI module brief §7/§9) — compared on the actual
-// artwork pixels, never on a vision model's text description of them. See
-// imageSimilarity.service.ts's module comment for why.
+// Logo / Design-Layout / Colour (AI module brief §7/§9) — compared on the
+// actual artwork pixels, never on a vision model's text description of
+// them. See imageSimilarity.service.ts's module comment for why, and for
+// what the two reported signals (artworkSimilarity, colourSimilarity) each
+// measure and why neither substitutes for the other.
 //
-// Reported as ONE "Artwork Similarity" result, not separate Logo and
-// Design/Layout rows: both would be driven by the identical whole-image
-// hash, which would show as two independently-passing checks in the UI
-// when only one real measurement was ever taken. Collapsing it into a
-// single honest row until a logo-localisation step exists is the
+// Logo and Design/Layout share the ONE "artworkSimilarity" result, not
+// separate rows: both would be driven by the identical whole-image
+// structural hash, which would show as two independently-passing checks in
+// the UI when only one real measurement was ever taken. Collapsing them
+// into a single honest row until a logo-localisation step exists is the
 // no-fabrication-consistent choice; splitting it into two numbers that
-// happen to always agree would not be.
+// happen to always agree would not be. Colour is a second, genuinely
+// independent measurement (a colour histogram, not a grayscale structural
+// hash), so it gets its own row rather than being folded into the same one.
 //
 // Never throws: fs.readFile can fail for an unreadable temp file just like
 // any other I/O, and extractLabelFromFile's own no-throw guarantee (see its
 // header comment) must not be undone by this running alongside it in the
-// same Promise.all — a visual-comparison failure degrades to MISSING, the
-// same contract the frontend's tryCompareVisual already holds itself to.
-async function buildVisualComparison(fileA: Express.Multer.File, fileB: Express.Multer.File): Promise<VisualComparisonResult> {
+// same Promise.all — a visual-comparison failure degrades to MISSING for
+// both signals, the same contract the frontend's tryCompareVisual already
+// holds itself to.
+async function buildVisualComparison(fileA: Express.Multer.File, fileB: Express.Multer.File): Promise<ArtworkVisualComparison> {
   try {
     const [bufferA, bufferB] = await Promise.all([fs.promises.readFile(fileA.path), fs.promises.readFile(fileB.path)]);
     return await compareArtworkImages(
@@ -202,7 +207,7 @@ async function buildVisualComparison(fileA: Express.Multer.File, fileB: Express.
     );
   } catch (error) {
     console.error('[labels.controller] Could not build the visual comparison — reporting MISSING instead of failing the request:', error instanceof Error ? error.message : error);
-    return { status: 'MISSING' };
+    return { artworkSimilarity: { status: 'MISSING' }, colourSimilarity: { status: 'MISSING' } };
   }
 }
 
@@ -239,15 +244,15 @@ export async function compareVisual(req: Request, res: Response) {
   }
 }
 
-// Reads and hashes one uploaded file, never throwing — an unreadable file
-// hashes to null, which compareHashes reports as MISSING rather than
-// crashing the batch.
-async function hashUploadedFile(file: Express.Multer.File): Promise<bigint | null> {
+// Reads and fingerprints one uploaded file, never throwing — an unreadable
+// file fingerprints to null, which compareFingerprints reports as MISSING
+// for both signals rather than crashing the batch.
+async function fingerprintUploadedFile(file: Express.Multer.File) {
   try {
     const buffer = await fs.promises.readFile(file.path);
-    return await hashArtworkImage({ buffer, mimeType: file.mimetype });
+    return await fingerprintArtworkImage({ buffer, mimeType: file.mimetype });
   } catch (error) {
-    console.error('[labels.controller] Could not hash an uploaded file for batch visual comparison:', error instanceof Error ? error.message : error);
+    console.error('[labels.controller] Could not fingerprint an uploaded file for batch visual comparison:', error instanceof Error ? error.message : error);
     return null;
   }
 }
@@ -256,9 +261,10 @@ async function hashUploadedFile(file: Express.Multer.File): Promise<bigint | nul
 // cross-company candidate in a single request. Exists because the Quick
 // Label Comparison workflow's cross-company step compares one subject
 // against N other marketing companies' artwork; calling /compare-visual
-// once per candidate would re-upload and re-hash the identical subject file
-// N times. The subject is hashed exactly once here and reused for every
-// candidate. Results are returned in the same order candidates were sent.
+// once per candidate would re-upload and re-process the identical subject
+// file N times. The subject is fingerprinted exactly once here and reused
+// for every candidate. Results are returned in the same order candidates
+// were sent.
 export async function compareVisualBatch(req: Request, res: Response) {
   const files = req.files as { subject?: Express.Multer.File[]; candidates?: Express.Multer.File[] } | undefined;
   const subjectFile = files?.subject?.[0];
@@ -276,8 +282,10 @@ export async function compareVisualBatch(req: Request, res: Response) {
   }
 
   try {
-    const subjectHash = await hashUploadedFile(subjectFile);
-    const results = await Promise.all(candidateFiles.map(async (candidateFile) => compareHashes(subjectHash, await hashUploadedFile(candidateFile))));
+    const subjectFingerprint = await fingerprintUploadedFile(subjectFile);
+    const results = await Promise.all(
+      candidateFiles.map(async (candidateFile) => compareFingerprints(subjectFingerprint, await fingerprintUploadedFile(candidateFile)))
+    );
     res.status(200).json({ success: true, data: { results } });
   } catch (error) {
     console.error('[labels.controller] Unexpected failure building the batch visual comparison result:', error instanceof Error ? error.message : error);

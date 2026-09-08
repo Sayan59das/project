@@ -70,21 +70,31 @@ export type LabelComparisonApiResult = {
   comparison: LabelComparisonSummary;
 };
 
-// Artwork Similarity (Logo / Design-Layout, AI module brief §7/§9) — POST
-// /api/labels/compare-visual (see backend/src/services/imageSimilarity.service.ts).
-// Same MATCH/SIMILAR/CONFLICT/MISSING vocabulary as LabelComparisonFieldStatus
-// above, but computed from a continuous PIXEL similarity score (a
-// perceptual hash's Hamming distance) rather than text — a genuinely
-// different measurement, kept as its own type rather than reusing
-// LabelComparisonFieldStatus so the two are never accidentally conflated.
-//
-// Reported as ONE result, not separate Logo and Design/Layout rows: both
-// would be driven by the identical whole-image hash today (no logo
-// localisation step exists to measure them independently), so showing two
-// numbers would misrepresent one real measurement as two independent ones.
+// Artwork Similarity / Colour Similarity (Logo / Design-Layout / Colour,
+// AI module brief §7/§9) — POST /api/labels/compare-visual (see
+// backend/src/services/imageSimilarity.service.ts). Same
+// MATCH/SIMILAR/CONFLICT/MISSING vocabulary as LabelComparisonFieldStatus
+// above, but each computed from a continuous PIXEL similarity score
+// (artworkSimilarity: a grayscale perceptual hash's Hamming distance;
+// colourSimilarity: a colour histogram's intersection) rather than text —
+// genuinely different measurements, kept as their own type rather than
+// reusing LabelComparisonFieldStatus so neither is ever accidentally
+// conflated with the text-field engine's statuses.
 export type VisualComparisonStatus = 'MATCH' | 'SIMILAR' | 'CONFLICT' | 'MISSING';
 
 export type VisualComparisonResult = {
   status: VisualComparisonStatus;
   similarityPercentage?: number;
+};
+
+// artworkSimilarity backs BOTH the "Logo" and "Design/Layout" rows the
+// brief asks for, not two independently measured ones: both would be
+// driven by the identical whole-image grayscale hash today (no logo
+// localisation step exists to measure them independently), so showing two
+// numbers would misrepresent one real measurement as two independent
+// ones. colourSimilarity is a genuinely separate measurement (colour
+// histogram, not grayscale structure) and gets its own row.
+export type ArtworkVisualComparison = {
+  artworkSimilarity: VisualComparisonResult;
+  colourSimilarity: VisualComparisonResult;
 };

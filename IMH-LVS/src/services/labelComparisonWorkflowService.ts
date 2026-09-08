@@ -42,7 +42,7 @@ import type { Product } from '../types/product';
 import type { Artwork } from '../types/artwork';
 import type { BestCrossCompanyMatch, CrossCompanyResultEntry, LabelComparisonRun } from '../types/labelComparisonRecord';
 import type { CrossCompanyCandidate } from '../types/comparison';
-import type { VisualComparisonResult } from '../types/labelComparison';
+import type { ArtworkVisualComparison } from '../types/labelComparison';
 
 export { LabelExtractionError, LabelComparisonError };
 
@@ -121,7 +121,7 @@ async function fetchArtworkFile(artwork: Artwork): Promise<File | undefined> {
 // touches. Deliberately never throws and never blocks the base comparison:
 // a vision-model-style capability being unreachable must cost this one row,
 // not the whole run — same principle as aiExtraction.service.ts's fallback.
-async function tryCompareVisual(fileA: File | undefined, fileB: File | undefined): Promise<VisualComparisonResult | undefined> {
+async function tryCompareVisual(fileA: File | undefined, fileB: File | undefined): Promise<ArtworkVisualComparison | undefined> {
   if (!fileA || !fileB) return undefined;
   try {
     return await compareVisual(fileA, fileB);
@@ -175,7 +175,7 @@ async function attachVisualComparisons(
   );
   if (!subjectFile || withFile.length === 0) return resolved.map((item) => item.entry);
 
-  let visualResults: VisualComparisonResult[];
+  let visualResults: ArtworkVisualComparison[];
   try {
     visualResults = await compareVisualBatch(subjectFile, withFile.map((item) => item.candidateFile));
   } catch (error) {

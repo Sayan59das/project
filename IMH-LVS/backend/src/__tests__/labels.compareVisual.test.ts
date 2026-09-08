@@ -48,18 +48,20 @@ async function postCompareVisual(
   return { status: res.status, body };
 }
 
-test('Comparing a real label PDF against itself reports MATCH', { skip: SKIP }, async () => {
+test('Comparing a real label PDF against itself reports MATCH on both artwork and colour similarity', { skip: SKIP }, async () => {
   const { status, body } = await postCompareVisual('apple-cider-vinegar-gummy.pdf', 'apple-cider-vinegar-gummy.pdf');
   assert.equal(status, 200);
   assert.equal(body.success, true);
-  assert.equal(body.data.visualComparison.status, 'MATCH');
-  assert.ok(body.data.visualComparison.similarityPercentage >= 95);
+  assert.equal(body.data.visualComparison.artworkSimilarity.status, 'MATCH');
+  assert.ok(body.data.visualComparison.artworkSimilarity.similarityPercentage >= 95);
+  assert.equal(body.data.visualComparison.colourSimilarity.status, 'MATCH');
+  assert.ok(body.data.visualComparison.colourSimilarity.similarityPercentage >= 95);
 });
 
-test('Comparing two genuinely different real label PDFs reports CONFLICT, not a false MATCH', { skip: SKIP }, async () => {
+test('Comparing two genuinely different real label PDFs reports CONFLICT on artwork similarity, not a false MATCH', { skip: SKIP }, async () => {
   const { status, body } = await postCompareVisual('apple-cider-vinegar-gummy.pdf', 'chyawanprash-gummies.pdf');
   assert.equal(status, 200);
-  assert.equal(body.data.visualComparison.status, 'CONFLICT');
+  assert.equal(body.data.visualComparison.artworkSimilarity.status, 'CONFLICT');
 });
 
 test('Missing Label A returns a controlled 400', { skip: SKIP }, async () => {
@@ -69,10 +71,11 @@ test('Missing Label A returns a controlled 400', { skip: SKIP }, async () => {
   assert.match(body.message, /label a/i);
 });
 
-test('A corrupt file on either side reports MISSING rather than a 500', { skip: SKIP }, async () => {
+test('A corrupt file on either side reports MISSING for both signals rather than a 500', { skip: SKIP }, async () => {
   const { status, body } = await postCompareVisual('corrupt.pdf', 'chyawanprash-gummies.pdf');
   assert.equal(status, 200);
-  assert.equal(body.data.visualComparison.status, 'MISSING');
+  assert.equal(body.data.visualComparison.artworkSimilarity.status, 'MISSING');
+  assert.equal(body.data.visualComparison.colourSimilarity.status, 'MISSING');
 });
 
 test('Unsupported file type on either side is rejected with a controlled 400', { skip: SKIP }, async () => {

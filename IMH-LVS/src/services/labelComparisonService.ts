@@ -7,6 +7,7 @@
 // labelExtractionService.ts is the sole HTTP boundary for extraction.
 import { API_BASE_URL } from './apiConfig';
 import type {
+  ArtworkVisualComparison,
   LabelComparisonApiResult,
   LabelComparisonFieldResult,
   LabelComparisonSummary,
@@ -153,12 +154,20 @@ function readVisualComparisonResult(data: unknown): VisualComparisonResult {
   };
 }
 
-// Posts both artwork files for Artwork Similarity visual comparison (POST
-// /api/labels/compare-visual) — the visual counterpart to
+function readArtworkVisualComparison(data: unknown): ArtworkVisualComparison {
+  const record = (data ?? {}) as Record<string, unknown>;
+  return {
+    artworkSimilarity: readVisualComparisonResult(record.artworkSimilarity),
+    colourSimilarity: readVisualComparisonResult(record.colourSimilarity)
+  };
+}
+
+// Posts both artwork files for Artwork/Colour Similarity visual comparison
+// (POST /api/labels/compare-visual) — the visual counterpart to
 // compareExtractedLabels below. Kept separate because it needs the actual
 // image bytes, not extracted text fields; see
 // backend/src/services/imageSimilarity.service.ts for what it measures.
-export async function compareVisual(labelAFile: File, labelBFile: File): Promise<VisualComparisonResult> {
+export async function compareVisual(labelAFile: File, labelBFile: File): Promise<ArtworkVisualComparison> {
   const formData = new FormData();
   formData.append('labelA', labelAFile);
   formData.append('labelB', labelBFile);
@@ -188,7 +197,7 @@ export async function compareVisual(labelAFile: File, labelBFile: File): Promise
     throw new LabelComparisonError(readString(parsed?.message) || 'Could not compare the uploaded artwork images. Please try again.');
   }
 
-  return readVisualComparisonResult(parsed.data?.visualComparison);
+  return readArtworkVisualComparison(parsed.data?.visualComparison);
 }
 
 // Posts ONE subject artwork against MANY candidates (POST
@@ -197,7 +206,7 @@ export async function compareVisual(labelAFile: File, labelBFile: File): Promise
 // the identical subject file once per candidate. Returns results in the
 // same order `candidateFiles` was given, so the caller can zip them back
 // onto whichever candidates they came from.
-export async function compareVisualBatch(subjectFile: File, candidateFiles: File[]): Promise<VisualComparisonResult[]> {
+export async function compareVisualBatch(subjectFile: File, candidateFiles: File[]): Promise<ArtworkVisualComparison[]> {
   const formData = new FormData();
   formData.append('subject', subjectFile);
   candidateFiles.forEach((file) => formData.append('candidates', file));
@@ -226,7 +235,7 @@ export async function compareVisualBatch(subjectFile: File, candidateFiles: File
   }
 
   const rawResults = Array.isArray(parsed.data?.results) ? (parsed.data!.results as unknown[]) : [];
-  return rawResults.map(readVisualComparisonResult);
+  return rawResults.map(readArtworkVisualComparison);
 }
 
 // Posts two ALREADY-EXTRACTED labels for comparison (POST
