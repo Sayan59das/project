@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
+  Alert,
   Box,
   Button,
   Divider,
@@ -25,13 +26,14 @@ import { StatusChip } from '../components/StatusChip';
 import { ArtworkPreview } from '../components/ArtworkPreview';
 import { useAuth } from '../auth/AuthContext';
 import { RoleId } from '../auth/permissions';
-import { getUserById, getUsersByRole } from '../data/usersStore';
+import { AppUser } from '../types/user';
+import { useUserDirectory } from '../hooks/useUserDirectory';
+import { useArtworks } from '../hooks/useArtworks';
+import { useComparisons, useInvalidateComparisons } from '../hooks/useComparisons';
 import {
   Actor,
   assignApprovalStage,
   getApprovalSummary,
-  getArtworkVersionsForSelection,
-  getComparisons,
   submitLabelFinalDecision,
   submitManagerDecision,
   submitTechnicalDecision
@@ -107,6 +109,8 @@ const summaryCardOrder: Array<{ key: keyof ReturnType<typeof getApprovalSummary>
 export function ApprovalsPage() {
   const navigate = useNavigate();
   const { currentUser, hasPermission } = useAuth();
+  const userDirectory = useUserDirectory();
+  const { byRole } = userDirectory;
   const role = currentUser?.role;
   const actor: Actor = {
     id: currentUser?.id ?? '',
@@ -114,14 +118,17 @@ export function ApprovalsPage() {
     role: role ?? 'account_manager'
   };
 
-  const [comparisons, setComparisons] = useState<Comparison[]>(() => getComparisons());
-  const refresh = () => setComparisons(getComparisons());
+  // The whole table, not this role's queue: the cards above the queue count
+  // every status in the system, so the page needs all of them anyway.
+  const { comparisons, isError: comparisonsFailed, error: comparisonsError } = useComparisons();
+  const refresh = useInvalidateComparisons();
+  const [decisionError, setDecisionError] = useState<string | null>(null);
+  const [isDeciding, setIsDeciding] = useState(false);
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [remarks, setRemarks] = useState('');
 
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  const summary = useMemo(() => getApprovalSummary(), [comparisons]);
+  const summary = useMemo(() => getApprovalSummary(comparisons), [comparisons]);
 
   // Scoped strictly to what this role is meant to act on. Label Final sees
   // Pending Label Final, Technical sees Pending Technical, QA sees Pending
@@ -138,16 +145,12 @@ export function ApprovalsPage() {
 
   const selectedItem = comparisons.find((comparison) => comparison.id === selectedId) ?? null;
 
-  const referenceArtwork = selectedItem
-    ? getArtworkVersionsForSelection(selectedItem.productId, selectedItem.referenceArtworkCompany).find(
-        (artwork) => artwork.id === selectedItem.referenceArtworkId
-      )
-    : undefined;
-  const newArtwork = selectedItem
-    ? getArtworkVersionsForSelection(selectedItem.productId, selectedItem.newArtworkCompany).find(
-        (artwork) => artwork.id === selectedItem.newArtworkId
-      )
-    : undefined;
+  // Straight out of the cached artwork list by id. The previous version fetched
+  // every version for the product and company just to find one row by its id,
+  // which was free against localStorage and is two requests against the API.
+  const { byId: artworkById } = useArtworks();
+  const referenceArtwork = artworkById(selectedItem?.referenceArtworkId);
+  const newArtwork = artworkById(selectedItem?.newArtworkId);
 
   const handleOpenItem = (comparison: Comparison) => {
     setSelectedId(comparison.id);
@@ -159,41 +162,63 @@ export function ApprovalsPage() {
     setRemarks('');
   };
 
-  const runDecision = (fn: () => void) => {
-    fn();
-    refresh();
-    handleBack();
+  // Every decision is a request now. The panel stays open and the buttons stay
+  // disabled until the server has recorded it — closing optimistically would
+  // show a reviewer their approval was accepted when it may not have been, in
+  // the one place where that claim is the whole point of the screen.
+  const runDecision = async (fn: () => Promise<unknown>) => {
+    setDecisionError(null);
+    setIsDeciding(true);
+    try {
+      await fn();
+      refresh();
+      handleBack();
+    } catch (error) {
+      // The server's own words: it distinguishes "the Technical stage is
+      // decided by the technical role" from an unreachable backend, and those
+      // need different things from the person reading them.
+      setDecisionError(error instanceof Error ? error.message : 'Could not record this decision.');
+    } finally {
+      setIsDeciding(false);
+    }
   };
 
   // Assignment â€” who is responsible for each stage, distinct from RBAC (who
   // may act) and from the actual actor recorded in history. Manager-only,
   // same authority already gated by assignApprovalStage itself.
   const isManager = role === 'manager';
+  // One fetch of the directory serves both the per-stage assignee lists and
+  // the name shown against the current assignment; byRole already filters to
+  // Active users, so nobody who has been deactivated stays assignable.
   const usersByStage = useMemo(
-    () => Object.fromEntries(APPROVAL_STAGES.map((stage) => [stage.key, getUsersByRole(stage.role)])) as Record<ApprovalStageKey, ReturnType<typeof getUsersByRole>>,
-    []
+    () => Object.fromEntries(APPROVAL_STAGES.map((stage) => [stage.key, byRole(stage.role)])) as Record<ApprovalStageKey, AppUser[]>,
+    [byRole]
   );
   const handleAssign = (stageKey: ApprovalStageKey, userId: string) => {
     if (!selectedItem) return;
-    assignApprovalStage(selectedItem.id, stageKey, userId || undefined, actor);
-    refresh();
+    void assignApprovalStage(selectedItem.id, stageKey, userId || undefined, actor)
+      .then(() => refresh())
+      .catch((error: unknown) => {
+        setDecisionError(error instanceof Error ? error.message : 'Could not change this assignment.');
+      });
   };
 
   const handleLabelFinalApprove = () =>
-    selectedItem && runDecision(() => submitLabelFinalDecision(selectedItem.id, 'approve', remarks, actor));
+    selectedItem && void runDecision(() => submitLabelFinalDecision(selectedItem.id, 'approve', remarks, actor));
   const handleLabelFinalRevision = () =>
-    selectedItem && runDecision(() => submitLabelFinalDecision(selectedItem.id, 'revision', remarks, actor));
+    selectedItem && void runDecision(() => submitLabelFinalDecision(selectedItem.id, 'revision', remarks, actor));
 
   const handleTechnicalApprove = () =>
-    selectedItem && runDecision(() => submitTechnicalDecision(selectedItem.id, 'approve', remarks, actor));
+    selectedItem && void runDecision(() => submitTechnicalDecision(selectedItem.id, 'approve', remarks, actor));
   const handleTechnicalRevision = () =>
-    selectedItem && runDecision(() => submitTechnicalDecision(selectedItem.id, 'revision', remarks, actor));
+    selectedItem && void runDecision(() => submitTechnicalDecision(selectedItem.id, 'revision', remarks, actor));
 
   const handleManagerFinalApprove = () =>
-    selectedItem && runDecision(() => submitManagerDecision(selectedItem.id, 'approve', remarks, actor));
-  const handleManagerReject = () => selectedItem && runDecision(() => submitManagerDecision(selectedItem.id, 'reject', remarks, actor));
+    selectedItem && void runDecision(() => submitManagerDecision(selectedItem.id, 'approve', remarks, actor));
+  const handleManagerReject = () =>
+    selectedItem && void runDecision(() => submitManagerDecision(selectedItem.id, 'reject', remarks, actor));
   const handleManagerRevision = () =>
-    selectedItem && runDecision(() => submitManagerDecision(selectedItem.id, 'revision', remarks, actor));
+    selectedItem && void runDecision(() => submitManagerDecision(selectedItem.id, 'revision', remarks, actor));
 
   const isLabelFinalStage = role === 'label_final' && selectedItem?.status === 'Pending Label Final' && hasPermission('SUBMIT');
   const isTechnicalStage = role === 'technical' && selectedItem?.status === 'Pending Technical' && hasPermission('SUBMIT');
@@ -203,6 +228,20 @@ export function ApprovalsPage() {
   return (
     <Box>
       <PageHeader title="Approvals" subtitle="Review and manage labels through the approval workflow." />
+
+      {/* An approvals queue that renders empty because a request failed tells a
+          reviewer there is nothing waiting for them, and the work then sits
+          where nobody is looking. */}
+      {comparisonsFailed && (
+        <Alert severity="error" sx={{ mb: 2 }}>
+          {comparisonsError instanceof Error ? comparisonsError.message : 'Could not load comparisons.'}
+        </Alert>
+      )}
+      {decisionError && (
+        <Alert severity="error" sx={{ mb: 2 }} onClose={() => setDecisionError(null)}>
+          {decisionError}
+        </Alert>
+      )}
 
       {selectedItem ? (
         <Box sx={{ display: 'grid', gap: 3 }}>
@@ -252,7 +291,7 @@ export function ApprovalsPage() {
                   }
                   const currentStage = APPROVAL_STAGES.find((stage) => stage.key === currentStageKey)!;
                   const assignedId = selectedItem.approvalAssignments[currentStageKey];
-                  const assignedUser = assignedId ? getUserById(assignedId) : undefined;
+                  const assignedUser = userDirectory.byId(assignedId);
                   return (
                     <Paper variant="outlined" sx={{ p: 2.5, borderRadius: 3, mb: isManager ? 3 : 0, borderColor: 'var(--c-border)' }}>
                       <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr 1fr', sm: 'repeat(4, 1fr)' }, gap: 2 }}>
@@ -429,13 +468,13 @@ export function ApprovalsPage() {
                     <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 2, justifyContent: 'flex-end' }}>
                       {isLabelFinalStage && (
                         <>
-                          <Button variant="outlined" color="error" sx={{ textTransform: 'none' }} onClick={handleLabelFinalRevision}>
+                          <Button variant="outlined" color="error" sx={{ textTransform: 'none' }} onClick={handleLabelFinalRevision} disabled={isDeciding}>
                             Request Revision
                           </Button>
                           <Button
                             variant="contained"
                             sx={{ bgcolor: 'var(--c-green)', '&:hover': { bgcolor: 'var(--c-green-650)' }, textTransform: 'none' }}
-                            onClick={handleLabelFinalApprove}
+                            onClick={handleLabelFinalApprove} disabled={isDeciding}
                           >
                             Send to Technical
                           </Button>
@@ -443,13 +482,13 @@ export function ApprovalsPage() {
                       )}
                       {isTechnicalStage && (
                         <>
-                          <Button variant="outlined" color="error" sx={{ textTransform: 'none' }} onClick={handleTechnicalRevision}>
+                          <Button variant="outlined" color="error" sx={{ textTransform: 'none' }} onClick={handleTechnicalRevision} disabled={isDeciding}>
                             Send Back
                           </Button>
                           <Button
                             variant="contained"
                             sx={{ bgcolor: 'var(--c-green)', '&:hover': { bgcolor: 'var(--c-green-650)' }, textTransform: 'none' }}
-                            onClick={handleTechnicalApprove}
+                            onClick={handleTechnicalApprove} disabled={isDeciding}
                           >
                             Approve &amp; Send to QA
                           </Button>
@@ -457,16 +496,16 @@ export function ApprovalsPage() {
                       )}
                       {isManagerStage && (
                         <>
-                          <Button variant="outlined" sx={{ textTransform: 'none' }} onClick={handleManagerRevision}>
+                          <Button variant="outlined" sx={{ textTransform: 'none' }} onClick={handleManagerRevision} disabled={isDeciding}>
                             Request Revision
                           </Button>
-                          <Button variant="outlined" color="error" sx={{ textTransform: 'none' }} onClick={handleManagerReject}>
+                          <Button variant="outlined" color="error" sx={{ textTransform: 'none' }} onClick={handleManagerReject} disabled={isDeciding}>
                             Reject
                           </Button>
                           <Button
                             variant="contained"
                             sx={{ bgcolor: 'var(--c-green)', '&:hover': { bgcolor: 'var(--c-green-650)' }, textTransform: 'none' }}
-                            onClick={handleManagerFinalApprove}
+                            onClick={handleManagerFinalApprove} disabled={isDeciding}
                           >
                             Final Approve
                           </Button>

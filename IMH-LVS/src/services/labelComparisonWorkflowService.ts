@@ -49,8 +49,8 @@ export { LabelExtractionError, LabelComparisonError };
 // Label selection
 // ---------------------------------------------------------------------
 
-export function getSelectableLabels(): Product[] {
-  return getProducts().filter((product) => product.status !== 'Inactive');
+export async function getSelectableLabels(): Promise<Product[]> {
+  return (await getProducts()).filter((product) => product.status !== 'Inactive');
 }
 
 export function formatLabelName(product: Product): string {
@@ -73,17 +73,17 @@ export type ComparisonPlan =
   // A newer candidate artwork and an approved baseline both exist.
   | { status: 'ready'; product: Product; candidateArtwork: Artwork; approvedArtwork: Artwork };
 
-export function identifyComparisonPlan(productId: string): ComparisonPlan | undefined {
-  const product = getProductById(productId);
+export async function identifyComparisonPlan(productId: string): Promise<ComparisonPlan | undefined> {
+  const product = await getProductById(productId);
   if (!product) return undefined;
 
-  const artworks = getArtworksByProduct(productId).filter((artwork) => artwork.status !== 'Archived');
+  const artworks = (await getArtworksByProduct(productId)).filter((artwork) => artwork.status !== 'Archived');
   if (artworks.length === 0) {
     return { status: 'no_artwork', product };
   }
 
   const candidateArtwork = artworks.sort((a, b) => parseVersionNumber(b.version) - parseVersionNumber(a.version))[0];
-  const approvedArtwork = getLatestApprovedArtworkForProduct(productId, product.marketingCompany);
+  const approvedArtwork = await getLatestApprovedArtworkForProduct(productId, product.marketingCompany);
 
   if (!approvedArtwork) {
     return { status: 'no_approved_baseline', product, candidateArtwork };
@@ -129,7 +129,10 @@ async function compareCandidate(subjectExtraction: LabelExtractionApiResult, can
     candidateArtworkId: candidate.artworkId,
     candidateArtworkVersion: candidate.artworkVersion
   };
-  const candidateArtwork = getArtworkById(candidate.artworkId);
+  const candidateArtwork = await getArtworkById(candidate.artworkId);
+  // Also the honest answer when the artwork exists but its file does not: the
+  // rows are shared now, the bytes are not, so a candidate uploaded in somebody
+  // else's session has no file this browser can read.
   if (!candidateArtwork) return { ...base, outcome: { status: 'file_unavailable' } };
   const candidateExtraction = await extractArtwork(candidateArtwork);
   if (!candidateExtraction) return { ...base, outcome: { status: 'file_unavailable' } };
@@ -168,7 +171,7 @@ export async function runComparisonWorkflow(plan: ComparisonPlan, actor: string)
     };
   }
 
-  const candidates = getCrossCompanyCandidates(plan.product.id);
+  const candidates = await getCrossCompanyCandidates(plan.product.id);
   const crossCompanyResults: CrossCompanyResultEntry[] = [];
   for (const candidate of candidates) {
     crossCompanyResults.push(await compareCandidate(candidateExtraction, candidate));

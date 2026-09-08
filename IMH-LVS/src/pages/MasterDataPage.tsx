@@ -1,6 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { useMemo, useState } from 'react';
 import {
+  Alert,
   Box,
   Button,
   Dialog,
@@ -34,37 +35,32 @@ import { useAuth } from '../auth/AuthContext';
 import { MASTER_TYPES, MasterTypeKey, MasterStatus } from '../types/masters';
 import { formatDateTime } from '../utils/dateFormat';
 import {
-  getMarketingCompanies,
   createMarketingCompany,
   updateMarketingCompany,
   deactivateMarketingCompany,
   findDuplicateMarketingCompany,
-  getManufacturingCompanies,
   createManufacturingCompany,
   updateManufacturingCompany,
   deactivateManufacturingCompany,
   findDuplicateManufacturingCompany,
-  getBrands,
   createBrand,
   updateBrand,
   deactivateBrand,
   findDuplicateBrand,
-  getFlavours,
   createFlavour,
   updateFlavour,
   deactivateFlavour,
   findDuplicateFlavour,
-  getClaims,
   createClaim,
   updateClaim,
   deactivateClaim,
   findDuplicateClaim,
-  getProductCategories,
   createProductCategory,
   updateProductCategory,
   deactivateProductCategory,
   findDuplicateProductCategory
 } from '../services/masterService';
+import { useInvalidateMaster, useMarketingCompanies, useMasterType } from '../hooks/useMasterData';
 
 const ALL = 'All';
 
@@ -142,88 +138,76 @@ function getPrimaryLabel(type: MasterTypeKey, item: MasterRecord): string {
   }
 }
 
-function getAll(type: MasterTypeKey): MasterRecord[] {
+// The list passed in is the one this tab is already displaying, so the warning
+// matches what the user can see. The database still owns the real UNIQUE
+// constraints and reports a conflict naming the record; persist() surfaces it.
+function findDuplicate(type: MasterTypeKey, items: any[], form: MasterRecord, excludeId?: string): MasterRecord | undefined {
   switch (type) {
     case 'marketingCompanies':
-      return getMarketingCompanies();
+      return findDuplicateMarketingCompany(items, form.companyName, excludeId);
     case 'manufacturingCompanies':
-      return getManufacturingCompanies();
+      return findDuplicateManufacturingCompany(items, form.companyName, excludeId);
     case 'brands':
-      return getBrands();
+      return findDuplicateBrand(items, form.brandName, form.marketingCompany, excludeId);
     case 'flavours':
-      return getFlavours();
+      return findDuplicateFlavour(items, form.flavourName, excludeId);
     case 'claims':
-      return getClaims();
+      return findDuplicateClaim(items, form.claimText, excludeId);
     case 'productCategories':
-      return getProductCategories();
+      return findDuplicateProductCategory(items, form.categoryName, excludeId);
   }
 }
 
-function findDuplicate(type: MasterTypeKey, form: MasterRecord, excludeId?: string): MasterRecord | undefined {
+// None of these three take an actor any more: the server reads it from the
+// session cookie, so the name the page used to send was already ignored.
+function persistCreate(type: MasterTypeKey, form: MasterRecord): Promise<MasterRecord> {
   switch (type) {
     case 'marketingCompanies':
-      return findDuplicateMarketingCompany(form.companyName, excludeId);
+      return createMarketingCompany(form as any);
     case 'manufacturingCompanies':
-      return findDuplicateManufacturingCompany(form.companyName, excludeId);
+      return createManufacturingCompany(form as any);
     case 'brands':
-      return findDuplicateBrand(form.brandName, form.marketingCompany, excludeId);
+      return createBrand(form as any);
     case 'flavours':
-      return findDuplicateFlavour(form.flavourName, excludeId);
+      return createFlavour(form as any);
     case 'claims':
-      return findDuplicateClaim(form.claimText, excludeId);
+      return createClaim(form as any);
     case 'productCategories':
-      return findDuplicateProductCategory(form.categoryName, excludeId);
+      return createProductCategory(form as any);
   }
 }
 
-function persistCreate(type: MasterTypeKey, form: MasterRecord, actor: string): MasterRecord {
+function persistUpdate(type: MasterTypeKey, id: string, form: MasterRecord): Promise<MasterRecord | undefined> {
   switch (type) {
     case 'marketingCompanies':
-      return createMarketingCompany(form as any, actor);
+      return updateMarketingCompany(id, form as any);
     case 'manufacturingCompanies':
-      return createManufacturingCompany(form as any, actor);
+      return updateManufacturingCompany(id, form as any);
     case 'brands':
-      return createBrand(form as any, actor);
+      return updateBrand(id, form as any);
     case 'flavours':
-      return createFlavour(form as any, actor);
+      return updateFlavour(id, form as any);
     case 'claims':
-      return createClaim(form as any, actor);
+      return updateClaim(id, form as any);
     case 'productCategories':
-      return createProductCategory(form as any, actor);
+      return updateProductCategory(id, form as any);
   }
 }
 
-function persistUpdate(type: MasterTypeKey, id: string, form: MasterRecord, actor: string): MasterRecord | undefined {
+function persistDeactivate(type: MasterTypeKey, id: string): Promise<MasterRecord | undefined> {
   switch (type) {
     case 'marketingCompanies':
-      return updateMarketingCompany(id, form as any, actor);
+      return deactivateMarketingCompany(id);
     case 'manufacturingCompanies':
-      return updateManufacturingCompany(id, form as any, actor);
+      return deactivateManufacturingCompany(id);
     case 'brands':
-      return updateBrand(id, form as any, actor);
+      return deactivateBrand(id);
     case 'flavours':
-      return updateFlavour(id, form as any, actor);
+      return deactivateFlavour(id);
     case 'claims':
-      return updateClaim(id, form as any, actor);
+      return deactivateClaim(id);
     case 'productCategories':
-      return updateProductCategory(id, form as any, actor);
-  }
-}
-
-function persistDeactivate(type: MasterTypeKey, id: string, actor: string): MasterRecord | undefined {
-  switch (type) {
-    case 'marketingCompanies':
-      return deactivateMarketingCompany(id, actor);
-    case 'manufacturingCompanies':
-      return deactivateManufacturingCompany(id, actor);
-    case 'brands':
-      return deactivateBrand(id, actor);
-    case 'flavours':
-      return deactivateFlavour(id, actor);
-    case 'claims':
-      return deactivateClaim(id, actor);
-    case 'productCategories':
-      return deactivateProductCategory(id, actor);
+      return deactivateProductCategory(id);
   }
 }
 
@@ -284,15 +268,21 @@ function validate(type: MasterTypeKey, form: MasterRecord): Record<string, strin
 }
 
 export function MasterDataPage() {
-  const { currentUser, hasPermission } = useAuth();
+  const { hasPermission } = useAuth();
   const canManage = hasPermission('MANAGE_MASTERS');
-  const actor = currentUser?.fullName ?? 'Unknown User';
 
   const [activeType, setActiveType] = useState<MasterTypeKey>('marketingCompanies');
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<'All' | MasterStatus>('All');
-  const [version, setVersion] = useState(0);
-  const refresh = () => setVersion((v) => v + 1);
+
+  // The active tab's rows, and the Parties list the Brand form needs. Both are
+  // cached per master type, so switching tabs and coming back does not refetch,
+  // and a save invalidates only the type that was written.
+  const { items, isLoading, isError, error: loadError } = useMasterType(activeType);
+  const marketingCompanies = useMarketingCompanies();
+  const invalidateMaster = useInvalidateMaster();
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
 
   const [formOpen, setFormOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -307,19 +297,20 @@ export function MasterDataPage() {
   const activeConfig = MASTER_TYPES.find((type) => type.key === activeType)!;
   const columns = useMemo(() => getColumns(activeType), [activeType]);
 
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  const allItems = useMemo(() => getAll(activeType), [activeType, version]);
+  const allItems = items as MasterRecord[];
 
   const activeMarketingCompanyOptions = useMemo(() => {
-    const active = getMarketingCompanies()
+    const active = marketingCompanies.items
       .filter((company) => company.status === 'Active')
       .map((company) => company.companyName);
+    // A brand already pointing at a since-deactivated party keeps that party as
+    // an option while it is being edited, so opening the form does not silently
+    // reassign the brand to whichever company happens to sort first.
     if (formState.marketingCompany && !active.includes(formState.marketingCompany)) {
       return [...active, formState.marketingCompany];
     }
     return active;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [version, formState.marketingCompany]);
+  }, [marketingCompanies.items, formState.marketingCompany]);
 
   const filteredItems = useMemo(() => {
     const term = search.trim().toLowerCase();
@@ -330,7 +321,16 @@ export function MasterDataPage() {
     });
   }, [allItems, activeType, search, statusFilter]);
 
-  const emptyMessage = allItems.length === 0 ? 'No records found.' : search.trim() !== '' ? 'No records match your search.' : 'No records found.';
+  // Four different empty tables that used to read as one: still loading, the
+  // fetch failed, a search that matches nothing, and a genuinely empty master.
+  // Only the last two are about the data.
+  const emptyMessage = isLoading
+    ? 'Loading…'
+    : isError
+      ? 'Could not load this master data.'
+      : allItems.length > 0 && search.trim() !== ''
+        ? 'No records match your search.'
+        : 'No records found.';
 
   const handleSwitchType = (type: MasterTypeKey) => {
     setActiveType(type);
@@ -358,15 +358,29 @@ export function MasterDataPage() {
     setDuplicateMatch(null);
   };
 
-  const persist = () => {
-    if (editingId) {
-      persistUpdate(activeType, editingId, formState, actor);
-    } else {
-      persistCreate(activeType, formState, actor);
+  const persist = async () => {
+    setSaveError(null);
+    setIsSaving(true);
+    try {
+      if (editingId) {
+        await persistUpdate(activeType, editingId, formState);
+      } else {
+        await persistCreate(activeType, formState);
+      }
+      invalidateMaster(activeType);
+      // A new party is also a new option in the Brand form's dropdown.
+      if (activeType === 'marketingCompanies') invalidateMaster('marketingCompanies');
+      setFormOpen(false);
+      setDuplicateMatch(null);
+    } catch (error) {
+      // The form stays open with what was typed. The backend's message names
+      // the record — 'A brand named "VitaFit" already exists.' — which is the
+      // half of a duplicate the client-side check can miss, because it only
+      // sees the rows this browser has loaded.
+      setSaveError(error instanceof Error ? error.message : 'Could not save this record.');
+    } finally {
+      setIsSaving(false);
     }
-    refresh();
-    setFormOpen(false);
-    setDuplicateMatch(null);
   };
 
   const handleSave = () => {
@@ -375,13 +389,13 @@ export function MasterDataPage() {
     if (Object.keys(errors).length > 0) return;
 
     if (!editingId) {
-      const duplicate = findDuplicate(activeType, formState);
+      const duplicate = findDuplicate(activeType, allItems, formState);
       if (duplicate) {
         setDuplicateMatch(duplicate);
         return;
       }
     }
-    persist();
+    void persist();
   };
 
   const handleOpenView = (item: MasterRecord) => {
@@ -389,12 +403,19 @@ export function MasterDataPage() {
     setViewOpen(true);
   };
 
-  const handleConfirmDeactivate = () => {
+  const handleConfirmDeactivate = async () => {
     if (!deactivateTarget) return;
-    persistDeactivate(activeType, deactivateTarget.id, actor);
-    refresh();
-    setViewItem((prev) => (prev && prev.id === deactivateTarget.id ? { ...prev, status: 'Inactive' } : prev));
+    const target = deactivateTarget;
     setDeactivateTarget(null);
+    try {
+      await persistDeactivate(activeType, target.id);
+      invalidateMaster(activeType);
+      setViewItem((prev) => (prev && prev.id === target.id ? { ...prev, status: 'Inactive' } : prev));
+    } catch (error) {
+      // Nothing changed, so the row must not be shown as Inactive: the details
+      // panel is left exactly as it was and the failure is reported.
+      setSaveError(error instanceof Error ? error.message : 'Could not deactivate this record.');
+    }
   };
 
   return (
@@ -445,6 +466,15 @@ export function MasterDataPage() {
             </Select>
           </FormControl>
         </Stack>
+
+        {/* A failed fetch is reported as a failure, with the server's own
+            sentence. An empty table under a silent error is how somebody
+            concludes the brand they are looking for does not exist. */}
+        {isError && (
+          <Alert severity="error" sx={{ mb: 2 }}>
+            {loadError instanceof Error ? loadError.message : 'Could not load this master data.'}
+          </Alert>
+        )}
 
         {filteredItems.length === 0 ? (
           <Box sx={{ py: 6, textAlign: 'center' }}>
@@ -625,12 +655,18 @@ export function MasterDataPage() {
             </FormControl>
           </Stack>
 
+          {saveError && (
+            <Alert severity="error" sx={{ mt: 3 }}>
+              {saveError}
+            </Alert>
+          )}
+
           <Box sx={{ display: 'flex', justifyContent: 'flex-end', gap: 1, mt: 4 }}>
-            <Button onClick={handleCloseForm} sx={{ textTransform: 'none' }}>
+            <Button onClick={handleCloseForm} sx={{ textTransform: 'none' }} disabled={isSaving}>
               Cancel
             </Button>
-            <Button variant="contained" sx={{ textTransform: 'none' }} onClick={handleSave}>
-              {editingId ? 'Save Changes' : 'Save'}
+            <Button variant="contained" sx={{ textTransform: 'none' }} onClick={handleSave} disabled={isSaving}>
+              {isSaving ? 'Saving…' : editingId ? 'Save Changes' : 'Save'}
             </Button>
           </Box>
         </Box>

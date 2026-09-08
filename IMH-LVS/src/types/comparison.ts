@@ -110,7 +110,7 @@ export type WorkflowAction =
 // service-layer stage lookups) instead of the display-friendly WorkflowStage.
 export type ApprovalStageKey = 'labelFinal' | 'technical' | 'qa' | 'manager';
 
-// Who is RESPONSIBLE for each stage — a User ID (see data/usersStore.ts),
+// Who is RESPONSIBLE for each stage — a User ID (see types/user.ts),
 // never a duplicated user object. Distinct from both RBAC (which decides
 // what a role is allowed to do) and WorkflowHistoryEntry.actorId (who
 // actually performed a given action, which may be a Manager override acting

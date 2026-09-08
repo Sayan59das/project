@@ -372,6 +372,76 @@ describe('artwork repository', { skip: SKIP }, () => {
     assert.equal(await getLatestApprovedArtwork('PRD-0001', 'ABC Healthcare', 'Back Artwork'), undefined);
   });
 
+  // These three rules were only covered on the frontend, back when the baseline
+  // was picked by a client-side sort over localStorage. The query owns them
+  // now, so this is where they are checked.
+  it('never picks a Rejected version, even when it is the highest', async () => {
+    await inRolledBackTransaction(async (client) => {
+      const rejected = await createArtwork(
+        {
+          productId: 'PRD-0001',
+          productName: 'Vitamin C Gummies',
+          brand: 'VitaFit',
+          marketingCompany: 'ABC Healthcare',
+          manufacturingCompany: 'IM Healthcare Pvt. Ltd.',
+          artworkType: 'Full Label',
+          fileName: 'VitaminC_Gummies_V6_rejected.pdf',
+          fileType: 'application/pdf',
+          fileSize: 1_000,
+          filePath: '',
+          status: 'Rejected',
+          remarks: 'Rejected at QA.'
+        },
+        'Test Actor',
+        client
+      );
+
+      // V6 and rejected; the baseline stays the approved V4.
+      assert.equal(rejected.version, 'V6');
+      const baseline = await getLatestApprovedArtwork('PRD-0001', 'ABC Healthcare', 'Full Label', client);
+      assert.equal(baseline?.version, 'V4');
+    });
+  });
+
+  // 'Approved' is the pre-workflow terminal status carried by older artworks;
+  // 'Final Approved' is what the Manager stage produces. Either is a valid
+  // comparison reference, and the higher version wins across both.
+  it('treats Approved and Final Approved alike, picking the higher version', async () => {
+    await inRolledBackTransaction(async (client) => {
+      const finalApproved = await createArtwork(
+        {
+          productId: 'PRD-0001',
+          productName: 'Vitamin C Gummies',
+          brand: 'VitaFit',
+          marketingCompany: 'ABC Healthcare',
+          manufacturingCompany: 'IM Healthcare Pvt. Ltd.',
+          artworkType: 'Full Label',
+          fileName: 'VitaminC_Gummies_V6_final.pdf',
+          fileType: 'application/pdf',
+          fileSize: 1_000,
+          filePath: '',
+          status: 'Final Approved',
+          remarks: 'Approved by the Manager stage.'
+        },
+        'Test Actor',
+        client
+      );
+
+      const baseline = await getLatestApprovedArtwork('PRD-0001', 'ABC Healthcare', 'Full Label', client);
+      assert.equal(baseline?.id, finalApproved.id);
+      assert.equal(baseline?.version, 'V6');
+    });
+  });
+
+  // The same product at another marketing company has its own version line and
+  // its own baseline — comparing across companies is a separate, explicit
+  // feature (getCrossCompanyCandidates), never something the baseline lookup
+  // does by accident.
+  it('never crosses to another marketing company', async () => {
+    const baseline = await getLatestApprovedArtwork('PRD-0001', 'XYZ Healthcare');
+    assert.equal(baseline, undefined);
+  });
+
   it('reports no baseline for a product whose only label is unapproved', async () => {
     // PRD-0003's single artwork is Pending Comparison — a first-ever label,
     // which the workflow has to report rather than treat as an error.

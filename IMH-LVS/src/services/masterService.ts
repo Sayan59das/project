@@ -1,9 +1,22 @@
-// Master/reference data access layer — mirrors productService.ts's
-// localStorage-backed pattern so both can later be swapped for real API
-// calls without touching the UI. One generic collection helper avoids
-// repeating the same CRUD logic six times; the exported functions below
-// give each master type its own named API as required.
+// Master/reference data, against the real API.
+//
+// Was six localStorage collections seeded from src/data/masters.ts, which meant
+// every browser had its own brand list: a Manager adding "VitaFit" saw it, and
+// nobody else did — including the label intake pipeline running on another
+// machine, which then created its own "VitaFit" row. The six tables have been
+// in Postgres since the persistence layer landed; this file finally reads them.
+//
+// ONE generic collection again, for the same reason the backend builds one
+// router six times (see backend/src/routes/masters.routes.ts): the six differ
+// only in their fields, and duplicating list/read/create/update per resource is
+// how five end up correct and the sixth quietly does not.
+//
+// NO `actor` PARAMETER. It used to be threaded through every call from the
+// page. The server now takes the actor from the session cookie
+// (controllers/http.ts's requireActor), so a client-supplied name is at best
+// ignored and at worst a claim to be somebody else.
 
+import { ApiError, apiRequest, findOne } from './apiClient';
 import {
   Brand,
   BrandInput,
@@ -15,208 +28,168 @@ import {
   ManufacturingCompanyInput,
   MarketingCompany,
   MarketingCompanyInput,
-  MasterStatus,
+  MasterTypeKey,
   ProductCategory,
   ProductCategoryInput
 } from '../types/masters';
-import {
-  SEED_BRANDS,
-  SEED_CLAIMS,
-  SEED_FLAVOURS,
-  SEED_MANUFACTURING_COMPANIES,
-  SEED_MARKETING_COMPANIES,
-  SEED_PRODUCT_CATEGORIES
-} from '../data/masters';
 
-type AuditedRecord = { id: string; status: MasterStatus; createdDate: string; updatedDate: string; createdBy: string; updatedBy: string };
+/** Frontend key -> the resource segment the API mounts it under. */
+export const MASTER_PATHS: Record<MasterTypeKey, string> = {
+  marketingCompanies: 'marketing-companies',
+  manufacturingCompanies: 'manufacturing-companies',
+  brands: 'brands',
+  flavours: 'flavours',
+  claims: 'claims',
+  productCategories: 'product-categories'
+};
 
-function today(): string {
-  return new Date().toISOString().slice(0, 10);
-}
+type Collection<T, TInput> = {
+  list: () => Promise<T[]>;
+  getById: (id: string) => Promise<T | undefined>;
+  create: (input: TInput) => Promise<T>;
+  update: (id: string, patch: Partial<TInput>) => Promise<T | undefined>;
+  deactivate: (id: string) => Promise<T | undefined>;
+};
 
-function makeCollection<T extends AuditedRecord, TInput extends object>(storageKey: string, seed: T[], idPrefix: string) {
-  function readAll(): T[] {
-    const raw = localStorage.getItem(storageKey);
-    if (!raw) {
-      localStorage.setItem(storageKey, JSON.stringify(seed));
-      return seed;
-    }
-    try {
-      return JSON.parse(raw) as T[];
-    } catch {
-      localStorage.setItem(storageKey, JSON.stringify(seed));
-      return seed;
-    }
-  }
+function makeCollection<T, TInput extends object>(key: MasterTypeKey): Collection<T, TInput> {
+  const path = `/masters/${MASTER_PATHS[key]}`;
+  const url = (id: string) => `${path}/${encodeURIComponent(id)}`;
 
-  function writeAll(items: T[]) {
-    localStorage.setItem(storageKey, JSON.stringify(items));
-  }
+  const update = (id: string, patch: Partial<TInput>) =>
+    findOne(apiRequest<T>(url(id), { method: 'PATCH', body: patch }));
 
-  function nextId(existing: T[]): string {
-    const pattern = new RegExp(`^${idPrefix}-(\\d+)$`);
-    const maxSeq = existing.reduce((max, item) => {
-      const match = pattern.exec(item.id);
-      return match ? Math.max(max, Number(match[1])) : max;
-    }, 0);
-    return `${idPrefix}-${String(maxSeq + 1).padStart(4, '0')}`;
-  }
-
-  function getAll(): T[] {
-    return readAll();
-  }
-
-  function getById(id: string): T | undefined {
-    return readAll().find((item) => item.id === id);
-  }
-
-  function create(input: TInput, actor: string): T {
-    const items = readAll();
-    const now = today();
-    const newItem = {
-      ...input,
-      id: nextId(items),
-      createdDate: now,
-      updatedDate: now,
-      createdBy: actor,
-      updatedBy: actor
-    } as unknown as T;
-    writeAll([...items, newItem]);
-    return newItem;
-  }
-
-  function update(id: string, input: Partial<TInput>, actor: string): T | undefined {
-    const items = readAll();
-    const index = items.findIndex((item) => item.id === id);
-    if (index === -1) return undefined;
-    const updated: T = { ...items[index], ...input, updatedDate: today(), updatedBy: actor };
-    items[index] = updated;
-    writeAll(items);
-    return updated;
-  }
-
-  function deactivate(id: string, actor: string): T | undefined {
-    return update(id, { status: 'Inactive' } as unknown as Partial<TInput>, actor);
-  }
-
-  return { getAll, getById, create, update, deactivate };
+  return {
+    list: () => apiRequest<T[]>(path),
+    // findOne, not a blanket catch: only a 404 is "no such record". A 401 or an
+    // unreachable server must not be reported as an absent master, or a
+    // get-or-create would answer an outage by creating a duplicate.
+    getById: (id) => findOne(apiRequest<T>(url(id))),
+    create: (input) => apiRequest<T>(path, { method: 'POST', body: input }),
+    update,
+    // Masters are never deleted — a brand referenced by an approved label has
+    // to stay readable — so "remove" is a status change, and it is written out
+    // here rather than left to each caller to remember.
+    deactivate: (id) => update(id, { status: 'Inactive' } as unknown as Partial<TInput>)
+  };
 }
 
 const norm = (value: string) => value.trim().toLowerCase();
 
 // ---------------------------------------------------------------------------
-// Marketing Companies
+// The six collections
 // ---------------------------------------------------------------------------
-const marketingCompanyCollection = makeCollection<MarketingCompany, MarketingCompanyInput>(
-  'imh_lvs_marketing_companies',
-  SEED_MARKETING_COMPANIES,
-  'MKT'
-);
-export const getMarketingCompanies = marketingCompanyCollection.getAll;
+
+const marketingCompanyCollection = makeCollection<MarketingCompany, MarketingCompanyInput>('marketingCompanies');
+export const getMarketingCompanies = marketingCompanyCollection.list;
+export const getMarketingCompanyById = marketingCompanyCollection.getById;
 export const createMarketingCompany = marketingCompanyCollection.create;
 export const updateMarketingCompany = marketingCompanyCollection.update;
 export const deactivateMarketingCompany = marketingCompanyCollection.deactivate;
-export function findDuplicateMarketingCompany(companyName: string, excludeId?: string): MarketingCompany | undefined {
-  return marketingCompanyCollection
-    .getAll()
-    .find((item) => item.id !== excludeId && item.status === 'Active' && norm(item.companyName) === norm(companyName));
-}
 
-// ---------------------------------------------------------------------------
-// Manufacturing Companies
-// ---------------------------------------------------------------------------
-const manufacturingCompanyCollection = makeCollection<ManufacturingCompany, ManufacturingCompanyInput>(
-  'imh_lvs_manufacturing_companies',
-  SEED_MANUFACTURING_COMPANIES,
-  'MFG'
-);
-export const getManufacturingCompanies = manufacturingCompanyCollection.getAll;
+const manufacturingCompanyCollection = makeCollection<ManufacturingCompany, ManufacturingCompanyInput>('manufacturingCompanies');
+export const getManufacturingCompanies = manufacturingCompanyCollection.list;
+export const getManufacturingCompanyById = manufacturingCompanyCollection.getById;
 export const createManufacturingCompany = manufacturingCompanyCollection.create;
 export const updateManufacturingCompany = manufacturingCompanyCollection.update;
 export const deactivateManufacturingCompany = manufacturingCompanyCollection.deactivate;
-export function findDuplicateManufacturingCompany(companyName: string, excludeId?: string): ManufacturingCompany | undefined {
-  return manufacturingCompanyCollection
-    .getAll()
-    .find((item) => item.id !== excludeId && item.status === 'Active' && norm(item.companyName) === norm(companyName));
-}
 
-// ---------------------------------------------------------------------------
-// Brands
-// ---------------------------------------------------------------------------
-const brandCollection = makeCollection<Brand, BrandInput>('imh_lvs_brands', SEED_BRANDS, 'BRD');
-export const getBrands = brandCollection.getAll;
+const brandCollection = makeCollection<Brand, BrandInput>('brands');
+export const getBrands = brandCollection.list;
+export const getBrandById = brandCollection.getById;
 export const createBrand = brandCollection.create;
 export const updateBrand = brandCollection.update;
 export const deactivateBrand = brandCollection.deactivate;
 
-// Brand names are case-sensitive data (never normalized on save), but the
-// duplicate check still compares case-insensitively — "VitaFit" vs
-// "vitafit" under the same marketing company is flagged for review rather
-// than silently allowed or silently merged.
-export function findDuplicateBrand(brandName: string, marketingCompany: string, excludeId?: string): Brand | undefined {
-  return brandCollection
-    .getAll()
-    .find(
-      (item) =>
-        item.id !== excludeId &&
-        item.status === 'Active' &&
-        norm(item.brandName) === norm(brandName) &&
-        norm(item.marketingCompany) === norm(marketingCompany)
-    );
-}
-
-// ---------------------------------------------------------------------------
-// Flavours
-// ---------------------------------------------------------------------------
-const flavourCollection = makeCollection<Flavour, FlavourInput>('imh_lvs_flavours', SEED_FLAVOURS, 'FLV');
-export const getFlavours = flavourCollection.getAll;
+const flavourCollection = makeCollection<Flavour, FlavourInput>('flavours');
+export const getFlavours = flavourCollection.list;
+export const getFlavourById = flavourCollection.getById;
 export const createFlavour = flavourCollection.create;
 export const updateFlavour = flavourCollection.update;
 export const deactivateFlavour = flavourCollection.deactivate;
-export function findDuplicateFlavour(flavourName: string, excludeId?: string): Flavour | undefined {
-  return flavourCollection
-    .getAll()
-    .find((item) => item.id !== excludeId && item.status === 'Active' && norm(item.flavourName) === norm(flavourName));
-}
 
-// ---------------------------------------------------------------------------
-// Claims
-// ---------------------------------------------------------------------------
-const claimCollection = makeCollection<Claim, ClaimInput>('imh_lvs_claims', SEED_CLAIMS, 'CLM');
-export const getClaims = claimCollection.getAll;
+const claimCollection = makeCollection<Claim, ClaimInput>('claims');
+export const getClaims = claimCollection.list;
+export const getClaimById = claimCollection.getById;
 export const createClaim = claimCollection.create;
 export const updateClaim = claimCollection.update;
 export const deactivateClaim = claimCollection.deactivate;
-export function findDuplicateClaim(claimText: string, excludeId?: string): Claim | undefined {
-  return claimCollection.getAll().find((item) => item.id !== excludeId && item.status === 'Active' && norm(item.claimText) === norm(claimText));
-}
 
-// ---------------------------------------------------------------------------
-// Product Categories
-// ---------------------------------------------------------------------------
-const productCategoryCollection = makeCollection<ProductCategory, ProductCategoryInput>(
-  'imh_lvs_product_categories',
-  SEED_PRODUCT_CATEGORIES,
-  'CAT'
-);
-export const getProductCategories = productCategoryCollection.getAll;
+const productCategoryCollection = makeCollection<ProductCategory, ProductCategoryInput>('productCategories');
+export const getProductCategories = productCategoryCollection.list;
+export const getProductCategoryById = productCategoryCollection.getById;
 export const createProductCategory = productCategoryCollection.create;
 export const updateProductCategory = productCategoryCollection.update;
 export const deactivateProductCategory = productCategoryCollection.deactivate;
-export function findDuplicateProductCategory(categoryName: string, excludeId?: string): ProductCategory | undefined {
-  return productCategoryCollection
-    .getAll()
-    .find((item) => item.id !== excludeId && item.status === 'Active' && norm(item.categoryName) === norm(categoryName));
+
+// ---------------------------------------------------------------------------
+// Duplicate checks
+//
+// SELECTORS over a list the caller already holds, not requests of their own.
+// The screen asking "is this a duplicate?" is showing that exact list, and a
+// lookup endpoint would answer from the same rows one render later.
+//
+// These are the ADVISORY half of the check — they warn before saving, and the
+// user can still be told by the database, which owns the actual UNIQUE
+// constraints and reports them with the offending name in the message.
+// ---------------------------------------------------------------------------
+
+export function findDuplicateMarketingCompany(
+  companies: MarketingCompany[],
+  companyName: string,
+  excludeId?: string
+): MarketingCompany | undefined {
+  return companies.find((item) => item.id !== excludeId && item.status === 'Active' && norm(item.companyName) === norm(companyName));
+}
+
+export function findDuplicateManufacturingCompany(
+  companies: ManufacturingCompany[],
+  companyName: string,
+  excludeId?: string
+): ManufacturingCompany | undefined {
+  return companies.find((item) => item.id !== excludeId && item.status === 'Active' && norm(item.companyName) === norm(companyName));
+}
+
+// Brand names are case-sensitive data (never normalized on save), but the
+// duplicate check still compares case-insensitively — "VitaFit" vs "vitafit"
+// under the same marketing company is flagged for review rather than silently
+// allowed or silently merged.
+export function findDuplicateBrand(
+  brands: Brand[],
+  brandName: string,
+  marketingCompany: string,
+  excludeId?: string
+): Brand | undefined {
+  return brands.find(
+    (item) =>
+      item.id !== excludeId &&
+      item.status === 'Active' &&
+      norm(item.brandName) === norm(brandName) &&
+      norm(item.marketingCompany) === norm(marketingCompany)
+  );
+}
+
+export function findDuplicateFlavour(flavours: Flavour[], flavourName: string, excludeId?: string): Flavour | undefined {
+  return flavours.find((item) => item.id !== excludeId && item.status === 'Active' && norm(item.flavourName) === norm(flavourName));
+}
+
+export function findDuplicateClaim(claims: Claim[], claimText: string, excludeId?: string): Claim | undefined {
+  return claims.find((item) => item.id !== excludeId && item.status === 'Active' && norm(item.claimText) === norm(claimText));
+}
+
+export function findDuplicateProductCategory(
+  categories: ProductCategory[],
+  categoryName: string,
+  excludeId?: string
+): ProductCategory | undefined {
+  return categories.find((item) => item.id !== excludeId && item.status === 'Active' && norm(item.categoryName) === norm(categoryName));
 }
 
 // ---------------------------------------------------------------------------
-// Get-or-create helpers — used by the label-driven product intake pipeline
+// Get-or-create — used by the label-driven intake pipeline
 // (services/labelIntakeService.ts) so uploading a label reuses an existing
-// Marketing Company / Brand / Flavour / Manufacturing Company master record
-// instead of ever creating a duplicate. Matching ignores status (an
+// master record instead of creating a duplicate. Matching ignores status (an
 // inactive master still counts as "existing") since the point is purely to
-// avoid duplicates; manual creation through Master Data Management above is
-// unaffected.
+// avoid duplicates; manual creation through Masters is unaffected.
 // ---------------------------------------------------------------------------
 
 function deriveShortCode(name: string, existingCodes: Set<string>): string {
@@ -231,34 +204,81 @@ function deriveShortCode(name: string, existingCodes: Set<string>): string {
   return code;
 }
 
-export function getOrCreateMarketingCompany(companyName: string, actor: string): MarketingCompany {
-  const name = companyName.trim();
-  const existing = marketingCompanyCollection.getAll().find((company) => norm(company.companyName) === norm(name));
-  if (existing) return existing;
-  const codes = new Set(marketingCompanyCollection.getAll().map((company) => company.shortCode));
-  return createMarketingCompany({ companyName: name, shortCode: deriveShortCode(name, codes), status: 'Active' }, actor);
+/**
+ * Create, unless somebody else got there first.
+ *
+ * Read-then-create is not atomic across a network, and two labels for the same
+ * new brand arriving together is not hypothetical — it is a morning's uploads.
+ * The database's UNIQUE constraint settles it and returns a 409; the loser
+ * re-reads and uses the row the winner made, which is what "get or create"
+ * promised. Anything other than a 409 is a real failure and is thrown.
+ */
+async function createOrAdopt<T>(create: () => Promise<T>, reread: () => Promise<T | undefined>, label: string): Promise<T> {
+  try {
+    return await create();
+  } catch (error) {
+    if (!(error instanceof ApiError) || error.status !== 409) throw error;
+    const existing = await reread();
+    if (existing) return existing;
+    // A 409 with nothing to find afterwards means the conflict was with
+    // something this search cannot see, and silently carrying on would attach
+    // the label to a master that does not exist.
+    throw new ApiError(409, `${label} conflicts with an existing record that could not be read back.`);
+  }
 }
 
-export function getOrCreateManufacturingCompany(companyName: string, actor: string): ManufacturingCompany {
+export async function getOrCreateMarketingCompany(companyName: string): Promise<MarketingCompany> {
   const name = companyName.trim();
-  const existing = manufacturingCompanyCollection.getAll().find((company) => norm(company.companyName) === norm(name));
+  const companies = await getMarketingCompanies();
+  const existing = companies.find((company) => norm(company.companyName) === norm(name));
   if (existing) return existing;
-  const codes = new Set(manufacturingCompanyCollection.getAll().map((company) => company.shortCode));
-  return createManufacturingCompany({ companyName: name, shortCode: deriveShortCode(name, codes), status: 'Active' }, actor);
+
+  const codes = new Set(companies.map((company) => company.shortCode));
+  return createOrAdopt(
+    () => createMarketingCompany({ companyName: name, shortCode: deriveShortCode(name, codes), status: 'Active' }),
+    async () => (await getMarketingCompanies()).find((company) => norm(company.companyName) === norm(name)),
+    `Marketing company "${name}"`
+  );
 }
 
-export function getOrCreateBrand(brandName: string, marketingCompany: string, actor: string): Brand {
+export async function getOrCreateManufacturingCompany(companyName: string): Promise<ManufacturingCompany> {
+  const name = companyName.trim();
+  const companies = await getManufacturingCompanies();
+  const existing = companies.find((company) => norm(company.companyName) === norm(name));
+  if (existing) return existing;
+
+  const codes = new Set(companies.map((company) => company.shortCode));
+  return createOrAdopt(
+    () => createManufacturingCompany({ companyName: name, shortCode: deriveShortCode(name, codes), status: 'Active' }),
+    async () => (await getManufacturingCompanies()).find((company) => norm(company.companyName) === norm(name)),
+    `Manufacturing company "${name}"`
+  );
+}
+
+export async function getOrCreateBrand(brandName: string, marketingCompany: string): Promise<Brand> {
   const name = brandName.trim();
-  const existing = brandCollection
-    .getAll()
-    .find((brand) => norm(brand.brandName) === norm(name) && norm(brand.marketingCompany) === norm(marketingCompany));
+  const matches = (brand: Brand) => norm(brand.brandName) === norm(name) && norm(brand.marketingCompany) === norm(marketingCompany);
+
+  const existing = (await getBrands()).find(matches);
   if (existing) return existing;
-  return createBrand({ brandName: name, marketingCompany, status: 'Active' }, actor);
+
+  return createOrAdopt(
+    () => createBrand({ brandName: name, marketingCompany, status: 'Active' }),
+    async () => (await getBrands()).find(matches),
+    `Brand "${name}"`
+  );
 }
 
-export function getOrCreateFlavour(flavourName: string, actor: string): Flavour {
+export async function getOrCreateFlavour(flavourName: string): Promise<Flavour> {
   const name = flavourName.trim();
-  const existing = flavourCollection.getAll().find((flavour) => norm(flavour.flavourName) === norm(name));
+  const matches = (flavour: Flavour) => norm(flavour.flavourName) === norm(name);
+
+  const existing = (await getFlavours()).find(matches);
   if (existing) return existing;
-  return createFlavour({ flavourName: name, status: 'Active' }, actor);
+
+  return createOrAdopt(
+    () => createFlavour({ flavourName: name, status: 'Active' }),
+    async () => (await getFlavours()).find(matches),
+    `Flavour "${name}"`
+  );
 }

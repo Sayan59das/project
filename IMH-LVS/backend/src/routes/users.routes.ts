@@ -1,9 +1,10 @@
 // The reviewer/approver directory.
 //
-// No password field anywhere: this backend has no authentication yet (see
-// controllers/http.ts's requireActor), and a half-built credential store is
-// worse than none — it invites a client to send passwords the server does not
-// protect. When auth arrives it brings its own endpoints.
+// No password field anywhere, and no route here that touches one. Credentials
+// live behind /auth — issuing a session, and changing your OWN password with
+// the current one — so that a Manager editing somebody's role can never be the
+// same request that sets their password. Every route below is already behind
+// requireSession (see routes/index.ts).
 
 import { Router } from 'express';
 import {

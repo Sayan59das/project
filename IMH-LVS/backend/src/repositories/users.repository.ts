@@ -6,7 +6,7 @@
 // functions take an `actor` parameter.
 //
 // PERMISSIONS. The frontend's AppUser carries a `permissions` object of
-// `{ modules, actions }` (src/data/usersStore.ts). Those two halves are not
+// `{ modules, actions }` (src/types/user.ts). Those two halves are not
 // alike and are not treated alike here:
 //
 //   actions — always recomputed from the role by UsersPage on save, with no
@@ -51,7 +51,7 @@ function pgErrorCode(error: unknown): string | undefined {
 // The sequence is read with a regex rather than that helper's
 // `substring(id from 5)`, which assumes every id in a table shares one
 // 4-character prefix. Users are the one table where that does not hold: the
-// app's own directory numbers people 'U-001' (src/data/usersStore.ts) while
+// app's original seed directory numbered people 'U-001' while
 // ids issued here are 'USR-0001'. A fixed offset reads 'U-010' as 0 and would
 // hand out an id that already exists; the trailing digit run is the sequence
 // in both layouts.

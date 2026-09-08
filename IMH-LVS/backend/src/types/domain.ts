@@ -1,7 +1,7 @@
 // The API contract: the shapes this backend accepts and returns.
 //
 // These MIRROR the frontend's src/types/{product,artwork,comparison,masters}.ts
-// and src/data/usersStore.ts. They are duplicated rather than imported
+// and src/types/user.ts. They are duplicated rather than imported
 // because the backend is built and deployed on its own (see Dockerfile —
 // only backend/src is copied) and tsconfig's rootDir is src/, so reaching
 // across into the frontend tree would break both the build and the image.

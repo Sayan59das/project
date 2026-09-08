@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import {
+  Alert,
   Box,
   Button,
   Dialog,
@@ -47,10 +48,11 @@ import {
 import { PageHeader } from '../components/PageHeader';
 import { StatusChip } from '../components/StatusChip';
 import { useAuth } from '../auth/AuthContext';
-import { deactivateProduct, getProducts, updateProduct } from '../services/productService';
-import { getBrands, getFlavours, getMarketingCompanies } from '../services/masterService';
-import { getArtworksByProduct } from '../services/artworkService';
-import { getComparisonsByProduct } from '../services/comparisonService';
+import { deactivateProduct, updateProduct } from '../services/productService';
+import { useInvalidateProducts, useProducts } from '../hooks/useProducts';
+import { useBrands, useFlavours, useMarketingCompanies } from '../hooks/useMasterData';
+import { useProductArtworks } from '../hooks/useArtworks';
+import { useProductComparisons } from '../hooks/useComparisons';
 import { getSettings } from '../services/settingsService';
 import { PRODUCT_STATUS_OPTIONS, Product, ProductInput } from '../types/product';
 import { formatDateTime } from '../utils/dateFormat';
@@ -91,11 +93,16 @@ type FormErrors = Partial<Record<'productName' | 'brandName' | 'marketingCompany
 
 export function ProductsPage() {
   const { currentUser, hasPermission } = useAuth();
+  const marketingCompanies = useMarketingCompanies();
+  const brands = useBrands();
+  const flavours = useFlavours();
   const canEdit = hasPermission('EDIT');
-  const actor = currentUser?.fullName ?? 'Unknown User';
   const defaultPageSize = getSettings(currentUser?.id ?? '').pageSize;
 
-  const [products, setProducts] = useState<Product[]>(() => getProducts());
+  const { products, isLoading, isError: productsFailed, error: productsError } = useProducts();
+  const invalidateProducts = useInvalidateProducts();
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
   const [searchParams] = useSearchParams();
   const [search, setSearch] = useState(() => searchParams.get('search') ?? '');
   const [filterDraft, setFilterDraft] = useState<FilterState>(EMPTY_FILTERS);
@@ -126,11 +133,27 @@ export function ProductsPage() {
   // selections, but always keep the record's current saved value selectable
   // even if that master has since gone inactive â€” so editing a product never
   // silently blanks out its historical value.
-  const activeMarketingCompanies = useMemo(() => getMarketingCompanies().filter((company) => company.status === 'Active').map((company) => company.companyName), []);
-  const activeBrands = useMemo(() => getBrands().filter((brand) => brand.status === 'Active').map((brand) => brand.brandName), []);
-  const activeFlavours = useMemo(() => getFlavours().filter((flavour) => flavour.status === 'Active').map((flavour) => flavour.flavourName), []);
+  const activeMarketingCompanies = useMemo(
+    () => marketingCompanies.items.filter((company) => company.status === 'Active').map((company) => company.companyName),
+    [marketingCompanies.items]
+  );
+  const activeBrands = useMemo(
+    () => brands.items.filter((brand) => brand.status === 'Active').map((brand) => brand.brandName),
+    [brands.items]
+  );
+  const activeFlavours = useMemo(
+    () => flavours.items.filter((flavour) => flavour.status === 'Active').map((flavour) => flavour.flavourName),
+    [flavours.items]
+  );
+
+  // Masters are fetched now, so a form opened during an outage would offer
+  // three empty dropdowns and look like a system with no brands in it. Say so
+  // instead — the form still opens, and a typed value is still savable.
+  const mastersFailed = marketingCompanies.isError || brands.isError || flavours.isError;
 
   const withCurrentValue = (options: string[], current: string) => (current && !options.includes(current) ? [...options, current] : options);
+
+  const mastersError = [marketingCompanies, brands, flavours].find((query) => query.isError)?.error;
 
   const marketingCompanyFormOptions = withCurrentValue(activeMarketingCompanies, formState.marketingCompany);
   const brandFormOptions = withCurrentValue(activeBrands, formState.brandName);
@@ -163,16 +186,19 @@ export function ProductsPage() {
 
   const filtersActive = Object.values(appliedFilters).some((value) => value !== ALL);
 
-  const emptyMessage =
-    products.length === 0
-      ? 'No products found.'
-      : search.trim() !== ''
-      ? 'No products match your search.'
-      : filtersActive
-      ? 'No products match the selected filters.'
-      : 'No products found.';
-
-  const refresh = () => setProducts(getProducts());
+  // Loading, failed, filtered-to-nothing and genuinely empty are four
+  // different tables. Only the last two are about the data.
+  const emptyMessage = isLoading
+    ? 'Loading…'
+    : productsFailed
+      ? 'Could not load products.'
+      : products.length === 0
+        ? 'No products found.'
+        : search.trim() !== ''
+          ? 'No products match your search.'
+          : filtersActive
+            ? 'No products match the selected filters.'
+            : 'No products found.';
 
   const handleApplyFilters = () => setAppliedFilters(filterDraft);
   const handleClearFilters = () => {
@@ -221,11 +247,20 @@ export function ProductsPage() {
   // Product Management no longer creates products manually â€” every record
   // comes from the label upload pipeline (see ArtworkPage / labelIntakeService).
   // This drawer/handleSave path only ever runs against an existing product.
-  const handleSave = () => {
+  const handleSave = async () => {
     if (!editingId || !validate()) return;
-    updateProduct(editingId, formState, actor);
-    refresh();
-    setFormOpen(false);
+    setSaveError(null);
+    setIsSaving(true);
+    try {
+      await updateProduct(editingId, formState);
+      invalidateProducts();
+      setFormOpen(false);
+    } catch (error) {
+      // The drawer stays open with what was typed: nothing was saved.
+      setSaveError(error instanceof Error ? error.message : 'Could not save this product.');
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   const handleOpenView = (product: Product) => {
@@ -233,12 +268,18 @@ export function ProductsPage() {
     setViewOpen(true);
   };
 
-  const handleConfirmDeactivate = () => {
+  const handleConfirmDeactivate = async () => {
     if (!deactivateTarget) return;
-    deactivateProduct(deactivateTarget.id, actor);
-    refresh();
-    setViewProduct((prev) => (prev && prev.id === deactivateTarget.id ? { ...prev, status: 'Inactive' } : prev));
+    const target = deactivateTarget;
     setDeactivateTarget(null);
+    try {
+      await deactivateProduct(target.id);
+      invalidateProducts();
+      setViewProduct((prev) => (prev && prev.id === target.id ? { ...prev, status: 'Inactive' } : prev));
+    } catch (error) {
+      // Nothing changed, so the details panel must not show Inactive.
+      setSaveError(error instanceof Error ? error.message : 'Could not deactivate this product.');
+    }
   };
 
   const columns: GridColDef<Product>[] = [
@@ -283,8 +324,10 @@ export function ProductsPage() {
 
   // Product Details drawer's audit sections â€” sourced from the real
   // artwork/comparison records for this product, not placeholder text.
-  const viewArtworks = viewProduct ? getArtworksByProduct(viewProduct.id) : [];
-  const viewComparisons = viewProduct ? getComparisonsByProduct(viewProduct.id) : [];
+  // The drawer's own query, by product, rather than a filter over every
+  // artwork in the system — and it only runs while a product is open.
+  const viewArtworks = useProductArtworks(viewProduct?.id).artworks;
+  const viewComparisons = useProductComparisons(viewProduct?.id).comparisons;
   const viewVersions = Array.from(new Set(viewArtworks.map((artwork) => artwork.version))).sort();
   const viewApprovalHistory = viewComparisons
     .flatMap((comparison) => comparison.history.map((entry) => ({ ...entry, comparisonId: comparison.id })))
@@ -415,6 +458,20 @@ export function ProductsPage() {
       </Paper>
 
       <Paper sx={{ p: 3, mb: 3 }}>
+        {/* The catalogue failing to load is reported, with the server's own
+            sentence. An empty grid under a silent error tells a reviewer there
+            are no products to review. */}
+        {productsFailed && (
+          <Alert severity="error" sx={{ mb: 2 }}>
+            {productsError instanceof Error ? productsError.message : 'Could not load products.'}
+          </Alert>
+        )}
+        {saveError && (
+          <Alert severity="error" sx={{ mb: 2 }} onClose={() => setSaveError(null)}>
+            {saveError}
+          </Alert>
+        )}
+
         {filteredRows.length === 0 ? (
           <Box sx={{ py: 6, textAlign: 'center' }}>
             <Typography variant="body1" sx={{ color: 'var(--c-text-3)' }}>
@@ -456,6 +513,13 @@ export function ProductsPage() {
               <MdClose />
             </IconButton>
           </Box>
+
+          {mastersFailed && (
+            <Alert severity="warning" sx={{ mb: 2 }}>
+              {mastersError instanceof Error ? mastersError.message : 'Could not load master data.'} The dropdowns below are
+              incomplete — an empty list here means the lookup failed, not that there are no records.
+            </Alert>
+          )}
 
           <Stack spacing={2}>
             <TextField
@@ -514,7 +578,7 @@ export function ProductsPage() {
             <Button onClick={handleCloseForm} sx={{ textTransform: 'none' }}>
               Cancel
             </Button>
-            <Button variant="contained" sx={{ textTransform: 'none' }} onClick={handleSave}>
+            <Button variant="contained" sx={{ textTransform: 'none' }} onClick={() => void handleSave()} disabled={isSaving}>
               Save Changes
             </Button>
           </Box>
@@ -538,7 +602,7 @@ export function ProductsPage() {
           <Button onClick={() => setDeactivateTarget(null)} sx={{ textTransform: 'none' }}>
             Cancel
           </Button>
-          <Button variant="contained" color="error" sx={{ textTransform: 'none' }} onClick={handleConfirmDeactivate}>
+          <Button variant="contained" color="error" sx={{ textTransform: 'none' }} onClick={() => void handleConfirmDeactivate()}>
             Deactivate
           </Button>
         </DialogActions>

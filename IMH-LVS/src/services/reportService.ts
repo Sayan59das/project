@@ -6,12 +6,33 @@
 // artworks) and keeps filtering/joining logic out of the UI layer.
 
 import { ROLE_LABELS, RoleId } from '../auth/permissions';
-import { getUsers } from '../data/usersStore';
+import { AppUser } from '../types/user';
 import { Artwork, ArtworkStatus } from '../types/artwork';
 import { Comparison, ComparisonStatus, WorkflowAction, WorkflowStage } from '../types/comparison';
-import { getArtworks, parseVersionNumber } from './artworkService';
-import { getAllWorkflowHistory, getComparisons } from './comparisonService';
-import { getProducts } from './productService';
+import { parseVersionNumber } from './artworkService';
+import { selectAllWorkflowHistory } from './comparisonService';
+import { Product } from '../types/product';
+
+/**
+ * Everything the reports join against, loaded by the page and handed in.
+ *
+ * One bundle rather than a growing list of positional arguments: six of these
+ * functions needed products, four needed comparisons and two needed artworks,
+ * and the third caller to pass them in the wrong order would have produced a
+ * report that looked plausible and was wrong.
+ *
+ * Passed in at all because every function in this module is a pure function of
+ * already-loaded data. The records live behind the API now; making the reports
+ * fetch would turn a synchronous switch statement in ReportsPage into an async
+ * one for no gain, and would refetch the same four lists on every filter
+ * change.
+ */
+export type ReportData = {
+  products: Product[];
+  artworks: Artwork[];
+  comparisons: Comparison[];
+  users: AppUser[];
+};
 
 // ---------------------------------------------------------------------
 // Shared filters + helpers
@@ -113,9 +134,13 @@ export type ComparisonReportRow = {
   updatedDate: string;
 };
 
-export function getComparisonReport(filters: ReportFilters): ComparisonReportRow[] {
-  const products = getProducts();
-  return getComparisons()
+// `products` is passed in for the same reason `users` is (see
+// getUserActivityReport): products are fetched now, every report in this module
+// is a pure function of already-loaded data, and making four of them async
+// would make the whole report switch in ReportsPage await. The page holds the
+// cached list.
+export function getComparisonReport(filters: ReportFilters, { products, comparisons }: ReportData): ComparisonReportRow[] {
+  return comparisons
     .map((comparison) => {
       const product = products.find((p) => p.id === comparison.productId);
       return {
@@ -174,9 +199,8 @@ const PENDING_STAGE_MAP: Partial<Record<ComparisonStatus, { stage: string; role:
   'Pending Manager Approval': { stage: 'Manager', role: 'Manager' }
 };
 
-export function getPendingVerificationReport(filters: ReportFilters): PendingVerificationRow[] {
-  const products = getProducts();
-  return getComparisons()
+export function getPendingVerificationReport(filters: ReportFilters, { products, comparisons }: ReportData): PendingVerificationRow[] {
+  return comparisons
     .filter((comparison) => Boolean(PENDING_STAGE_MAP[comparison.status]))
     .map((comparison) => {
       const product = products.find((p) => p.id === comparison.productId);
@@ -232,9 +256,8 @@ export type ApprovedLabelRow = {
   status: ComparisonStatus;
 };
 
-export function getApprovedLabelsReport(filters: ReportFilters): ApprovedLabelRow[] {
-  const products = getProducts();
-  return getComparisons()
+export function getApprovedLabelsReport(filters: ReportFilters, { products, comparisons }: ReportData): ApprovedLabelRow[] {
+  return comparisons
     .filter((comparison) => comparison.status === 'Final Approved')
     .map((comparison) => {
       const product = products.find((p) => p.id === comparison.productId);
@@ -286,10 +309,13 @@ export type RevisionReportRow = {
   date: string;
 };
 
-export function getRevisionRejectionReport(filters: ReportFilters, scope: RevisionScope = 'Both'): RevisionReportRow[] {
-  const products = getProducts();
+export function getRevisionRejectionReport(
+  filters: ReportFilters,
+  { products, comparisons }: ReportData,
+  scope: RevisionScope = 'Both'
+): RevisionReportRow[] {
   const statuses: ComparisonStatus[] = scope === 'Both' ? ['Rejected', 'Revision Required'] : [scope];
-  return getComparisons()
+  return comparisons
     .filter((comparison) => statuses.includes(comparison.status))
     .map((comparison) => {
       const product = products.find((p) => p.id === comparison.productId);
@@ -338,8 +364,7 @@ export type ArtworkHistoryRow = {
   isLatestVersion: boolean;
 };
 
-export function getArtworkHistoryReport(filters: ReportFilters): ArtworkHistoryRow[] {
-  const artworks = getArtworks();
+export function getArtworkHistoryReport(filters: ReportFilters, { artworks }: ReportData): ArtworkHistoryRow[] {
   const groupKey = (artwork: Artwork) => `${artwork.productId}|${artwork.marketingCompany}|${artwork.artworkType}`;
   const latestVersionByGroup = new Map<string, number>();
   artworks.forEach((artwork) => {
@@ -401,9 +426,9 @@ export type ApprovalHistoryRow = {
   remarks: string;
 };
 
-export function getApprovalHistoryReport(filters: ReportFilters): ApprovalHistoryRow[] {
-  const productIdByComparison = new Map(getComparisons().map((comparison) => [comparison.id, comparison.productId]));
-  return getAllWorkflowHistory()
+export function getApprovalHistoryReport(filters: ReportFilters, { comparisons }: ReportData): ApprovalHistoryRow[] {
+  const productIdByComparison = new Map(comparisons.map((comparison) => [comparison.id, comparison.productId]));
+  return selectAllWorkflowHistory(comparisons)
     .map((item) => ({
       comparisonId: item.comparisonId,
       productId: productIdByComparison.get(item.comparisonId) ?? '',
@@ -455,15 +480,25 @@ export type UserActivityRow = {
   actorId?: string;
 };
 
-export function getUserActivityReport(filters: ReportFilters): UserActivityRow[] {
-  const roleByName = new Map(getUsers().map((user) => [user.fullName, user.role]));
+/**
+ * `users` is passed in rather than read here: the directory is an API call now
+ * and this module is deliberately synchronous — every other report is a pure
+ * function of already-loaded data, and making this one alone async would make
+ * the whole switch in ReportsPage await. The caller holds the cached directory
+ * already (useUserDirectory) and hands it over.
+ *
+ * It is only used to label each actor with their role; an activity row whose
+ * user is no longer in the directory still appears, with a blank role.
+ */
+export function getUserActivityReport(filters: ReportFilters, { users, artworks, comparisons }: ReportData): UserActivityRow[] {
+  const roleByName = new Map(users.map((user) => [user.fullName, user.role]));
   const roleLabel = (name: string): string => {
     const role = roleByName.get(name);
     return role ? ROLE_LABELS[role] : '—';
   };
   const workflowRoleLabel = (role: string): string => ROLE_LABELS[role as RoleId] ?? role;
 
-  const artworkEvents: UserActivityRow[] = getArtworks().map((artwork) => ({
+  const artworkEvents: UserActivityRow[] = artworks.map((artwork) => ({
     user: artwork.uploadedBy,
     role: roleLabel(artwork.uploadedBy),
     action: 'Artwork Uploaded',
@@ -473,7 +508,7 @@ export function getUserActivityReport(filters: ReportFilters): UserActivityRow[]
     status: artwork.status
   }));
 
-  const comparisonEvents: UserActivityRow[] = getComparisons().map((comparison) => ({
+  const comparisonEvents: UserActivityRow[] = comparisons.map((comparison) => ({
     user: comparison.comparedBy,
     role: roleLabel(comparison.comparedBy),
     action: 'Comparison Created',
@@ -483,7 +518,7 @@ export function getUserActivityReport(filters: ReportFilters): UserActivityRow[]
     status: comparison.status
   }));
 
-  const workflowEvents: UserActivityRow[] = getAllWorkflowHistory().map((item) => ({
+  const workflowEvents: UserActivityRow[] = selectAllWorkflowHistory(comparisons).map((item) => ({
     user: item.actorName,
     role: workflowRoleLabel(item.actorRole),
     action: `${item.stage}: ${item.action}`,

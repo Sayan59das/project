@@ -1,10 +1,17 @@
 import { ReactNode, createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import { ActionId, ModuleId, RoleId } from './permissions';
-import { AppUser } from '../data/usersStore';
+import { AppUser } from '../types/user';
 import { ApiError } from '../services/apiClient';
 import { changePassword, getCurrentUser, login as loginRequest, logout as logoutRequest } from '../services/authService';
 
-export type LoginResult = { success: true } | { success: false; error: string };
+// Login hands the signed-in user back rather than only a flag: the caller's
+// next move is to look up that person's default landing page, and it used to
+// do it by re-reading the directory by email. There is no synchronous
+// directory any more, and the login response already carries the user.
+export type LoginResult = { success: true; user: AppUser } | { success: false; error: string };
+
+/** For calls whose only interesting outcome is "worked" or "here is why not". */
+export type ActionResult = { success: true } | { success: false; error: string };
 
 type AuthContextValue = {
   currentUser: AppUser | null;
@@ -22,7 +29,7 @@ type AuthContextValue = {
   isRestoringSession: boolean;
   login: (email: string, password: string) => Promise<LoginResult>;
   logout: () => Promise<void>;
-  changeOwnPassword: (currentPassword: string, newPassword: string) => Promise<LoginResult>;
+  changeOwnPassword: (currentPassword: string, newPassword: string) => Promise<ActionResult>;
   hasRole: (role: RoleId) => boolean;
   hasPermission: (action: ActionId) => boolean;
   hasModuleAccess: (moduleId: ModuleId) => boolean;
@@ -64,8 +71,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const login = useCallback(async (email: string, password: string): Promise<LoginResult> => {
     try {
-      setCurrentUser(await loginRequest(email, password));
-      return { success: true };
+      const user = await loginRequest(email, password);
+      setCurrentUser(user);
+      return { success: true, user };
     } catch (error) {
       // The backend's own message is shown as written: it distinguishes a
       // wrong credential ('Invalid email or password.') from an account that
@@ -89,7 +97,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const changeOwnPassword = useCallback(
-    async (currentPassword: string, newPassword: string): Promise<LoginResult> => {
+    async (currentPassword: string, newPassword: string): Promise<ActionResult> => {
       try {
         await changePassword(currentPassword, newPassword);
         return { success: true };

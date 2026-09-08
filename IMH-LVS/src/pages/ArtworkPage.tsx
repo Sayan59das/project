@@ -56,7 +56,8 @@ import { PageHeader } from '../components/PageHeader';
 import { StatusChip } from '../components/StatusChip';
 import { ArtworkPreview } from '../components/ArtworkPreview';
 import { useAuth } from '../auth/AuthContext';
-import { getBrands, getFlavours, getMarketingCompanies } from '../services/masterService';
+import { useBrands, useFlavours, useMarketingCompanies } from '../hooks/useMasterData';
+import { useInvalidateProducts, useProducts } from '../hooks/useProducts';
 import { getSettings } from '../services/settingsService';
 import { extractLabelData, LabelExtractionError } from '../services/extractionService';
 import {
@@ -69,11 +70,11 @@ import {
 import {
   archiveArtwork,
   findDuplicateArtworkVersion,
-  getArtworks,
   sendArtworkForComparison,
   suggestNextArtworkVersion,
-  updateArtwork
+  updateArtworkStatus
 } from '../services/artworkService';
+import { useArtworks, useInvalidateArtworks } from '../hooks/useArtworks';
 import {
   ARTWORK_STATUS_OPTIONS,
   ARTWORK_TYPE_OPTIONS,
@@ -203,10 +204,14 @@ const NEW_PRODUCT_CHOICE = '__new__';
 
 export function ArtworkPage() {
   const { currentUser, hasPermission } = useAuth();
+  const marketingCompanies = useMarketingCompanies();
+  const brands = useBrands();
+  const flavours = useFlavours();
+  const { products } = useProducts();
+  const invalidateProducts = useInvalidateProducts();
   const canUpload = hasPermission('UPLOAD');
   const canEdit = hasPermission('EDIT');
   const canSendForComparison = hasPermission('INITIATE');
-  const actor = currentUser?.fullName ?? 'Unknown User';
   const actorInfo = {
     id: currentUser?.id ?? '',
     name: currentUser?.fullName ?? 'Unknown User',
@@ -214,7 +219,8 @@ export function ArtworkPage() {
   };
   const defaultPageSize = getSettings(currentUser?.id ?? '').pageSize;
 
-  const [artworks, setArtworks] = useState<Artwork[]>(() => getArtworks());
+  const { artworks, isError: artworksFailed, error: artworksError } = useArtworks();
+  const invalidateArtworks = useInvalidateArtworks();
   const [search, setSearch] = useState('');
   const [filterDraft, setFilterDraft] = useState<FilterState>(EMPTY_FILTERS);
   const [appliedFilters, setAppliedFilters] = useState<FilterState>(EMPTY_FILTERS);
@@ -250,25 +256,52 @@ export function ArtworkPage() {
   const [viewArtwork, setViewArtwork] = useState<Artwork | null>(null);
   const [viewFullscreen, setViewFullscreen] = useState(false);
   const [archiveTarget, setArchiveTarget] = useState<Artwork | null>(null);
+  // Saving an upload is a round trip now (it reuses master records over the
+  // API before writing), so the button has to say it is working — otherwise a
+  // slow save looks like a click that did nothing and people click again,
+  // which is how you get two artworks for one file.
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  // Failures from the two status actions in the details panel, which have no
+  // form of their own to report into.
+  const [actionError, setActionError] = useState<string | null>(null);
 
-  const refresh = () => setArtworks(getArtworks());
+  const refresh = () => invalidateArtworks();
 
-  const marketingCompanyOptions = useMemo(() => getMarketingCompanies().map((company) => company.companyName), []);
+  const marketingCompanyOptions = useMemo(
+    () => marketingCompanies.items.map((company) => company.companyName),
+    [marketingCompanies.items]
+  );
   const brandOptions = useMemo(() => {
-    const all = getBrands();
+    const all = brands.items;
     const scoped = labelForm.marketingCompanyName
       ? all.filter((brand) => brand.marketingCompany.trim().toLowerCase() === labelForm.marketingCompanyName.trim().toLowerCase())
       : all;
     return Array.from(new Set(scoped.map((brand) => brand.brandName)));
-  }, [labelForm.marketingCompanyName]);
-  const flavourOptions = useMemo(() => getFlavours().map((flavour) => flavour.flavourName), []);
+  }, [brands.items, labelForm.marketingCompanyName]);
+  const flavourOptions = useMemo(() => flavours.items.map((flavour) => flavour.flavourName), [flavours.items]);
+  const mastersError = [marketingCompanies, brands, flavours].find((query) => query.isError)?.error;
 
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  const exactProductMatch = useMemo(() => findExactProductMatch(labelForm), [labelForm.productName, labelForm.brand, labelForm.marketingCompanyName]);
-  const possibleMatches = useMemo(
-    () => (exactProductMatch ? [] : findPossibleProductMatches(labelForm)),
+  // An outage must not look like a company with no brands: the upload form
+  // reads these three lists, and empty dropdowns with no explanation is how
+  // somebody retypes a brand that already exists.
+  const mastersFailed = marketingCompanies.isError || brands.isError || flavours.isError;
+
+  // Matched against the cached product list rather than a lookup per keystroke:
+  // these re-run on every character typed into three fields. submitLabelIntake
+  // asks the server again at save time, which is the answer that decides
+  // whether a product is created.
+  // The dependency lists name the identifying FIELDS rather than labelForm
+  // itself, on purpose: the whole form object changes on every keystroke in any
+  // of a dozen fields, and only these three can change the answer.
+  const exactProductMatch = useMemo(
+    () => findExactProductMatch(products, labelForm),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [labelForm.brand, labelForm.marketingCompanyName, exactProductMatch]
+    [products, labelForm.productName, labelForm.brand, labelForm.marketingCompanyName]
+  );
+  const possibleMatches = useMemo(
+    () => (exactProductMatch ? [] : findPossibleProductMatches(products, labelForm)),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [products, labelForm.brand, labelForm.marketingCompanyName, exactProductMatch]
   );
 
   // Reset an in-progress "which product?" choice whenever the identifying
@@ -286,7 +319,9 @@ export function ArtworkPage() {
   useEffect(() => {
     if (versionTouched || !selectedFile) return;
     if (targetProductId && labelForm.marketingCompanyName) {
-      setUploadVersion(suggestNextArtworkVersion(targetProductId, labelForm.marketingCompanyName, uploadArtworkType));
+      // A suggestion only — the server issues the version the artwork is
+      // actually saved with.
+      setUploadVersion(suggestNextArtworkVersion(artworks, targetProductId, labelForm.marketingCompanyName, uploadArtworkType));
     } else {
       setUploadVersion('V1');
     }
@@ -507,53 +542,77 @@ export function ArtworkPage() {
     return Object.keys(errors).length === 0;
   };
 
-  const persist = () => {
+  const persist = async () => {
     if (editingId) {
-      updateArtwork(editingId, { artworkType: formState.artworkType, status: formState.status, remarks: formState.remarks }, actor);
-      refresh();
-      setFormOpen(false);
-      setDuplicateMatch(null);
+      // Status and remarks only. An artwork's content — including which type of
+      // artwork it is — is immutable once uploaded: a correction is a new
+      // version, not an edit, and the API offers no general PATCH for that
+      // reason. The Artwork Type control in this drawer is read-only.
+      setIsSubmitting(true);
+      try {
+        await updateArtworkStatus(editingId, formState.status, formState.remarks);
+        refresh();
+        setFormOpen(false);
+        setDuplicateMatch(null);
+      } catch (err) {
+        setUploadErrors((prev) => ({ ...prev, submit: err instanceof Error ? err.message : 'Could not save this artwork.' }));
+      } finally {
+        setIsSubmitting(false);
+      }
       return;
     }
 
     if (!selectedFile) return;
+    setIsSubmitting(true);
     try {
-      const result = submitLabelIntake(
+      const result = await submitLabelIntake(
         {
           extracted: labelForm,
           artworkType: uploadArtworkType,
-          version: uploadVersion,
           remarks: uploadRemarks,
           file: { fileName: selectedFile.name, fileType: selectedFile.type, fileSize: selectedFile.size, filePath },
           linkToProductId: resolvedLinkProductId
-        },
-        actorInfo
+        }
       );
       refresh();
       setFormOpen(false);
       setDuplicateMatch(null);
+      // The upload may have created a product, and always creates an artwork
+      // linked to one, so the cached catalogue is stale from here on.
+      invalidateProducts();
       setIntakeResult(result);
     } catch (err) {
+      // The intake reuses master records over the network before it writes
+      // anything, so this now also catches "the server is unreachable" — which
+      // is why the message is shown rather than the upload appearing to work.
       setUploadErrors((prev) => ({ ...prev, submit: err instanceof Error ? err.message : 'Failed to save label information.' }));
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
   const handleSave = () => {
     if (editingId) {
       if (!validate()) return;
-      persist();
+      void persist();
       return;
     }
 
     if (!validateUpload()) return;
     if (targetProductId) {
-      const duplicate = findDuplicateArtworkVersion(targetProductId, labelForm.marketingCompanyName, uploadVersion, uploadArtworkType);
+      const duplicate = findDuplicateArtworkVersion(
+        artworks,
+        targetProductId,
+        labelForm.marketingCompanyName,
+        uploadVersion,
+        uploadArtworkType
+      );
       if (duplicate) {
         setDuplicateMatch(duplicate);
         return;
       }
     }
-    persist();
+    void persist();
   };
 
   // ---------------------------------------------------------------------
@@ -572,23 +631,36 @@ export function ArtworkPage() {
     link.click();
   };
 
-  const handleSendForComparison = (artwork: Artwork) => {
-    sendArtworkForComparison(artwork.id, actorInfo);
-    refresh();
-    setViewArtwork((prev) => (prev && prev.id === artwork.id ? { ...prev, status: 'Pending Comparison' } : prev));
+  // Both of these show the new status only after the server has accepted it.
+  // Flipping the panel optimistically and refetching would show 'Archived' for
+  // a moment on a request that failed, which is the one thing an audit-trail
+  // screen must not do.
+  const handleSendForComparison = async (artwork: Artwork) => {
+    try {
+      await sendArtworkForComparison(artwork.id, actorInfo);
+      refresh();
+      setViewArtwork((prev) => (prev && prev.id === artwork.id ? { ...prev, status: 'Pending Comparison' } : prev));
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : 'Could not send this artwork for comparison.');
+    }
   };
 
-  const handleConfirmArchive = () => {
+  const handleConfirmArchive = async () => {
     if (!archiveTarget) return;
-    archiveArtwork(archiveTarget.id, actor);
-    refresh();
-    setViewArtwork((prev) => (prev && prev.id === archiveTarget.id ? { ...prev, status: 'Archived' } : prev));
+    const target = archiveTarget;
     setArchiveTarget(null);
+    try {
+      await archiveArtwork(target.id);
+      refresh();
+      setViewArtwork((prev) => (prev && prev.id === target.id ? { ...prev, status: 'Archived' } : prev));
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : 'Could not archive this artwork.');
+    }
   };
 
   const versionHistory = useMemo(() => {
     if (!viewArtwork) return [];
-    return getArtworks()
+    return artworks
       .filter(
         (artwork) =>
           artwork.productId === viewArtwork.productId &&
@@ -662,6 +734,19 @@ export function ArtworkPage() {
   return (
     <Box>
       <PageHeader title="Artwork Management" />
+
+      {/* An artwork table that is empty because the fetch failed must not read
+          as "nothing is waiting for review". */}
+      {artworksFailed && (
+        <Alert severity="error" sx={{ mb: 2 }}>
+          {artworksError instanceof Error ? artworksError.message : 'Could not load artwork.'}
+        </Alert>
+      )}
+      {actionError && (
+        <Alert severity="error" sx={{ mb: 2 }} onClose={() => setActionError(null)}>
+          {actionError}
+        </Alert>
+      )}
 
       <Box sx={{ display: 'grid', gap: 2, gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', mb: 3 }}>
         {[
@@ -855,14 +940,25 @@ export function ArtworkPage() {
             </IconButton>
           </Box>
 
+          {mastersFailed && (
+            <Alert severity="warning" sx={{ mb: 2 }}>
+              {mastersError instanceof Error ? mastersError.message : 'Could not load master data.'} The dropdowns below are
+              incomplete — an empty list here means the lookup failed, not that there are no records.
+            </Alert>
+          )}
+
           {editingId ? (
             <Stack spacing={2}>
               <Typography variant="body2" sx={{ color: 'var(--c-text-3)' }}>
                 {formState.productName} â€” {formState.marketingCompany} â€” {formState.version}
               </Typography>
-              <FormControl error={Boolean(formErrors.artworkType)}>
-                <InputLabel>Artwork Type *</InputLabel>
-                <Select value={formState.artworkType} label="Artwork Type *" onChange={handleArtworkTypeChange}>
+              {/* Read-only: a correction is a new version, not an edit, so the
+                  API accepts only a status/remarks change here. Shown rather
+                  than hidden because which type this is matters when deciding
+                  the status. */}
+              <FormControl error={Boolean(formErrors.artworkType)} disabled>
+                <InputLabel>Artwork Type</InputLabel>
+                <Select value={formState.artworkType} label="Artwork Type" onChange={handleArtworkTypeChange}>
                   {ARTWORK_TYPE_OPTIONS.map((type) => (
                     <MenuItem key={type} value={type}>
                       {type}
@@ -1189,7 +1285,12 @@ export function ArtworkPage() {
             <Button onClick={handleCloseForm} sx={{ textTransform: 'none' }}>
               Cancel
             </Button>
-            <Button variant="contained" sx={{ textTransform: 'none' }} onClick={handleSave} disabled={!editingId && !selectedFile}>
+            <Button
+              variant="contained"
+              sx={{ textTransform: 'none' }}
+              onClick={handleSave}
+              disabled={isSubmitting || (!editingId && !selectedFile)}
+            >
               {editingId ? 'Save Changes' : 'Save Label & Product'}
             </Button>
           </Box>
