@@ -6,7 +6,14 @@
 // and never touch fetch/FormData directly, mirroring how
 // labelExtractionService.ts is the sole HTTP boundary for extraction.
 import { API_BASE_URL } from './apiConfig';
-import type { LabelComparisonApiResult, LabelComparisonFieldResult, LabelComparisonSummary } from '../types/labelComparison';
+import type {
+  LabelComparisonApiResult,
+  LabelComparisonFieldResult,
+  LabelComparisonSummary,
+  VisualComparisonResult,
+  VisualComparisonSummary,
+  VisualComparisonStatus
+} from '../types/labelComparison';
 import type { LabelExtractionApiResult } from './labelExtractionService';
 
 // Thrown only for transport/server-side problems (network unreachable,
@@ -103,6 +110,59 @@ export async function compareLabels(labelAFile: File, labelBFile: File): Promise
     labelB: readExtractionResult(data.labelB),
     comparison: readComparisonSummary(data.comparison)
   };
+}
+
+function readVisualComparisonResult(data: unknown): VisualComparisonResult {
+  const record = (data ?? {}) as Record<string, unknown>;
+  const status = readString(record.status) as VisualComparisonStatus;
+  return {
+    status: status || 'MISSING',
+    similarityPercentage: typeof record.similarityPercentage === 'number' ? record.similarityPercentage : undefined
+  };
+}
+
+function readVisualComparisonSummary(data: unknown): VisualComparisonSummary {
+  const record = (data ?? {}) as Record<string, unknown>;
+  return {
+    logo: readVisualComparisonResult(record.logo),
+    designLayout: readVisualComparisonResult(record.designLayout)
+  };
+}
+
+// Posts both artwork files for Logo/Design-Layout visual comparison (POST
+// /api/labels/compare-visual) — the visual counterpart to
+// compareExtractedLabels below. Kept separate because it needs the actual
+// image bytes, not extracted text fields; see
+// backend/src/services/imageSimilarity.service.ts for what it measures.
+export async function compareVisual(labelAFile: File, labelBFile: File): Promise<VisualComparisonSummary> {
+  const formData = new FormData();
+  formData.append('labelA', labelAFile);
+  formData.append('labelB', labelBFile);
+
+  const compareUrl = `${API_BASE_URL}/api/labels/compare-visual`;
+
+  let response: Response;
+  try {
+    response = await fetch(compareUrl, { method: 'POST', body: formData });
+  } catch (err) {
+    console.error(`[labelComparisonService] Request to ${compareUrl} failed:`, err);
+    throw new LabelComparisonError('Visual comparison service is currently unavailable. Please try again.');
+  }
+
+  let body: unknown;
+  try {
+    body = await response.json();
+  } catch {
+    throw new LabelComparisonError('The visual comparison service returned an unexpected response.');
+  }
+
+  const parsed = body as { success?: boolean; message?: string; data?: Record<string, unknown> } | null;
+
+  if (!response.ok || !parsed?.success) {
+    throw new LabelComparisonError(readString(parsed?.message) || 'Could not compare the uploaded artwork images. Please try again.');
+  }
+
+  return readVisualComparisonSummary(parsed.data?.visualComparison);
 }
 
 // Posts two ALREADY-EXTRACTED labels for comparison (POST

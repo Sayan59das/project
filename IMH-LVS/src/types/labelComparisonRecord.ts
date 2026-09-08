@@ -22,13 +22,13 @@
 // model that isn't backed by real extraction. That type/workflow/store is
 // untouched by this feature.
 import type { ArtworkStatus } from './artwork';
-import type { LabelComparisonApiResult } from './labelComparison';
+import type { LabelComparisonApiResult, VisualComparisonSummary } from './labelComparison';
 
 export type CrossCompanyOutcome =
   // The candidate's or the subject's artwork file has no retrievable bytes
   // in this session (see artworkService.ts's file-storage-limitation note).
   | { status: 'file_unavailable' }
-  | { status: 'success'; result: LabelComparisonApiResult };
+  | { status: 'success'; result: LabelComparisonApiResult; visualComparison?: VisualComparisonSummary };
 
 export type CrossCompanyResultEntry = {
   candidateProductId: string;
@@ -49,6 +49,11 @@ export type VersionComparisonResult = {
   approvedArtworkStatus: ArtworkStatus;
   approvedArtworkApprovedDate: string;
   result: LabelComparisonApiResult;
+  // Logo / Design-Layout (AI module brief §7/§9) — undefined only when the
+  // visual comparison call itself failed (service unreachable, unsupported
+  // file); a readable-but-different image pair still gets a real
+  // MATCH/SIMILAR/CONFLICT here, never a silently-skipped row.
+  visualComparison?: VisualComparisonSummary;
 };
 
 export type LabelComparisonRun = {

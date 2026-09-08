@@ -13,6 +13,7 @@ import { StatusChip } from '../components/StatusChip';
 import { ArtworkCompareViewer } from '../components/labelComparison/ArtworkCompareViewer';
 import { DeviationsPanel, classifyDeviation } from '../components/labelComparison/DeviationsPanel';
 import { CrossCompanyResults } from '../components/labelComparison/CrossCompanyResults';
+import { VisualComparisonSection } from '../components/labelComparison/VisualComparisonSection';
 import { getLabelComparisonById } from '../services/labelComparisonHistoryService';
 import { useArtworks } from '../hooks/useArtworks';
 import { formatDateTime } from '../utils/dateFormat';
@@ -247,6 +248,8 @@ export function ComparisonDetailPage() {
               ))}
             </Box>
           </Paper>
+
+          <VisualComparisonSection visualComparison={versionComparison.visualComparison} />
 
           <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', lg: '1fr 1fr' }, gap: 3, mb: 3 }}>
             <Paper sx={{ p: 2.5 }}>

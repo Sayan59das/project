@@ -39,3 +39,24 @@ export type LabelComparisonApiResult = {
   labelB: LabelExtractionApiResult;
   comparison: LabelComparisonSummary;
 };
+
+// Logo / Design-Layout — POST /api/labels/compare-visual (see
+// backend/src/services/imageSimilarity.service.ts). A separate three-tier
+// status from LabelComparisonFieldStatus above: this is a continuous pixel
+// similarity score bucketed into MATCH/SIMILAR/CONFLICT, not an exact-text
+// match, so "SIMILAR" is a real, meaningful middle state here in a way it
+// deliberately isn't for the text fields.
+export type VisualComparisonStatus = 'MATCH' | 'SIMILAR' | 'CONFLICT' | 'MISSING';
+
+export type VisualComparisonResult = {
+  status: VisualComparisonStatus;
+  similarityPercentage?: number;
+};
+
+// One real similarity score currently backs both rows — see
+// imageSimilarity.service.ts's module comment for why (no logo/layout
+// region-detection step exists yet to measure them independently).
+export type VisualComparisonSummary = {
+  logo: VisualComparisonResult;
+  designLayout: VisualComparisonResult;
+};

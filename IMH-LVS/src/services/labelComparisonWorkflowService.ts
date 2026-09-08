@@ -33,7 +33,7 @@
 // needed for comparison has no retrievable file, this module reports that
 // plainly rather than faking a comparison.
 import { extractLabel, LabelExtractionError, type LabelExtractionApiResult } from './labelExtractionService';
-import { compareExtractedLabels, LabelComparisonError } from './labelComparisonService';
+import { compareExtractedLabels, compareVisual, LabelComparisonError } from './labelComparisonService';
 import { getArtworkById, getArtworksByProduct, getLatestApprovedArtworkForProduct, parseVersionNumber } from './artworkService';
 import { getCrossCompanyCandidates } from './comparisonService';
 import { getProductById, getProducts } from './productService';
@@ -42,6 +42,7 @@ import type { Product } from '../types/product';
 import type { Artwork } from '../types/artwork';
 import type { CrossCompanyResultEntry, LabelComparisonRun } from '../types/labelComparisonRecord';
 import type { CrossCompanyCandidate } from '../types/comparison';
+import type { VisualComparisonSummary } from '../types/labelComparison';
 
 export { LabelExtractionError, LabelComparisonError };
 
@@ -115,13 +116,26 @@ async function fetchArtworkFile(artwork: Artwork): Promise<File | undefined> {
   }
 }
 
-async function extractArtwork(artwork: Artwork): Promise<LabelExtractionApiResult | undefined> {
-  const file = await fetchArtworkFile(artwork);
-  if (!file) return undefined;
-  return extractLabel(file);
+// Logo / Design-Layout (AI module brief §7/§9) — needs the actual image
+// bytes of both artworks, which the text-comparison path above never
+// touches. Deliberately never throws and never blocks the base comparison:
+// a vision-model-style capability being unreachable must cost this one row,
+// not the whole run — same principle as aiExtraction.service.ts's fallback.
+async function tryCompareVisual(fileA: File | undefined, fileB: File | undefined): Promise<VisualComparisonSummary | undefined> {
+  if (!fileA || !fileB) return undefined;
+  try {
+    return await compareVisual(fileA, fileB);
+  } catch (error) {
+    console.warn('[labelComparisonWorkflowService] Visual comparison did not complete — omitting the Logo/Design row.', error);
+    return undefined;
+  }
 }
 
-async function compareCandidate(subjectExtraction: LabelExtractionApiResult, candidate: CrossCompanyCandidate): Promise<CrossCompanyResultEntry> {
+async function compareCandidate(
+  subjectFile: File | undefined,
+  subjectExtraction: LabelExtractionApiResult,
+  candidate: CrossCompanyCandidate
+): Promise<CrossCompanyResultEntry> {
   const base = {
     candidateProductId: candidate.productId,
     candidateProductName: candidate.productName,
@@ -134,10 +148,14 @@ async function compareCandidate(subjectExtraction: LabelExtractionApiResult, can
   // rows are shared now, the bytes are not, so a candidate uploaded in somebody
   // else's session has no file this browser can read.
   if (!candidateArtwork) return { ...base, outcome: { status: 'file_unavailable' } };
-  const candidateExtraction = await extractArtwork(candidateArtwork);
-  if (!candidateExtraction) return { ...base, outcome: { status: 'file_unavailable' } };
-  const result = await compareExtractedLabels(subjectExtraction, candidateExtraction, 'cross_company');
-  return { ...base, outcome: { status: 'success', result } };
+  const candidateFile = await fetchArtworkFile(candidateArtwork);
+  if (!candidateFile) return { ...base, outcome: { status: 'file_unavailable' } };
+  const candidateExtraction = await extractLabel(candidateFile);
+  const [result, visualComparison] = await Promise.all([
+    compareExtractedLabels(subjectExtraction, candidateExtraction, 'cross_company'),
+    tryCompareVisual(subjectFile, candidateFile)
+  ]);
+  return { ...base, outcome: { status: 'success', result, visualComparison } };
 }
 
 export type RunOutcome =
@@ -150,14 +168,19 @@ export async function runComparisonWorkflow(plan: ComparisonPlan, actor: string)
   }
 
   const candidateArtwork = plan.status === 'up_to_date' ? plan.approvedArtwork : plan.candidateArtwork;
-  const candidateExtraction = await extractArtwork(candidateArtwork);
-  if (!candidateExtraction) return { status: 'file_unavailable', artwork: candidateArtwork };
+  const candidateFile = await fetchArtworkFile(candidateArtwork);
+  if (!candidateFile) return { status: 'file_unavailable', artwork: candidateArtwork };
+  const candidateExtraction = await extractLabel(candidateFile);
 
   let versionComparison: LabelComparisonRun['versionComparison'];
   if (plan.status === 'ready') {
-    const approvedExtraction = await extractArtwork(plan.approvedArtwork);
-    if (!approvedExtraction) return { status: 'file_unavailable', artwork: plan.approvedArtwork };
-    const result = await compareExtractedLabels(candidateExtraction, approvedExtraction, 'same_company');
+    const approvedFile = await fetchArtworkFile(plan.approvedArtwork);
+    if (!approvedFile) return { status: 'file_unavailable', artwork: plan.approvedArtwork };
+    const approvedExtraction = await extractLabel(approvedFile);
+    const [result, visualComparison] = await Promise.all([
+      compareExtractedLabels(candidateExtraction, approvedExtraction, 'same_company'),
+      tryCompareVisual(candidateFile, approvedFile)
+    ]);
     versionComparison = {
       candidateArtworkId: candidateArtwork.id,
       candidateArtworkVersion: candidateArtwork.version,
@@ -167,14 +190,15 @@ export async function runComparisonWorkflow(plan: ComparisonPlan, actor: string)
       approvedArtworkFileName: plan.approvedArtwork.fileName,
       approvedArtworkStatus: plan.approvedArtwork.status,
       approvedArtworkApprovedDate: plan.approvedArtwork.updatedDate,
-      result
+      result,
+      visualComparison
     };
   }
 
   const candidates = await getCrossCompanyCandidates(plan.product.id);
   const crossCompanyResults: CrossCompanyResultEntry[] = [];
   for (const candidate of candidates) {
-    crossCompanyResults.push(await compareCandidate(candidateExtraction, candidate));
+    crossCompanyResults.push(await compareCandidate(candidateFile, candidateExtraction, candidate));
   }
 
   const run = saveLabelComparisonRun({

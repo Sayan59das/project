@@ -20,16 +20,48 @@ def _validate_fssai_number(value):
     return digits if len(digits) == 14 else None
 
 
-def _validate_logo(value):
-    """The logo field describes a graphic on the label, never a link. The
-    model has been observed to fabricate a plausible-looking placeholder URL
-    when it can't describe the logo confidently — reject anything URL-shaped
-    rather than pass a hallucinated link through as if it were real data."""
+def _validate_logo(value, other_fields=()):
+    """The logo field describes a graphic on the label, never a link or a
+    restated company name. The model has been observed to fabricate a
+    plausible-looking placeholder URL when it can't describe the logo
+    confidently, and separately to copy another field's value (e.g. the
+    marketing company name) into logo instead of admitting it can't
+    describe a graphic — reject both rather than pass either through as if
+    it were a real logo description. other_fields is the set of this same
+    extraction's other string field values, normalised the same way, so an
+    exact cross-field copy can be caught regardless of which field it came
+    from."""
     if value is None:
         return None
-    if re.match(r"^\s*(https?://|www\.)", str(value), re.IGNORECASE):
+    text = str(value)
+    if re.match(r"^\s*(https?://|www\.)", text, re.IGNORECASE):
+        return None
+    if text.strip().lower() in other_fields:
         return None
     return value
+
+
+_KNOWN_COLOUR_WORDS = (
+    "red", "orange", "yellow", "green", "blue", "purple", "pink", "magenta",
+    "cyan", "brown", "black", "white", "gray", "grey", "gold", "golden",
+    "silver", "maroon", "navy", "teal", "beige", "turquoise", "violet",
+    "indigo", "lavender", "peach", "crimson", "scarlet", "lime", "olive",
+    "tan", "cream", "ivory", "coral", "burgundy", "mint", "amber", "rust"
+)
+
+
+def _validate_colour_theme(value):
+    """colour_theme should name print/branding colours actually used on the
+    packaging design. The model has been observed to instead read an
+    unrelated printed code (e.g. a batch-code placeholder stamp like "UVZ")
+    as if it were a colour — keep only entries that contain a recognisable
+    colour word, and drop the rest, rather than pass a non-colour value
+    through as if it were real data."""
+    if value is None:
+        return None
+    items = value if isinstance(value, list) else [part.strip() for part in str(value).split(",") if part.strip()]
+    kept = [item for item in items if re.search(r"\b(" + "|".join(_KNOWN_COLOUR_WORDS) + r")\b", str(item), re.IGNORECASE)]
+    return kept if kept else None
 
 class ExtractionService:
     def __init__(self, use_mock: bool = True):
@@ -93,8 +125,17 @@ class ExtractionService:
                 "one is printed (e.g. one for the manufacturer, one for the marketer), extract the one for "
                 "the Marketed By / brand-owner company. If you cannot read all 14 digits with certainty, "
                 "return null rather than padding or guessing a digit.\n"
-                "- logo: describe what the logo looks like (shapes, symbols, colours). It is a graphic on "
-                "the label, never a URL or web link — never output anything starting with 'http' or 'www'.\n"
+                "- logo: look for a distinct icon, emblem, or symbol near the brand name (e.g. a leaf, "
+                "shield, circular badge, mascot) — this is separate from the brand name's own stylised "
+                "text, and separate from the marketing/manufacturing company name. Describe its actual "
+                "shape and colour only if you can clearly see it; return null rather than guess if you "
+                "are not confident, or if what you'd describe is really just repeating another field "
+                "(e.g. a company name) rather than a distinct graphic. It is a graphic, never a URL or "
+                "web link — never output anything starting with 'http' or 'www'.\n"
+                "- colour_theme: name only the actual print/branding colours of the packaging design "
+                "itself (background colours, headline text colours) — at most 3-4 colour words. Never "
+                "read a printed code, batch number, or placeholder text (e.g. inside a Batch No./Pkg. "
+                "Date box) as if it were a colour.\n"
                 "- package_size: the net content/weight/count actually sold (e.g. '30 Gummies', '150 g', "
                 "'500 ml'). This is NOT a print/die-cut dimension annotation such as 'SIZE: 222x88mm' that "
                 "may appear as a production mark on the artwork — ignore those.\n"
@@ -176,7 +217,13 @@ class ExtractionService:
         # Deterministic checks the prompt can request but not guarantee — reject
         # rather than trust a value that fails them outright.
         label_data["fssai_number"] = _validate_fssai_number(label_data.get("fssai_number"))
-        label_data["logo"] = _validate_logo(label_data.get("logo"))
+        other_field_values = {
+            str(label_data.get(key)).strip().lower()
+            for key in ("brand_name", "marketing_company", "manufacturing_company", "product_name")
+            if label_data.get(key)
+        }
+        label_data["logo"] = _validate_logo(label_data.get("logo"), other_field_values)
+        label_data["colour_theme"] = _validate_colour_theme(label_data.get("colour_theme"))
 
         # We use model_validate/parse_obj to safely ignore extra fields and enforce types
         return ExtractedLabel(**label_data)

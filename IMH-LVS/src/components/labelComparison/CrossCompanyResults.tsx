@@ -62,6 +62,14 @@ export function CrossCompanyResults({ results }: Props) {
                     Potentially too similar
                   </Typography>
                 )}
+                {entry.outcome.visualComparison && (
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, justifyContent: 'flex-end', mt: 0.5 }}>
+                    <Typography variant="caption" sx={{ color: 'var(--c-text-3)' }}>
+                      Logo
+                    </Typography>
+                    <StatusChip status={entry.outcome.visualComparison.logo.status} />
+                  </Box>
+                )}
               </Box>
             ) : (
               <StatusChip status="NOT_COMPARED" />

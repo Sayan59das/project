@@ -62,7 +62,8 @@ export const TEST_ACCOUNTS = {
   /** The label routes need a session, not a particular role. */
   extract: { id: 'USR-T-EXTRACT', role: 'qa' },
   compare: { id: 'USR-T-COMPARE', role: 'qa' },
-  compareExtracted: { id: 'USR-T-COMPARE-EXTRACTED', role: 'qa' }
+  compareExtracted: { id: 'USR-T-COMPARE-EXTRACTED', role: 'qa' },
+  compareVisual: { id: 'USR-T-COMPARE-VISUAL', role: 'qa' }
 } as const;
 
 export type TestAccount = (typeof TEST_ACCOUNTS)[keyof typeof TEST_ACCOUNTS];

@@ -2,6 +2,7 @@ import fs from 'fs';
 import { Request, Response } from 'express';
 import { buildPlaceholderExtraction, extractLabelFromFile, LabelExtractionResult } from '../services/labelExtraction.service';
 import { compareLabels as compareLabelData, ComparisonStage } from '../services/labelComparison.service';
+import { compareArtworkImages, VisualComparisonResult } from '../services/imageSimilarity.service';
 import { claims as claimsMaster, flavours as flavoursMaster } from '../repositories/masters.repository';
 
 /**
@@ -127,15 +128,70 @@ export async function compareLabels(req: Request, res: Response) {
 
   try {
     const { knownClaims, knownFlavours } = await loadKnownMasterNames();
-    const [labelA, labelB] = await Promise.all([
+    const [labelA, labelB, visualComparison] = await Promise.all([
       extractLabelFromFile(fileA.path, fileA.mimetype, knownClaims, knownFlavours),
-      extractLabelFromFile(fileB.path, fileB.mimetype, knownClaims, knownFlavours)
+      extractLabelFromFile(fileB.path, fileB.mimetype, knownClaims, knownFlavours),
+      buildVisualComparison(fileA, fileB)
     ]);
     const comparison = compareLabelData(labelA, labelB);
-    res.status(200).json({ success: true, data: { labelA, labelB, comparison } });
+    res.status(200).json({ success: true, data: { labelA, labelB, comparison, visualComparison } });
   } catch (error) {
     console.error('[labels.controller] Unexpected failure building the comparison result:', error instanceof Error ? error.message : error);
     res.status(500).json({ success: false, message: 'Could not compare the uploaded labels. Please try again.' });
+  } finally {
+    removeTempFile(fileA);
+    removeTempFile(fileB);
+  }
+}
+
+// Logo and Design/Layout (AI module brief §7/§9) — compared on the actual
+// artwork pixels, never on a vision model's text description of them. See
+// imageSimilarity.service.ts's module comment for why, and for the honest
+// limitation this relies on: one whole-image similarity score currently
+// backs both rows, since there is no logo/layout region-detection step to
+// measure them independently. Never throws — an unreadable file on either
+// side resolves to MISSING via compareArtworkImages itself.
+export type VisualComparisonSummary = {
+  logo: VisualComparisonResult;
+  designLayout: VisualComparisonResult;
+};
+
+async function buildVisualComparison(fileA: Express.Multer.File, fileB: Express.Multer.File): Promise<VisualComparisonSummary> {
+  const [bufferA, bufferB] = await Promise.all([fs.promises.readFile(fileA.path), fs.promises.readFile(fileB.path)]);
+  const result = await compareArtworkImages(
+    { buffer: bufferA, mimeType: fileA.mimetype },
+    { buffer: bufferB, mimeType: fileB.mimetype }
+  );
+  return { logo: result, designLayout: result };
+}
+
+// POST /api/labels/compare-visual — the visual counterpart to
+// /compare-extracted for Quick Label Comparison. That endpoint compares
+// already-extracted TEXT fields and has no file bytes to work with; this
+// endpoint is the reverse — it takes the two raw artwork files the
+// frontend already fetched for extraction and returns ONLY the Logo/Design
+// visual comparison, so the text and visual comparisons can be requested
+// independently without changing /compare-extracted's existing JSON-only
+// contract.
+export async function compareVisual(req: Request, res: Response) {
+  const files = req.files as { labelA?: Express.Multer.File[]; labelB?: Express.Multer.File[] } | undefined;
+  const fileA = files?.labelA?.[0];
+  const fileB = files?.labelB?.[0];
+
+  if (!fileA || !fileB) {
+    removeTempFile(fileA);
+    removeTempFile(fileB);
+    const message = !fileA && !fileB ? 'Both Label A and Label B files are required.' : !fileA ? 'Label A file is required.' : 'Label B file is required.';
+    res.status(400).json({ success: false, message });
+    return;
+  }
+
+  try {
+    const visualComparison = await buildVisualComparison(fileA, fileB);
+    res.status(200).json({ success: true, data: { visualComparison } });
+  } catch (error) {
+    console.error('[labels.controller] Unexpected failure building the visual comparison result:', error instanceof Error ? error.message : error);
+    res.status(500).json({ success: false, message: 'Could not compare the uploaded artwork images. Please try again.' });
   } finally {
     removeTempFile(fileA);
     removeTempFile(fileB);
