@@ -1,18 +1,18 @@
 // Artwork data access, against the real API.
 //
-// FILE STORAGE IS STILL NOT SOLVED, and this file is honest about it. The rows
-// live in Postgres now — id, version, status, remarks, who uploaded it — but
-// the bytes do not: the backend has a storage_key column and no object store
-// behind it, so an artwork read back from the API has `filePath: ''`, which the
-// preview components already render as "preview not available".
+// FILE STORAGE: durable now. createArtwork() saves the row, then the caller
+// (labelIntakeService.submitLabelIntake) calls uploadArtworkFile() below to
+// send the actual bytes to POST /api/artworks/:id/file, which writes them to
+// disk server-side and records a storage_key — see backend's
+// artworkFileStorage.service.ts. An artwork read back from the API from then
+// on has a real `filePath`: an absolute URL the browser can fetch from any
+// tab, any session, computed by the backend from that storage_key.
 //
-// What is preserved is the behaviour people rely on TODAY: a file picked in
-// this tab stays viewable in this tab. The upload creates a browser object URL,
-// and sessionFiles below remembers it for the artwork id the server issues, so
-// previews and the comparison workflow keep working for the upload you just
-// did. That URL dies with the tab, and nothing pretends otherwise — it is
-// deliberately not persisted anywhere, because a stored object URL is a string
-// that looks like a file and is not one.
+// sessionFiles below is kept as a same-tab fallback, not the primary
+// mechanism it used to be: it only overlays a blob: URL when the server's own
+// `filePath` is still empty (upload not yet attempted, or failed and the
+// caller chose to continue anyway), so a preview keeps working in this tab
+// for that one gap. It was never shared across tabs/sessions and still isn't.
 //
 // THE SERVER ISSUES THE VERSION NUMBER, under a lock (see the artwork
 // repository's nextVersionNumber). suggestNextArtworkVersion below still
@@ -20,6 +20,7 @@
 // people uploading at once are no longer both told they are V5.
 
 import { apiRequest, findOne } from './apiClient';
+import { API_BASE_URL } from './apiConfig';
 import { Artwork, ArtworkInput, ArtworkStatus, ArtworkType } from '../types/artwork';
 import { RoleId } from '../auth/permissions';
 
@@ -108,13 +109,69 @@ export function getLatestApprovedArtworkForProduct(productId: string, marketingC
 export type ArtworkCreateInput = Omit<ArtworkInput, 'version'>;
 
 export async function createArtwork(input: ArtworkCreateInput): Promise<Artwork> {
-  const created = await apiRequest<Artwork>('/artworks', { method: 'POST', body: input });
+  // input.filePath is this tab's blob: URL (if any) and is meaningful only to
+  // sessionFiles below — it must never reach the server as the row's
+  // filePath. It used to: the backend stored whatever non-empty string it was
+  // given straight into storage_key, so every upload's dead-on-arrival blob:
+  // URL (useless outside the tab that created it) got recorded as if it were
+  // a durably stored file. That was invisible before uploadArtworkFile()
+  // existed — a blob: URL and an empty string both render as "preview not
+  // available" once the tab closes — but now storage_key's presence is what
+  // POST /:id/file checks to refuse overwriting an existing file, and a blob:
+  // URL there made every real upload attempt fail with a false "already has a
+  // stored file" conflict.
+  const { filePath, ...rest } = input;
+  const created = await apiRequest<Artwork>('/artworks', { method: 'POST', body: { ...rest, filePath: '' } });
 
   // Remember this tab's object URL against the id the server just issued, so
-  // the artwork stays previewable for the rest of the session.
-  if (input.filePath?.startsWith('blob:')) sessionFiles.set(created.id, input.filePath);
+  // the artwork stays previewable for the rest of the session — overwritten by
+  // withSessionFile once uploadArtworkFile() below gives the row a real
+  // filePath, since that check prefers the server's own value.
+  if (filePath?.startsWith('blob:')) sessionFiles.set(created.id, filePath);
 
   return withSessionFile(created);
+}
+
+/** Thrown only for transport/server-side upload failures, never for a slow network by itself. */
+export class ArtworkFileUploadError extends Error {}
+
+/**
+ * Sends the real file bytes for an already-created artwork row to the
+ * backend, which durably stores them and returns the row with its now-real
+ * `filePath`.
+ *
+ * A raw `fetch`/`FormData` call rather than apiRequest(), which always
+ * JSON-encodes its body — same reason labelExtractionService.ts's
+ * extractLabel() does its own fetch. `credentials: 'include'` for the same
+ * cookie-session reason apiClient.ts's own comment explains.
+ */
+export async function uploadArtworkFile(artworkId: string, file: File): Promise<Artwork> {
+  const formData = new FormData();
+  formData.append('file', file);
+
+  const uploadUrl = `${API_BASE_URL}/api/artworks/${encodeURIComponent(artworkId)}/file`;
+
+  let response: Response;
+  try {
+    response = await fetch(uploadUrl, { method: 'POST', body: formData, credentials: 'include' });
+  } catch (err) {
+    console.error(`[artworkService] Request to ${uploadUrl} failed:`, err);
+    throw new ArtworkFileUploadError('Could not reach the server to store the uploaded file. Please try again.');
+  }
+
+  let body: unknown;
+  try {
+    body = await response.json();
+  } catch {
+    throw new ArtworkFileUploadError('The server returned an unexpected response while storing the uploaded file.');
+  }
+
+  const parsed = body as { success?: boolean; message?: string; data?: Artwork } | null;
+  if (!response.ok || !parsed?.success || !parsed.data) {
+    throw new ArtworkFileUploadError(parsed?.message || 'Could not store the uploaded file.');
+  }
+
+  return withSessionFile(parsed.data);
 }
 
 export async function updateArtworkStatus(id: string, status: ArtworkStatus, remarks?: string): Promise<Artwork | undefined> {

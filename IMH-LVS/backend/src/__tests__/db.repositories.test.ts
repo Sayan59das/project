@@ -533,11 +533,15 @@ describe('artwork repository', { skip: SKIP }, () => {
     });
   });
 
+  // filePath is a computed download URL, not the raw storage_key — see
+  // mapArtwork's own comment on why (the key is an internal handle, opaque
+  // outside artworkFileStorage.service.ts). Any non-null key is enough to
+  // turn it on; the literal value passed here is never read back.
   it('records where the file landed without looking like a user edit', async () => {
     await inRolledBackTransaction(async (client) => {
       const before = await getArtworkById('ART-0004', client);
-      const stored = await setArtworkStorage('ART-0004', 'artworks/ART-0004/v4.pdf', undefined, client);
-      assert.equal(stored?.filePath, 'artworks/ART-0004/v4.pdf');
+      const stored = await setArtworkStorage('ART-0004', 'ART-0004', undefined, client);
+      assert.equal(stored?.filePath, `${env.publicBaseUrl}/api/artworks/ART-0004/file`);
       assert.equal(stored?.updatedBy, before?.updatedBy);
       assert.equal(stored?.updatedDate, before?.updatedDate);
     });

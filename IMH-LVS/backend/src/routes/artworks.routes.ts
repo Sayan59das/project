@@ -5,6 +5,7 @@
 // status transition, a storage-key backfill, and a re-extraction that replaces
 // the stored reading.
 
+import fs from 'fs';
 import { Router } from 'express';
 import {
   createArtwork,
@@ -21,6 +22,9 @@ import {
 } from '../repositories/artwork.repository';
 import { asyncHandler, optionalString, orNotFound, requireActor, requireString, sendData } from '../controllers/http';
 import { ArtworkStatus, ArtworkType, LabelAttributesSource } from '../types/domain';
+import { ConflictError, DomainError, NotFoundError } from '../middleware/domainError';
+import { labelFileUpload } from '../middleware/upload.middleware';
+import { artworkFilePath, storeArtworkFile } from '../services/artworkFileStorage.service';
 
 const router = Router();
 
@@ -160,6 +164,78 @@ router.put(
     const storageKey = requireString(req.body, 'storageKey');
     const updated = await setArtworkStorage(req.params.id, storageKey, optionalString(req.body, 'checksumSha256'));
     sendData(res, orNotFound(updated, `Artwork "${req.params.id}"`));
+  })
+);
+
+function removeTempUpload(file: Express.Multer.File | undefined): void {
+  if (!file) return;
+  fs.unlink(file.path, (unlinkError) => {
+    if (unlinkError) console.error(`Failed to remove temporary upload ${file.path}:`, unlinkError);
+  });
+}
+
+/**
+ * Durably stores the file for an artwork row that already exists.
+ *
+ * Separate from POST / for the same reason setArtworkStorage is: the row and
+ * the upload can fail independently, so the row is created first (with the
+ * file metadata the browser already knows — name/type/size) and this closes
+ * the loop once the bytes themselves are safely on disk. Refuses a second
+ * upload onto an artwork that already has one — content is immutable once
+ * uploaded, so replacing it here would silently rewrite a version's bytes
+ * instead of creating a new version; a failed first attempt can still retry,
+ * since storage_key stays unset until this succeeds.
+ */
+router.post(
+  '/:id/file',
+  labelFileUpload,
+  asyncHandler(async (req, res) => {
+    const file = req.file;
+    if (!file) throw new DomainError('No file uploaded. Please attach a PDF, JPG or JPEG label file.');
+
+    try {
+      const artwork = orNotFound(await getArtworkById(req.params.id), `Artwork "${req.params.id}"`);
+      if (artwork.filePath) {
+        throw new ConflictError(
+          `Artwork "${req.params.id}" already has a stored file. Upload a corrected label as a new version instead.`
+        );
+      }
+      if (file.mimetype !== artwork.fileType) {
+        throw new DomainError(
+          `Uploaded file type "${file.mimetype}" does not match this artwork's declared file type "${artwork.fileType}".`
+        );
+      }
+
+      const { storageKey, checksumSha256 } = await storeArtworkFile(req.params.id, file.path, file.mimetype);
+      const updated = await setArtworkStorage(req.params.id, storageKey, checksumSha256);
+      sendData(res, orNotFound(updated, `Artwork "${req.params.id}"`));
+    } finally {
+      removeTempUpload(file);
+    }
+  })
+);
+
+/**
+ * Serves an artwork's durably-stored file back.
+ *
+ * The disk path is recomputed from the artwork's own recorded mime type
+ * rather than read out of storage_key, which is opaque outside this module —
+ * see artworkFileStorage.service.ts.
+ */
+router.get(
+  '/:id/file',
+  asyncHandler(async (req, res) => {
+    const artwork = orNotFound(await getArtworkById(req.params.id), `Artwork "${req.params.id}"`);
+    if (!artwork.filePath) throw new NotFoundError(`Artwork "${req.params.id}" has no stored file.`);
+
+    const diskPath = artworkFilePath(req.params.id, artwork.fileType);
+    if (!fs.existsSync(diskPath)) {
+      throw new NotFoundError(`Artwork "${req.params.id}"'s file is recorded as stored but is not available.`);
+    }
+
+    res.setHeader('Content-Type', artwork.fileType);
+    res.setHeader('Content-Disposition', `inline; filename="${encodeURIComponent(artwork.fileName)}"`);
+    fs.createReadStream(diskPath).pipe(res);
   })
 );
 

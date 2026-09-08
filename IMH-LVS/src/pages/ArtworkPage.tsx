@@ -570,7 +570,7 @@ export function ArtworkPage() {
           extracted: labelForm,
           artworkType: uploadArtworkType,
           remarks: uploadRemarks,
-          file: { fileName: selectedFile.name, fileType: selectedFile.type, fileSize: selectedFile.size, filePath },
+          file: { fileName: selectedFile.name, fileType: selectedFile.type, fileSize: selectedFile.size, filePath, file: selectedFile },
           linkToProductId: resolvedLinkProductId
         }
       );

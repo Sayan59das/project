@@ -18,7 +18,7 @@ import { Artwork, ArtworkType } from '../types/artwork';
 import { Product, ProductInput } from '../types/product';
 import { LabelAttributes } from '../types/comparison';
 import { FIXED_MANUFACTURING_COMPANY } from '../types/extraction';
-import { createArtwork } from './artworkService';
+import { createArtwork, uploadArtworkFile } from './artworkService';
 import {
   createProduct,
   findPossibleDuplicate,
@@ -48,6 +48,10 @@ export type LabelIntakeFile = {
   fileType: string;
   fileSize: number;
   filePath: string;
+  // The real browser File, uploaded to the backend after the artwork row is
+  // created (see submitLabelIntake below) so the bytes are durably stored,
+  // not just this tab's blob: URL in `filePath`.
+  file: File;
 };
 
 export type LabelIntakeInput = {
@@ -211,6 +215,17 @@ export async function submitLabelIntake(input: LabelIntakeInput): Promise<LabelI
     // it did.
     product = (await setProductSourceArtwork(product.id, artwork.id).catch(() => undefined)) ?? product;
   }
+
+  // Durable storage is best-effort relative to the intake itself: the product
+  // and artwork rows (and the label reading, saved below) are the primary
+  // record, and a failure here must not undo them or block the reviewer's
+  // next step. A failure leaves the artwork with no server-side file — the
+  // same state every artwork was in before durable storage existed — and the
+  // tab-local blob: URL createArtwork() already remembered keeps its preview
+  // working regardless.
+  await uploadArtworkFile(artwork.id, input.file.file).catch((err) => {
+    console.error('[labelIntakeService] Could not durably store the uploaded label file:', err);
+  });
 
   // Awaited: this is what the comparison engine reads later, and an intake that
   // reported success while the reading failed to store would produce a

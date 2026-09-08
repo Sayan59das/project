@@ -45,6 +45,14 @@ export const env = {
   // and this process is not the only client, so stay well under it.
   databasePoolMax: parsePositiveNumber(process.env.DATABASE_POOL_MAX, 10),
   port: parsePositiveNumber(process.env.PORT, 4000),
+  // This server's OWN publicly-reachable origin — used to build absolute
+  // URLs for durably-stored artwork files (see artworks.routes.ts's
+  // GET/POST /:id/file) so a browser can fetch them regardless of which
+  // origin served the page. Defaults to this same PORT on localhost, which
+  // is only correct for local dev; a real deployment behind a domain/HTTPS
+  // reverse proxy must set PUBLIC_BASE_URL explicitly, the same way
+  // apiConfig.ts's VITE_API_BASE_URL must be set on the frontend.
+  publicBaseUrl: (process.env.PUBLIC_BASE_URL?.trim() || `http://localhost:${parsePositiveNumber(process.env.PORT, 4000)}`).replace(/\/+$/, ''),
   frontendOrigin: parseOrigins(process.env.FRONTEND_ORIGIN, 'http://localhost:4173'),
   maxUploadFileSizeMb: parsePositiveNumber(process.env.MAX_UPLOAD_FILE_SIZE_MB, 5),
   // A PDF text layer shorter than this (after trimming) is treated as "no

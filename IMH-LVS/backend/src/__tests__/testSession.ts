@@ -64,7 +64,9 @@ export const TEST_ACCOUNTS = {
   compare: { id: 'USR-T-COMPARE', role: 'qa' },
   compareExtracted: { id: 'USR-T-COMPARE-EXTRACTED', role: 'qa' },
   compareVisual: { id: 'USR-T-COMPARE-VISUAL', role: 'qa' },
-  compareVisualBatch: { id: 'USR-T-COMPARE-VISUAL-BATCH', role: 'qa' }
+  compareVisualBatch: { id: 'USR-T-COMPARE-VISUAL-BATCH', role: 'qa' },
+  /** account_manager, matching the only role the real Upload Artwork UI gates this behind. */
+  artworkFile: { id: 'USR-T-ARTWORK-FILE', role: 'account_manager' }
 } as const;
 
 export type TestAccount = (typeof TEST_ACCOUNTS)[keyof typeof TEST_ACCOUNTS];

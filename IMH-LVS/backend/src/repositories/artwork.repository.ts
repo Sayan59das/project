@@ -14,6 +14,7 @@
 
 import { Pool, PoolClient } from 'pg';
 import { getPool, withTransaction } from '../db/pool';
+import { env } from '../config/env';
 import { emptyToNull, nullToEmpty, nullToUndefined, numberToVersion, toDateString, toIsoString } from './mappers';
 import {
   Artwork,
@@ -148,9 +149,13 @@ function mapArtwork(row: ArtworkRow): Artwork {
     artworkType: row.artwork_type,
     status: row.status,
     remarks: row.remarks,
-    // '' is the app's way of saying "no durably stored file", which is the
-    // honest state of every record made before object storage existed.
-    filePath: nullToEmpty(row.storage_key),
+    // storage_key is an internal handle (see artworkFileStorage.service.ts),
+    // not something a browser can fetch directly — this is the durable
+    // download URL, computed rather than stored, so where the bytes actually
+    // live can change without a migration. '' is the honest "no durably
+    // stored file", which is the state of every record made before object
+    // storage existed, and of a row created but not yet uploaded to.
+    filePath: row.storage_key ? `${env.publicBaseUrl}/api/artworks/${row.id}/file` : '',
     fileName: row.file_name,
     fileType: row.mime_type,
     fileSize: row.byte_size,
