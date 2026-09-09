@@ -17,20 +17,18 @@ import json
 import random
 from pathlib import Path
 
-from app.services.extraction import EXTRACTION_PROMPT
+from app.services.extraction import EXTRACTION_PROMPT, LABEL_FIELDS
 
 BASE = Path(__file__).resolve().parent
 REVIEWED = BASE / "reviewed" / "annotations"
 IMAGES = BASE / "images"
 OUT = BASE / "dataset"
 
-# The order the prompt lists the fields in.
-FIELD_ORDER = [
-    "brand_name", "product_name", "colour_theme", "flavour", "claims", "logo",
-    "layout", "nutrition_table", "fssai_number", "ingredients",
-    "marketing_company", "address", "customer_care_number",
-    "customer_care_email", "package_size", "manufacturing_company",
-]
+# The order the prompt lists the fields in — imported rather than copied for
+# the same reason as EXTRACTION_PROMPT above: extraction.py's completeness
+# check (which fields a response omitted entirely) and this file's target
+# key order must agree on one canonical field list, not two that can drift.
+FIELD_ORDER = LABEL_FIELDS
 
 # Holding out whole SOURCE FILES, never individual pages: this dataset has
 # near-duplicate pages (the same artwork re-exported as a colour proof, a

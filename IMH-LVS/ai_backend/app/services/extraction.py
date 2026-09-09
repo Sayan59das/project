@@ -59,6 +59,91 @@ EXTRACTION_PROMPT = (
 MIN_PIXELS = 256 * 28 * 28
 MAX_PIXELS = 1280 * 28 * 28
 
+# The 16 fields EXTRACTION_PROMPT asks for, in the order it lists them.
+# Module-level (and imported by finetune/build_training_set.py) for the same
+# reason as EXTRACTION_PROMPT: one place that both the parser's completeness
+# check and the training target's key order agree on.
+LABEL_FIELDS = [
+    "brand_name", "product_name", "colour_theme", "flavour", "claims", "logo",
+    "layout", "nutrition_table", "fssai_number", "ingredients",
+    "marketing_company", "address", "customer_care_number",
+    "customer_care_email", "package_size", "manufacturing_company",
+]
+
+# Per-field guidance repeated in the completion prompt below, for exactly the
+# fields it can be asked to recover. Deliberately not sourced from
+# EXTRACTION_PROMPT by slicing its text apart — that string is intentionally
+# opaque (see its own comment on why it must not drift), so this instead
+# restates the same guidance in its own small, independent copy.
+_COMPLETION_FIELD_NOTES = {
+    "fssai_number": (
+        "fssai_number: an Indian FSSAI license number is ALWAYS exactly 14 digits. If more than "
+        "one is printed, extract the one for the Marketed By / brand-owner company. If you cannot "
+        "read all 14 digits with certainty, return null rather than padding or guessing a digit."
+    ),
+    "package_size": (
+        "package_size: the net content/weight/count actually sold (e.g. '30 Gummies', '150 g'). "
+        "This is NOT a print/die-cut dimension annotation such as 'SIZE: 222x88mm'."
+    ),
+    "logo": (
+        "logo: a distinct icon or emblem near the brand name, separate from stylised brand text or "
+        "a company name. Return null rather than guess, and never a URL."
+    ),
+    "colour_theme": (
+        "colour_theme: only the actual print/branding colours of the packaging design, at most "
+        "3-4 colour words."
+    ),
+}
+_COMPLETION_FIELD_NOTES["claims"] = _COMPLETION_FIELD_NOTES["ingredients"] = (
+    "claims and ingredients: each is a list of separate items, never joined into one string."
+)
+
+
+def _build_completion_prompt(missing_fields):
+    """A second, narrower prompt asking only for the fields the first pass
+    never mentioned at all — see _missing_fields for why that is a distinct,
+    worse failure than the model explicitly writing one of them as null.
+
+    Deliberately small: fewer fields to hold in mind at once is the intended
+    fix for a model that stopped partway through a 16-field list, and a
+    shorter expected answer is itself less likely to run into the same
+    problem again."""
+    notes = []
+    seen = set()
+    for field in missing_fields:
+        note = _COMPLETION_FIELD_NOTES.get(field)
+        if note and note not in seen:
+            notes.append("- " + note)
+            seen.add(note)
+    notes_block = ("\n\nField-specific rules:\n" + "\n".join(notes)) if notes else ""
+    fields_list = ", ".join(missing_fields)
+    return (
+        "You are extracting structured data from a product label image for a pharmaceutical/"
+        "health-supplement compliance system. This is a FOLLOW-UP request: an earlier pass over "
+        "this same image already extracted some fields, and these specific fields still need "
+        "values. Extract ONLY what is visibly printed on the label — never guess, invent, or fill "
+        "in a plausible-sounding value.\n\n"
+        f"Return a single JSON object with EXACTLY these fields, and no others: {fields_list}."
+        f"{notes_block}\n"
+        "If a field is not present or not legible on the image, set its value to null.\n"
+        "Return ONLY the JSON object, no other text."
+    )
+
+
+def _missing_fields(label_data, expected_keys):
+    """Keys the model never wrote at all, as distinct from a key it wrote
+    with an explicit null. The prompt's own instruction is 'if a field is
+    not legible, set its value to null' — a model following that instruction
+    still emits the key. A key that is simply ABSENT means generation ended
+    (or the object closed) before the model ever considered it, which has
+    been observed concretely: one response covered the first 10 of 16 fields
+    and closed its closing brace right after the 10th, never attempting the
+    other 6. Treating that omission as an honest 'not legible' silently
+    turns a generation bug into what looks like a confident null to a
+    reviewer — this distinction is what makes the completion retry possible
+    without guessing at content."""
+    return [key for key in expected_keys if key not in label_data]
+
 
 def _adapter_path():
     """The configured fine-tuned adapter directory, or "" when the service
@@ -328,69 +413,104 @@ class ExtractionService:
         self.model = PeftModel.from_pretrained(self.model, adapter_path)
         self.model.eval()
 
+    def _generate_json(self, image: Image.Image, prompt: str, max_new_tokens: int = 1024) -> dict:
+        """One generation pass over `image` with `prompt`, returning the
+        parsed JSON object (or {} if nothing usable could be parsed even
+        after the narrow repairs below). Shared by the main extraction pass
+        and the completion retry in extract_from_image, so both go through
+        the same decoding settings and the same repair helpers."""
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "image", "image": image},
+                    {"type": "text", "text": prompt},
+                ],
+            }
+        ]
+
+        text_prompt = self.processor.apply_chat_template(messages, add_generation_prompt=True)
+        inputs = self.processor(text=[text_prompt], images=[image], padding=True, return_tensors="pt").to(self.model.device)
+
+        with torch.no_grad():
+            # Greedy decoding, not sampling: this is a single-answer extraction task, and
+            # sampling's per-token randomness is exactly what let a plausible-looking but
+            # fabricated logo URL and a corrupted FSSAI digit through in testing.
+            #
+            # repetition_penalty is a separate axis from sampling — it reweights logits
+            # before the (still-greedy) argmax rather than adding randomness, so it doesn't
+            # reopen that risk. It's here because greedy decoding was observed getting stuck
+            # repeating one ingredient ("Gum Arabic", "Gum Arabic", ...) for the full
+            # max_new_tokens budget, cutting the response off mid-string with no closing
+            # brace — truncated JSON no repair can safely complete without guessing content.
+            # 1.15 is the standard mitigation value for this exact failure shape.
+            generated_ids = self.model.generate(**inputs, max_new_tokens=max_new_tokens, do_sample=False, repetition_penalty=1.15)
+
+        # Trim the prompt from the output
+        generated_ids_trimmed = [
+            out_ids[len(in_ids):] for in_ids, out_ids in zip(inputs.input_ids, generated_ids)
+        ]
+        response_text = self.processor.batch_decode(generated_ids_trimmed, skip_special_tokens=True, clean_up_tokenization_spaces=False)[0]
+
+        try:
+            # Attempt to parse the JSON output from the model
+            start_idx = response_text.find('{')
+            end_idx = response_text.rfind('}') + 1
+            if start_idx == -1 or end_idx == 0:
+                raise ValueError("No JSON object found")
+            candidate = response_text[start_idx:end_idx]
+            try:
+                return json.loads(candidate)
+            except json.JSONDecodeError:
+                # Retry against the observed, narrowly-scoped repairs
+                # rather than giving up immediately — see each helper for
+                # the specific malformation it targets. These are not a
+                # general-purpose JSON repair: each one exists because
+                # this model was seen producing that exact shape, and
+                # each preserves the printed text rather than discarding
+                # the part it cannot parse.
+                repaired = _quote_unquoted_numeric_unit_values(candidate)
+                repaired = _split_merged_key_value_pairs(repaired)
+                return json.loads(repaired)
+        except (json.JSONDecodeError, ValueError):
+            print(f"Failed to parse VLM output as JSON: {response_text}")
+            return {}
+
     def extract_from_image(self, image: Image.Image) -> ExtractedLabel:
         if not self.use_mock:
             self._load_model()
 
-            prompt = EXTRACTION_PROMPT
+            label_data = self._generate_json(image, EXTRACTION_PROMPT)
 
-            # Format inputs according to Qwen2-VL requirements
-            messages = [
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "image", "image": image},
-                        {"type": "text", "text": prompt},
-                    ],
-                }
-            ]
-            
-            text_prompt = self.processor.apply_chat_template(messages, add_generation_prompt=True)
-            inputs = self.processor(text=[text_prompt], images=[image], padding=True, return_tensors="pt").to(self.model.device)
-            
-            with torch.no_grad():
-                # Greedy decoding, not sampling: this is a single-answer extraction task, and
-                # sampling's per-token randomness is exactly what let a plausible-looking but
-                # fabricated logo URL and a corrupted FSSAI digit through in testing.
-                #
-                # repetition_penalty is a separate axis from sampling — it reweights logits
-                # before the (still-greedy) argmax rather than adding randomness, so it doesn't
-                # reopen that risk. It's here because greedy decoding was observed getting stuck
-                # repeating one ingredient ("Gum Arabic", "Gum Arabic", ...) for the full
-                # max_new_tokens budget, cutting the response off mid-string with no closing
-                # brace — truncated JSON no repair can safely complete without guessing content.
-                # 1.15 is the standard mitigation value for this exact failure shape.
-                generated_ids = self.model.generate(**inputs, max_new_tokens=1024, do_sample=False, repetition_penalty=1.15)
-                
-            # Trim the prompt from the output
-            generated_ids_trimmed = [
-                out_ids[len(in_ids):] for in_ids, out_ids in zip(inputs.input_ids, generated_ids)
-            ]
-            response_text = self.processor.batch_decode(generated_ids_trimmed, skip_special_tokens=True, clean_up_tokenization_spaces=False)[0]
-            
-            try:
-                # Attempt to parse the JSON output from the model
-                start_idx = response_text.find('{')
-                end_idx = response_text.rfind('}') + 1
-                if start_idx == -1 or end_idx == 0:
-                    raise ValueError("No JSON object found")
-                candidate = response_text[start_idx:end_idx]
-                try:
-                    label_data = json.loads(candidate)
-                except json.JSONDecodeError:
-                    # Retry against the observed, narrowly-scoped repairs
-                    # rather than giving up immediately — see each helper for
-                    # the specific malformation it targets. These are not a
-                    # general-purpose JSON repair: each one exists because
-                    # this model was seen producing that exact shape, and
-                    # each preserves the printed text rather than discarding
-                    # the part it cannot parse.
-                    repaired = _quote_unquoted_numeric_unit_values(candidate)
-                    repaired = _split_merged_key_value_pairs(repaired)
-                    label_data = json.loads(repaired)
-            except (json.JSONDecodeError, ValueError):
-                print(f"Failed to parse VLM output as JSON: {response_text}")
-                label_data = {}
+            # A key the model never wrote at all (not even as null) means
+            # generation ended before it considered that field — observed
+            # concretely on a real label where a long claims/nutrition
+            # section pushed the response to close after the 10th of 16
+            # fields, silently dropping marketing_company, address,
+            # customer_care_number, customer_care_email, package_size and
+            # manufacturing_company. One smaller, focused follow-up over the
+            # SAME image asking only for what was skipped gives the model a
+            # real second attempt rather than papering over the gap with
+            # None — and because it is still reading the actual image for an
+            # actual value, a field that genuinely isn't legible still comes
+            # back null afterward, exactly as it should.
+            omitted = _missing_fields(label_data, LABEL_FIELDS)
+            if omitted and label_data:
+                print(f"First pass never mentioned {omitted} — retrying once for just those fields.")
+                completion = self._generate_json(image, _build_completion_prompt(omitted), max_new_tokens=384)
+                for field in omitted:
+                    if field not in completion:
+                        continue
+                    value = completion[field]
+                    # A blank string is the same "nothing found" answer as an
+                    # explicit null — the completion prompt has been observed
+                    # returning "" for a field it could not locate rather
+                    # than writing null as asked. Normalising it here means
+                    # the field ends up truly absent instead of a hollow
+                    # empty value that could display as answered.
+                    if isinstance(value, str) and not value.strip():
+                        value = None
+                    label_data[field] = value
 
         else:
             # Mock Data fallback for immediate testing without GPU
@@ -414,13 +534,7 @@ class ExtractionService:
             }
         
         # Ensure missing fields are None
-        expected_keys = [
-            "brand_name", "product_name", "colour_theme", "flavour", "claims", "logo", 
-            "layout", "nutrition_table", "fssai_number", "ingredients", "marketing_company", 
-            "address", "customer_care_number", "customer_care_email", "package_size", 
-            "manufacturing_company"
-        ]
-        for key in expected_keys:
+        for key in LABEL_FIELDS:
             if key not in label_data:
                 label_data[key] = None
 
