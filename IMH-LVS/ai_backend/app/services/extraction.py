@@ -85,6 +85,10 @@ _COMPLETION_FIELD_NOTES = {
         "package_size: the net content/weight/count actually sold (e.g. '30 Gummies', '150 g'). "
         "This is NOT a print/die-cut dimension annotation such as 'SIZE: 222x88mm'."
     ),
+    "address": (
+        "address: a single plain string exactly as printed (e.g. 'Village Doduwal, Tehsil Baddi "
+        "(H.P.) INDIA - 173 205'), never an object broken into sub-fields like city/state/country."
+    ),
     "logo": (
         "logo: a distinct icon or emblem near the brand name, separate from stylised brand text or "
         "a company name. Return null rather than guess, and never a URL."
@@ -143,6 +147,77 @@ def _missing_fields(label_data, expected_keys):
     reviewer — this distinction is what makes the completion retry possible
     without guessing at content."""
     return [key for key in expected_keys if key not in label_data]
+
+
+def _has_content(value):
+    """Whether a completion/tile answer is a real value worth keeping, as
+    opposed to a hollow non-answer that happens not to be a bare None.
+
+    Two shapes have been observed in place of a clean null when the model
+    could not find a field: a blank string, and — for address specifically —
+    a dict of the right-looking sub-fields with every one of them blank,
+    e.g. {"city": "", "state": "", "country": ""}. That second shape matters
+    because it would otherwise survive into the schema's own dict-to-string
+    coercion (_as_scalar in schemas/label.py) as "city: , state: , country:
+    " — a value that reads as answered but says nothing, worse than the null
+    it should have been. Recurses so a list or dict of blanks at any depth
+    is caught the same way."""
+    if value is None:
+        return False
+    if isinstance(value, str):
+        return bool(value.strip())
+    if isinstance(value, dict):
+        return any(_has_content(v) for v in value.values())
+    if isinstance(value, list):
+        return any(_has_content(v) for v in value)
+    return True  # numbers, bools: never observed blank-shelled, taken as real
+
+
+# Anchors and size for the tiling fallback below: a 3x3 grid of overlapping
+# ~40%-of-the-page crops. Confirmed empirically, not guessed — a label was
+# found where marketing_company, address, customer_care_number and
+# manufacturing_company all came back blank through the whole-page
+# completion retry, an explicit "look after the words 'Marketed by:'"
+# textual anchor, AND doubling the whole page's resolution, and cropping
+# just that one panel out of the page correctly recovered every one of
+# them. A production label's layout isn't known in advance, so this grid
+# stands in for that manual crop: dense compliance-text blocks are
+# consistently large enough to land mostly inside one ~40% tile, and the
+# 0/33/67% anchors with a 40% size give neighbouring tiles enough overlap
+# that a block near a boundary still lands fully inside at least one of
+# them rather than being split across two partial views.
+_TILE_STARTS = (0.0, 0.33, 0.67)
+_TILE_SIZE_FRACTION = 0.40
+
+# manufacturing_company specifically, excluded from the tile fallback above —
+# not the others. Confirmed directly, twice, on the same real label: asked
+# about manufacturing_company in isolation, 7 of 9 tiles (and separately,
+# with a much stronger "return null unless the exact words 'Manufactured
+# By:' are visible in THIS crop" instruction, still 4 of 9 tiles) answered
+# with a brand wordmark or logo text visible in that crop ("Homeo-Vita",
+# "UC HOMOEOPATHY", "GNC") rather than the null the prompt asked for when
+# the real answer wasn't there. marketing_company, address,
+# customer_care_number and customer_care_email showed no such pattern in
+# any tile across every test run on this same label — this is a field-
+# specific, evidence-based exclusion, not a blanket distrust of tiling. A
+# fabricated manufacturer name accepted as if verified is a worse outcome
+# for a compliance system than the blank field this exclusion falls back
+# to; still eligible for the safer whole-page retry above, which showed no
+# hallucination in the same testing.
+_TILE_INELIGIBLE_FIELDS = frozenset({"manufacturing_company"})
+
+
+def _tile_image(image):
+    """The 9 overlapping crops _TILE_STARTS/_TILE_SIZE_FRACTION describe."""
+    width, height = image.size
+    tiles = []
+    for y_start in _TILE_STARTS:
+        for x_start in _TILE_STARTS:
+            x0, y0 = int(x_start * width), int(y_start * height)
+            x1 = min(width, int(x0 + _TILE_SIZE_FRACTION * width))
+            y1 = min(height, int(y0 + _TILE_SIZE_FRACTION * height))
+            tiles.append(image.crop((x0, y0, x1, y1)))
+    return tiles
 
 
 def _adapter_path():
@@ -499,18 +574,42 @@ class ExtractionService:
                 print(f"First pass never mentioned {omitted} — retrying once for just those fields.")
                 completion = self._generate_json(image, _build_completion_prompt(omitted), max_new_tokens=384)
                 for field in omitted:
-                    if field not in completion:
-                        continue
-                    value = completion[field]
-                    # A blank string is the same "nothing found" answer as an
-                    # explicit null — the completion prompt has been observed
-                    # returning "" for a field it could not locate rather
-                    # than writing null as asked. Normalising it here means
-                    # the field ends up truly absent instead of a hollow
-                    # empty value that could display as answered.
-                    if isinstance(value, str) and not value.strip():
-                        value = None
-                    label_data[field] = value
+                    if field in completion and _has_content(completion[field]):
+                        label_data[field] = completion[field]
+                    else:
+                        label_data[field] = None
+
+                # The retry above still shows the model the ENTIRE page — the
+                # same busy multi-panel sheet the first pass had, just with a
+                # shorter question. Confirmed directly that fields can stay
+                # blank through that retry for a different reason than the
+                # omission above: the field's own text block is competing
+                # for attention with the rest of a large, busy sheet (a front
+                # panel, both circular caps, a full nutrition table). Cropping
+                # just that one block out of the page and asking ONLY about
+                # the crop correctly recovered every field that stayed blank
+                # through the whole-page retry, an explicit "look after the
+                # words 'Marketed by:'" anchor, AND doubling the whole page's
+                # resolution — none of which remove that competition the way
+                # an isolated crop does. Production doesn't know in advance
+                # where on an arbitrary label's layout the block sits, so the
+                # tile grid stands in for that manual crop, stopping the
+                # moment every requested field has a real answer.
+                still_missing = [
+                    field for field in omitted
+                    if field not in _TILE_INELIGIBLE_FIELDS and not _has_content(label_data.get(field))
+                ]
+                if still_missing:
+                    print(f"Still blank after the whole-page retry: {still_missing} — trying isolated tiles.")
+                    for tile in _tile_image(image):
+                        if not still_missing:
+                            break
+                        tile_result = self._generate_json(tile, _build_completion_prompt(still_missing), max_new_tokens=384)
+                        for field in list(still_missing):
+                            value = tile_result.get(field)
+                            if _has_content(value):
+                                label_data[field] = value
+                                still_missing.remove(field)
 
         else:
             # Mock Data fallback for immediate testing without GPU
@@ -537,6 +636,41 @@ class ExtractionService:
         for key in LABEL_FIELDS:
             if key not in label_data:
                 label_data[key] = None
+
+        # A blank string, or a shell of blank sub-fields (address structured
+        # as {"city": "", "state": "", "country": ""} rather than a plain
+        # string), is the same "nothing found" answer as an explicit null —
+        # observed concretely from BOTH the main pass and a completion/tile
+        # retry, not only the latter. Applied here to every field, once,
+        # rather than duplicated at each place a value gets set, so a hollow
+        # value from the very first pass gets exactly the same treatment as
+        # one from a retry, before any of it can reach the schema's own
+        # dict-to-string coercion (_as_scalar in schemas/label.py) — which
+        # would otherwise turn that address shell into the literal string
+        # "city: , state: , country: ": a value that reads as answered but
+        # says nothing.
+        for key in LABEL_FIELDS:
+            if not _has_content(label_data.get(key)):
+                label_data[key] = None
+
+        # A marketing/manufacturing company name that exactly matches the
+        # brand or product name is the same confusion observed directly in
+        # testing (a completion/tile answer reporting the brand wordmark or
+        # logo text — "Homeo-Vita" — as if it were manufacturing_company,
+        # the field's own dedicated block never actually visible in that
+        # crop). The company recovery mechanisms above are the ones known to
+        # reach this specific confusion, but the check is applied to every
+        # extraction, the same way _validate_logo's equivalent check below
+        # is not limited to values that came from a retry.
+        brand_or_product_values = {
+            str(label_data.get(key)).strip().lower()
+            for key in ("brand_name", "product_name")
+            if label_data.get(key)
+        }
+        for company_field in ("marketing_company", "manufacturing_company"):
+            value = label_data.get(company_field)
+            if value and str(value).strip().lower() in brand_or_product_values:
+                label_data[company_field] = None
 
         # Deterministic checks the prompt can request but not guarantee — reject
         # rather than trust a value that fails them outright.

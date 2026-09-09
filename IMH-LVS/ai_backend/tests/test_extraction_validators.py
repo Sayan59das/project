@@ -10,14 +10,17 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import pytest
+from PIL import Image
 
 from app.services.extraction import (
     LABEL_FIELDS,
     ExtractionService,
     _build_completion_prompt,
+    _has_content,
     _looks_like_colour_name,
     _missing_fields,
     _resolve_inference_device,
+    _tile_image,
     _validate_colour_theme,
     _validate_fssai_number,
     _validate_logo,
@@ -178,9 +181,85 @@ class TestBuildCompletionPrompt:
         assert prompt.count("never joined into one string") == 1
 
 
+class TestHasContent:
+    """_has_content decides whether a completion/tile answer is a real value
+    worth keeping — see its own docstring for the exact shapes observed in
+    place of a clean null."""
+
+    def test_none_and_blank_string_have_no_content(self):
+        assert _has_content(None) is False
+        assert _has_content("") is False
+        assert _has_content("   ") is False
+
+    def test_a_real_string_has_content(self):
+        assert _has_content("Unicare Pharma") is True
+
+    def test_empty_list_and_dict_have_no_content(self):
+        assert _has_content([]) is False
+        assert _has_content({}) is False
+
+    def test_a_list_or_dict_of_nothing_but_blanks_has_no_content(self):
+        assert _has_content(["", "  ", None]) is False
+        assert _has_content({"city": "", "state": "", "country": ""}) is False
+
+    def test_the_exact_observed_address_shell_has_no_content(self):
+        # The concrete failure this exists for: the model structuring
+        # address into sub-fields and leaving every one of them blank,
+        # rather than returning null or a real string.
+        assert _has_content({"city": "", "state": "", "country": ""}) is False
+
+    def test_one_real_value_among_blanks_counts_as_content(self):
+        assert _has_content({"city": "Alwar", "state": "", "country": ""}) is True
+        assert _has_content(["", "Alwar"]) is True
+
+    def test_numbers_and_booleans_count_as_content(self):
+        assert _has_content(0) is True
+        assert _has_content(False) is True
+
+
+class TestTileImage:
+    """_tile_image's geometry: 9 overlapping crops covering the page, each
+    small enough to isolate a block from the rest of a busy sheet."""
+
+    def test_produces_nine_tiles(self):
+        image = Image.new("RGB", (2400, 2000))
+        assert len(_tile_image(image)) == 9
+
+    def test_every_tile_stays_within_the_source_image_bounds(self):
+        image = Image.new("RGB", (2400, 2000))
+        for tile in _tile_image(image):
+            width, height = tile.size
+            assert 0 < width <= image.width
+            assert 0 < height <= image.height
+
+    def test_the_bottom_left_tile_matches_the_geometry_confirmed_to_work(self):
+        # Confirmed directly against a real label: a crop of roughly the
+        # bottom-left 32-40% of the page recovered fields that stayed blank
+        # through the whole-page retry. The bottom-left grid cell (anchored
+        # at x=0%, y=67%) is this same corner.
+        image = Image.new("RGB", (2400, 2000))
+        tiles = _tile_image(image)
+        bottom_left = tiles[6]  # row 2 (y=0.67), col 0 (x=0.0) of the 3x3 grid
+        assert bottom_left.size[0] == pytest.approx(0.40 * 2400, rel=0.05)
+        assert bottom_left.size[1] == pytest.approx(0.33 * 2000, rel=0.05)  # clamped to the bottom edge
+
+    def test_adjacent_tiles_overlap_rather_than_leaving_gaps(self):
+        # A block sitting near a 1/3 boundary must still land fully inside
+        # at least one tile instead of being split across two partial views.
+        image = Image.new("RGB", (2400, 2000))
+        # Tiles are ordered row-major from _TILE_STARTS; the first two tiles
+        # in a row are adjacent along x.
+        first, second = _tile_image(image)[0], _tile_image(image)[1]
+        first_x1 = first.size[0]
+        second_x0 = int(0.33 * image.width)
+        assert second_x0 < first_x1  # overlap, not a gap
+
+
 class TestExtractFromImageCompletionRetry:
-    """extract_from_image's orchestration of the completion retry, with
-    _generate_json mocked so these run with no GPU and no real model."""
+    """extract_from_image's orchestration of the completion retry and the
+    tile fallback, with _generate_json mocked so these run with no GPU and
+    no real model. A small real Image is used (not a bare object()) because
+    the tile fallback crops it."""
 
     FIRST_PASS_MISSING_TAIL = {
         "brand_name": "Homeo-Vita", "product_name": "Multivitamin Gummies",
@@ -189,6 +268,8 @@ class TestExtractFromImageCompletionRetry:
         # marketing_company, address, customer_care_number, customer_care_email,
         # package_size, manufacturing_company: never mentioned at all.
     }
+    OMITTED = ["marketing_company", "address", "customer_care_number",
+               "customer_care_email", "package_size", "manufacturing_company"]
 
     def _service(self):
         service = ExtractionService(use_mock=False)
@@ -196,50 +277,51 @@ class TestExtractFromImageCompletionRetry:
         service.processor = object()
         return service
 
-    def test_omitted_fields_trigger_exactly_one_retry_for_only_those_fields(self):
+    def _image(self):
+        return Image.new("RGB", (400, 300))
+
+    def test_completion_retry_alone_recovers_a_value_with_no_tiling_needed(self):
         calls = []
 
         def fake_generate(self, image, prompt, max_new_tokens=1024):
             calls.append(max_new_tokens)
             if len(calls) == 1:
                 return dict(TestExtractFromImageCompletionRetry.FIRST_PASS_MISSING_TAIL)
-            return {"marketing_company": "Unicare Pharma"}
+            # Resolves every omitted field, so nothing is left for tiling.
+            return {field: "x" for field in TestExtractFromImageCompletionRetry.OMITTED}
 
         with patch.object(ExtractionService, "_load_model", lambda self: None), \
              patch.object(ExtractionService, "_generate_json", fake_generate):
-            result = self._service().extract_from_image(object())
+            result = self._service().extract_from_image(self._image())
 
-        assert len(calls) == 2
+        assert len(calls) == 2  # whole-page pass + one completion retry, no tiles
         assert calls[1] == 384  # the narrower budget for the focused retry
-        assert result.marketing_company == "Unicare Pharma"
+        assert result.marketing_company == "x"
 
     def test_retry_recovers_a_real_value_the_first_pass_never_attempted(self):
         def fake_generate(self, image, prompt, max_new_tokens=1024):
             if "package_size" in prompt:
-                return {"package_size": "30 Gummies"}
+                return {field: "x" for field in TestExtractFromImageCompletionRetry.OMITTED}
             return dict(TestExtractFromImageCompletionRetry.FIRST_PASS_MISSING_TAIL)
 
         with patch.object(ExtractionService, "_load_model", lambda self: None), \
              patch.object(ExtractionService, "_generate_json", fake_generate):
-            result = self._service().extract_from_image(object())
+            result = self._service().extract_from_image(self._image())
 
-        assert result.package_size == "30 Gummies"
+        assert result.package_size == "x"
 
     def test_retry_returning_blank_strings_ends_up_null_not_a_hollow_value(self):
         # Observed concretely: the completion prompt sometimes answers a
         # field it could not find with "" instead of the null it was asked
-        # for. A blank string must not display as if it were an answer.
+        # for. A blank string must not display as if it were an answer, and
+        # must still fall through to the tile fallback as genuinely missing.
         def fake_generate(self, image, prompt, max_new_tokens=1024):
-            if len(fake_generate.calls) == 0:
-                fake_generate.calls.append(1)
-                return dict(TestExtractFromImageCompletionRetry.FIRST_PASS_MISSING_TAIL)
             return {"marketing_company": "", "address": "", "customer_care_number": "",
                     "customer_care_email": "", "package_size": "", "manufacturing_company": ""}
-        fake_generate.calls = []
 
         with patch.object(ExtractionService, "_load_model", lambda self: None), \
              patch.object(ExtractionService, "_generate_json", fake_generate):
-            result = self._service().extract_from_image(object())
+            result = self._service().extract_from_image(self._image())
 
         assert result.marketing_company is None
         assert result.address is None
@@ -254,9 +336,9 @@ class TestExtractFromImageCompletionRetry:
 
         with patch.object(ExtractionService, "_load_model", lambda self: None), \
              patch.object(ExtractionService, "_generate_json", fake_generate):
-            self._service().extract_from_image(object())
+            self._service().extract_from_image(self._image())
 
-        assert len(calls) == 1  # no wasted second GPU pass
+        assert len(calls) == 1  # no wasted second or further GPU pass
 
     def test_no_retry_when_the_first_pass_produced_nothing_at_all(self):
         # A totally empty {} means the first pass failed outright (e.g. no
@@ -271,7 +353,180 @@ class TestExtractFromImageCompletionRetry:
 
         with patch.object(ExtractionService, "_load_model", lambda self: None), \
              patch.object(ExtractionService, "_generate_json", fake_generate):
-            result = self._service().extract_from_image(object())
+            result = self._service().extract_from_image(self._image())
 
         assert len(calls) == 1
         assert result.brand_name is None
+
+    def test_tile_fallback_recovers_a_field_the_whole_page_retry_could_not(self):
+        # Confirmed directly against a real label: marketing_company stayed
+        # blank through the whole-page completion retry but was read
+        # correctly once isolated in one tile.
+        calls = []
+
+        def fake_generate(self, image, prompt, max_new_tokens=1024):
+            calls.append(1)
+            if len(calls) == 1:
+                return dict(TestExtractFromImageCompletionRetry.FIRST_PASS_MISSING_TAIL)
+            if len(calls) == 2:
+                return {}  # whole-page retry finds nothing
+            if len(calls) == 5:  # some tile in the middle of the grid
+                return {"marketing_company": "A Unicare Pharma"}
+            return {}  # every other tile finds nothing
+
+        with patch.object(ExtractionService, "_load_model", lambda self: None), \
+             patch.object(ExtractionService, "_generate_json", fake_generate):
+            result = self._service().extract_from_image(self._image())
+
+        assert result.marketing_company == "A Unicare Pharma"
+
+    def test_tile_loop_stops_as_soon_as_every_field_is_found(self):
+        calls = []
+
+        def fake_generate(self, image, prompt, max_new_tokens=1024):
+            calls.append(1)
+            if len(calls) == 1:
+                return dict(TestExtractFromImageCompletionRetry.FIRST_PASS_MISSING_TAIL)
+            if len(calls) == 2:
+                return {}
+            # The very first tile resolves everything still missing.
+            return {field: "x" for field in TestExtractFromImageCompletionRetry.OMITTED}
+
+        with patch.object(ExtractionService, "_load_model", lambda self: None), \
+             patch.object(ExtractionService, "_generate_json", fake_generate):
+            self._service().extract_from_image(self._image())
+
+        # 1 (first pass) + 1 (whole-page retry) + 1 (first tile, which finds
+        # everything) — the remaining 8 tiles must never be tried.
+        assert len(calls) == 3
+
+    def test_a_field_genuinely_absent_from_every_tile_ends_up_null(self):
+        def fake_generate(self, image, prompt, max_new_tokens=1024):
+            return {}  # never finds anything, at any stage
+
+        with patch.object(ExtractionService, "_load_model", lambda self: None), \
+             patch.object(ExtractionService, "_generate_json", fake_generate):
+            result = self._service().extract_from_image(self._image())
+
+        assert result.marketing_company is None
+        assert result.address is None
+
+    def test_tile_shell_shaped_blank_is_rejected_same_as_a_blank_string(self):
+        # The exact observed shape for address: a dict of sub-fields with
+        # every one of them blank, from a TILE result specifically.
+        def fake_generate(self, image, prompt, max_new_tokens=1024):
+            return {"address": {"city": "", "state": "", "country": ""}}
+
+        with patch.object(ExtractionService, "_load_model", lambda self: None), \
+             patch.object(ExtractionService, "_generate_json", fake_generate):
+            result = self._service().extract_from_image(self._image())
+
+        assert result.address is None
+
+    def test_manufacturing_company_is_never_recovered_via_a_tile(self):
+        # Confirmed directly, twice, on a real label: asked about
+        # manufacturing_company in isolation, most tiles answered with a
+        # brand wordmark or logo text visible in that crop rather than the
+        # null the prompt asked for. Excluded from the tile fallback
+        # entirely rather than trusted to a per-answer check — a fabricated
+        # manufacturer name accepted as if verified is worse for a
+        # compliance system than the blank field this exclusion leaves.
+        def fake_generate(self, image, prompt, max_new_tokens=1024):
+            if len(fake_generate.calls) == 0:
+                fake_generate.calls.append(1)
+                return dict(TestExtractFromImageCompletionRetry.FIRST_PASS_MISSING_TAIL)
+            if len(fake_generate.calls) == 1:
+                fake_generate.calls.append(1)
+                return {}  # whole-page retry finds nothing either
+            # Any tile call would return a plausible-looking but wrong name —
+            # this must never be reached for manufacturing_company.
+            return {"manufacturing_company": "Some Plausible Company Ltd."}
+        fake_generate.calls = []
+
+        with patch.object(ExtractionService, "_load_model", lambda self: None), \
+             patch.object(ExtractionService, "_generate_json", fake_generate):
+            result = self._service().extract_from_image(self._image())
+
+        assert result.manufacturing_company is None
+
+    def test_other_tail_fields_still_use_tiles_when_manufacturing_company_does_not(self):
+        # The exclusion is specific to one field, not a blanket distrust of
+        # tiling — marketing_company showed no hallucination in any test on
+        # the same label and must still be recoverable via a tile.
+        def fake_generate(self, image, prompt, max_new_tokens=1024):
+            if len(fake_generate.calls) == 0:
+                fake_generate.calls.append(1)
+                return dict(TestExtractFromImageCompletionRetry.FIRST_PASS_MISSING_TAIL)
+            if len(fake_generate.calls) == 1:
+                fake_generate.calls.append(1)
+                return {}
+            if "marketing_company" in prompt:
+                return {"marketing_company": "A Unicare Pharma"}
+            return {}
+        fake_generate.calls = []
+
+        with patch.object(ExtractionService, "_load_model", lambda self: None), \
+             patch.object(ExtractionService, "_generate_json", fake_generate):
+            result = self._service().extract_from_image(self._image())
+
+        assert result.marketing_company == "A Unicare Pharma"
+
+
+class TestCompanyNameCrossFieldCopyRejection:
+    """A marketing/manufacturing company value that exactly matches the
+    brand or product name is the same confusion observed directly in
+    testing — a completion/tile answer reporting the brand wordmark as if
+    it were the company name."""
+
+    def _service_with(self, **overrides):
+        service = ExtractionService(use_mock=False)
+        service.model = object()
+        service.processor = object()
+        base = {field: None for field in LABEL_FIELDS}
+        base.update(overrides)
+
+        def fake_generate(self, image, prompt, max_new_tokens=1024):
+            return dict(base)
+
+        return service, fake_generate
+
+    def test_manufacturing_company_matching_the_brand_name_is_rejected(self):
+        service, fake_generate = self._service_with(
+            brand_name="Homeo-Vita", manufacturing_company="Homeo-Vita"
+        )
+        with patch.object(ExtractionService, "_load_model", lambda self: None), \
+             patch.object(ExtractionService, "_generate_json", fake_generate):
+            result = service.extract_from_image(Image.new("RGB", (400, 300)))
+
+        assert result.manufacturing_company is None
+        assert result.brand_name == "Homeo-Vita"  # the genuine field is untouched
+
+    def test_marketing_company_matching_the_product_name_is_rejected(self):
+        service, fake_generate = self._service_with(
+            product_name="Multivitamin Gummies", marketing_company="Multivitamin Gummies"
+        )
+        with patch.object(ExtractionService, "_load_model", lambda self: None), \
+             patch.object(ExtractionService, "_generate_json", fake_generate):
+            result = service.extract_from_image(Image.new("RGB", (400, 300)))
+
+        assert result.marketing_company is None
+
+    def test_a_genuinely_different_company_name_is_not_rejected(self):
+        service, fake_generate = self._service_with(
+            brand_name="Homeo-Vita", manufacturing_company="IM Healthcare Pvt. Ltd."
+        )
+        with patch.object(ExtractionService, "_load_model", lambda self: None), \
+             patch.object(ExtractionService, "_generate_json", fake_generate):
+            result = service.extract_from_image(Image.new("RGB", (400, 300)))
+
+        assert result.manufacturing_company == "IM Healthcare Pvt. Ltd."
+
+    def test_case_and_whitespace_differences_still_count_as_a_match(self):
+        service, fake_generate = self._service_with(
+            brand_name="Homeo-Vita", manufacturing_company="  homeo-vita  "
+        )
+        with patch.object(ExtractionService, "_load_model", lambda self: None), \
+             patch.object(ExtractionService, "_generate_json", fake_generate):
+            result = service.extract_from_image(Image.new("RGB", (400, 300)))
+
+        assert result.manufacturing_company is None
