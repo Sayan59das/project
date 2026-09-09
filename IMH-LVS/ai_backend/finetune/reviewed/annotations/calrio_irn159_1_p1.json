@@ -1,0 +1,52 @@
+{
+  "label": {
+    "address": "654, Arjun Nagar, Nanhera Road, Ambala Cantt, Haryana, India - 133001",
+    "brand_name": "Calrio",
+    "claims": [
+      "Support Strong Bones & Healthy Growth",
+      "Great Taste",
+      "Gluten Free",
+      "100% Vegan"
+    ],
+    "colour_theme": [
+      "Blue",
+      "White",
+      "Yellow"
+    ],
+    "customer_care_email": "riomedicahealthcare@gmail.com",
+    "customer_care_number": "+91 82229 99972",
+    "flavour": "Mango Strawberry",
+    "fssai_number": "10824999000328",
+    "ingredients": [
+      "Corn Syrup",
+      "Sugar",
+      "Water",
+      "Gelling Agents (INS 440, & 331iii)",
+      "Tricalcium Phosphate",
+      "Mango & Strawberry Flavour",
+      "Food Colour: Curcumin (INS 100) & Black Carrot Concentrate (Daucus Carota root extract)",
+      "Vitamin D"
+    ],
+    "layout": "Carton",
+    "logo": "Green leaf icon above the RIOMEDICA wordmark",
+    "manufacturing_company": "IM Healthcare Pvt. Ltd.",
+    "marketing_company": "Riomedica Healthcare Pvt. Ltd.",
+    "nutrition_table": {
+      "Calcium (as Tricalcium Phosphate)": "125 mg (23% Children / 13% Teens / 13% Adults DV)",
+      "Calories": "12 kcal (<0.6% DV)",
+      "Dietary Fiber (as pectin)": "0.08 g",
+      "Fats": "0 g (0% DV)",
+      "Proteins": "0 g (0% DV)",
+      "Sodium": "4 mg (<0.5% DV)",
+      "Sugar": "2.4 g",
+      "Total Carbohydrate": "3.2 g",
+      "Vitamin D (as Ergocalciferol, 200 IU = 5 mcg)": "200 IU (33% DV)"
+    },
+    "package_size": "30 Gummies",
+    "product_name": "Calrio Gummies"
+  },
+  "page": 1,
+  "reviewed": true,
+  "reviewedAt": 1,
+  "sourceFile": "Calrio IRN159-1.pdf"
+}

@@ -5,8 +5,109 @@ import re
 import torch
 from PIL import Image
 from pdf2image import convert_from_bytes
-from transformers import Qwen2VLForConditionalGeneration, AutoProcessor
+from transformers import BitsAndBytesConfig, Qwen2VLForConditionalGeneration, AutoProcessor
 from app.schemas.label import ExtractedLabel
+
+
+# The one prompt this system extracts with. Module-level, and imported by the
+# fine-tuning data builder (finetune/build_training_set.py) rather than
+# duplicated there: a fine-tuned adapter is trained to answer THIS wording, so
+# a prompt that drifted from the one training used would silently degrade the
+# very accuracy the fine-tune bought.
+#
+# Instructs the model to extract fields deterministically without self-reported
+# confidence. The field-specific rules below each target a real failure mode
+# observed in testing — not hypothetical ones — so keep them if the underlying
+# model changes rather than trimming back to a generic prompt.
+EXTRACTION_PROMPT = (
+    "You are extracting structured data from a product label image for a pharmaceutical/"
+    "health-supplement compliance system. Extract ONLY what is visibly printed on the label — "
+    "never guess, invent, or fill in a plausible-sounding value. Return a single JSON object "
+    "with exactly these fields: brand_name, product_name, colour_theme (list), flavour, "
+    "claims (list), logo, layout, nutrition_table (a flat object of nutrient name to amount, "
+    "one entry per row of the nutrition panel), fssai_number, ingredients (list), "
+    "marketing_company, address, customer_care_number, customer_care_email, package_size, "
+    "manufacturing_company.\n\n"
+    "Field-specific rules:\n"
+    "- fssai_number: an Indian FSSAI license number is ALWAYS exactly 14 digits. If more than "
+    "one is printed (e.g. one for the manufacturer, one for the marketer), extract the one for "
+    "the Marketed By / brand-owner company. If you cannot read all 14 digits with certainty, "
+    "return null rather than padding or guessing a digit.\n"
+    "- logo: look for a distinct icon, emblem, or symbol near the brand name (e.g. a leaf, "
+    "shield, circular badge, mascot) — this is separate from the brand name's own stylised "
+    "text, and separate from the marketing/manufacturing company name. Describe its actual "
+    "shape and colour only if you can clearly see it; return null rather than guess if you "
+    "are not confident, or if what you'd describe is really just repeating another field "
+    "(e.g. a company name) rather than a distinct graphic. It is a graphic, never a URL or "
+    "web link — never output anything starting with 'http' or 'www'.\n"
+    "- colour_theme: name only the actual print/branding colours of the packaging design "
+    "itself (background colours, headline text colours) — at most 3-4 colour words. Never "
+    "read a printed code, batch number, or placeholder text (e.g. inside a Batch No./Pkg. "
+    "Date box) as if it were a colour.\n"
+    "- package_size: the net content/weight/count actually sold (e.g. '30 Gummies', '150 g', "
+    "'500 ml'). This is NOT a print/die-cut dimension annotation such as 'SIZE: 222x88mm' that "
+    "may appear as a production mark on the artwork — ignore those.\n"
+    "- claims and ingredients: each is a list of separate items. Never join two claims, or two "
+    "ingredients, into one string.\n"
+    "- If a field is not present or not legible on the image, set its value to null.\n"
+    "Return ONLY the JSON object, no other text."
+)
+
+# The image-resolution cap the processor is loaded with, shared with training
+# for the same train/serve-parity reason as the prompt above — an adapter
+# trained at one visual token budget degrades if inference uses another.
+MIN_PIXELS = 256 * 28 * 28
+MAX_PIXELS = 1280 * 28 * 28
+
+
+def _adapter_path():
+    """The configured fine-tuned adapter directory, or "" when the service
+    should run the base model. Read in two places (the loader picks the base
+    precision from it, and _apply_adapter attaches it), so it lives here
+    rather than being re-derived from the environment twice."""
+    path = os.environ.get("LABEL_LORA_ADAPTER", "").strip()
+    return path if path and os.path.isdir(path) else ""
+
+_UNQUOTED_NUMERIC_UNIT_VALUE = re.compile(r':(\s*)(-?\d+(?:\.\d+)?\s+[^,{}\[\]"]*?)\s*(?=[,}])')
+
+
+def _quote_unquoted_numeric_unit_values(text):
+    """Observed failure shape: the model writes a nutrition-table value like
+    3.2 g or 300 IU (0.03 g of Vitamin D = 0.03 mg) without the quotes JSON
+    requires for a string, which json.loads rejects outright. A generic JSON
+    repair library fixes the syntax by discarding everything after the
+    leading digits, silently turning "3.2 g" into the bare number 3.2 — for
+    a nutrition panel, dropping the unit is dropping real label content, the
+    exact silent-data-loss this system's other field validators (see
+    _validate_fssai_number, _validate_logo) are built to avoid. This instead
+    quotes the value as-is, keeping the unit text intact, and touches
+    nothing that was already valid JSON (a bare number with no trailing
+    text, e.g. "Calories": 120, has no space before the comma and is left
+    for json.loads to parse as a number)."""
+    return _UNQUOTED_NUMERIC_UNIT_VALUE.sub(lambda m: ':' + m.group(1) + '"' + m.group(2).replace('"', '\\"') + '"', text)
+
+
+_MERGED_KEY_VALUE = re.compile(r'^(\s*)"([^"]+?):[ \t]*([^"]*)"(,?)[ \t]*$', re.MULTILINE)
+
+
+def _split_merged_key_value_pairs(text):
+    """Observed failure shape: inside nutrition_table the model writes a
+    whole entry as ONE string, dropping the quote-colon-quote that separates
+    key from value:
+
+        "Biotin (per serving)": "6 mg",              <- correct
+        "Calcium (as Calcium Carbonate): <0.01% DV", <- collapsed
+
+    json.loads rejects the second form with "Expecting ':' delimiter", and
+    because it happens partway through a long nutrition panel the whole
+    extraction is lost — the service falls back to an all-null result even
+    though every other field on the page was read correctly.
+
+    A line that is already a valid pair is left alone: this only matches a
+    string whose colon sits INSIDE the quotes, so "Sodium": "Kids: 10.63 mg"
+    (a legitimate value that happens to contain a colon) does not match — the
+    character after its key's closing quote is a quote, not a colon."""
+    return _MERGED_KEY_VALUE.sub(lambda m: f'{m.group(1)}"{m.group(2)}": "{m.group(3)}"{m.group(4)}', text)
 
 
 def _validate_fssai_number(value):
@@ -136,19 +237,59 @@ class ExtractionService:
             device = _resolve_inference_device(torch.cuda.is_available(), os.environ.get("ALLOW_CPU_INFERENCE", ""))
 
             model_path = "Qwen/Qwen2-VL-2B-Instruct"
-            self.processor = AutoProcessor.from_pretrained(model_path)
+            # Qwen2-VL's image processor has no resolution cap by default
+            # (longest_edge defaults to ~12.8 megapixels) — a label scanned
+            # at 200 DPI easily exceeds that untouched, producing thousands
+            # of vision tokens. Measured directly on this deployment's GPU:
+            # an uncapped ~6.7MP label (2560x2623) produced ~8,500 image
+            # tokens and made a single extraction take 30+ minutes at 100%
+            # GPU utilisation; capping to Qwen's own documented 256-1280
+            # token range ("to balance performance and cost") brought the
+            # same label down to ~1,300 total tokens and a few seconds.
+            # 1280*28*28 keeps print small enough to read (FSSAI digits,
+            # nutrition-table rows) while fitting comfortably in 6GB VRAM.
+            self.processor = AutoProcessor.from_pretrained(
+                model_path,
+                min_pixels=MIN_PIXELS,
+                max_pixels=MAX_PIXELS
+            )
 
             if device == "cuda":
                 print(f"Lazy loading Qwen2-VL-2B model into GPU ({torch.cuda.get_device_name(0)})... This will use HF_HOME cache.")
-                # Using float16 to fit in 6GB VRAM. Pinned to the single local
-                # GPU (device_map={"": 0}) rather than "auto" — "auto" is meant
-                # for multi-GPU/CPU-offload setups and can silently split the
-                # model onto CPU under VRAM pressure instead of erroring.
-                self.model = Qwen2VLForConditionalGeneration.from_pretrained(
-                    model_path,
-                    torch_dtype=torch.float16,
-                    device_map={"": 0}
-                )
+                # Pinned to the single local GPU (device_map={"": 0}) rather
+                # than "auto" — "auto" is meant for multi-GPU/CPU-offload
+                # setups and can silently split the model onto CPU under VRAM
+                # pressure instead of erroring.
+                if _adapter_path():
+                    # The adapter was trained by QLoRA against a 4-bit NF4
+                    # base, and its weights only mean anything relative to
+                    # those quantised weights: they encode a correction to
+                    # the quantised model, not to the full-precision one.
+                    # Serving the same adapter on float16 weights is not a
+                    # slight mismatch but a broken model — measured on a
+                    # held-out page, float16 + adapter degenerated into a
+                    # repeating counting sequence that filled the whole token
+                    # budget and parsed to nothing, while the identical
+                    # adapter on the 4-bit base returned correct, complete
+                    # JSON. Match the training precision.
+                    self.model = Qwen2VLForConditionalGeneration.from_pretrained(
+                        model_path,
+                        quantization_config=BitsAndBytesConfig(
+                            load_in_4bit=True,
+                            bnb_4bit_quant_type="nf4",
+                            bnb_4bit_use_double_quant=True,
+                            bnb_4bit_compute_dtype=torch.float16,
+                        ),
+                        device_map={"": 0},
+                    )
+                else:
+                    # No adapter: float16, which fits the 6GB budget and
+                    # avoids quantisation error the base model never had.
+                    self.model = Qwen2VLForConditionalGeneration.from_pretrained(
+                        model_path,
+                        torch_dtype=torch.float16,
+                        device_map={"": 0}
+                    )
             else:
                 print(
                     "WARNING: ALLOW_CPU_INFERENCE=1 is set and no CUDA GPU is available — "
@@ -164,49 +305,35 @@ class ExtractionService:
                     device_map="cpu"
                 )
 
+            self._apply_adapter()
+
+    def _apply_adapter(self):
+        """Loads the LoRA adapter fine-tuned on this company's own labels, when
+        one has been trained and LABEL_LORA_ADAPTER points at it.
+
+        Opt-in by design: the base model must keep working on a machine that
+        has never run training, so an unset or missing path is a normal state
+        that logs and continues rather than failing startup. Loading is also
+        the LAST step of _load_model, so a broken adapter cannot leave a
+        half-initialised model behind — self.model is already a working base
+        model by the time this runs."""
+        configured = os.environ.get("LABEL_LORA_ADAPTER", "").strip()
+        adapter_path = _adapter_path()
+        if not adapter_path:
+            if configured:
+                print(f"WARNING: LABEL_LORA_ADAPTER is set to '{configured}' but no such directory exists — running the base model.")
+            return
+        from peft import PeftModel
+        print(f"Loading fine-tuned LoRA adapter from {adapter_path}")
+        self.model = PeftModel.from_pretrained(self.model, adapter_path)
+        self.model.eval()
+
     def extract_from_image(self, image: Image.Image) -> ExtractedLabel:
         if not self.use_mock:
             self._load_model()
-            
-            # Real VLM Inference Logic
-            # Instruct the model to extract fields deterministically without self-reported confidence.
-            # The field-specific rules below each target a real failure mode observed in testing —
-            # not hypothetical ones — so keep them if the underlying model changes rather than
-            # trimming back to a generic prompt.
-            prompt = (
-                "You are extracting structured data from a product label image for a pharmaceutical/"
-                "health-supplement compliance system. Extract ONLY what is visibly printed on the label — "
-                "never guess, invent, or fill in a plausible-sounding value. Return a single JSON object "
-                "with exactly these fields: brand_name, product_name, colour_theme (list), flavour, "
-                "claims (list), logo, layout, nutrition_table (a flat object of nutrient name to amount, "
-                "one entry per row of the nutrition panel), fssai_number, ingredients (list), "
-                "marketing_company, address, customer_care_number, customer_care_email, package_size, "
-                "manufacturing_company.\n\n"
-                "Field-specific rules:\n"
-                "- fssai_number: an Indian FSSAI license number is ALWAYS exactly 14 digits. If more than "
-                "one is printed (e.g. one for the manufacturer, one for the marketer), extract the one for "
-                "the Marketed By / brand-owner company. If you cannot read all 14 digits with certainty, "
-                "return null rather than padding or guessing a digit.\n"
-                "- logo: look for a distinct icon, emblem, or symbol near the brand name (e.g. a leaf, "
-                "shield, circular badge, mascot) — this is separate from the brand name's own stylised "
-                "text, and separate from the marketing/manufacturing company name. Describe its actual "
-                "shape and colour only if you can clearly see it; return null rather than guess if you "
-                "are not confident, or if what you'd describe is really just repeating another field "
-                "(e.g. a company name) rather than a distinct graphic. It is a graphic, never a URL or "
-                "web link — never output anything starting with 'http' or 'www'.\n"
-                "- colour_theme: name only the actual print/branding colours of the packaging design "
-                "itself (background colours, headline text colours) — at most 3-4 colour words. Never "
-                "read a printed code, batch number, or placeholder text (e.g. inside a Batch No./Pkg. "
-                "Date box) as if it were a colour.\n"
-                "- package_size: the net content/weight/count actually sold (e.g. '30 Gummies', '150 g', "
-                "'500 ml'). This is NOT a print/die-cut dimension annotation such as 'SIZE: 222x88mm' that "
-                "may appear as a production mark on the artwork — ignore those.\n"
-                "- claims and ingredients: each is a list of separate items. Never join two claims, or two "
-                "ingredients, into one string.\n"
-                "- If a field is not present or not legible on the image, set its value to null.\n"
-                "Return ONLY the JSON object, no other text."
-            )
-            
+
+            prompt = EXTRACTION_PROMPT
+
             # Format inputs according to Qwen2-VL requirements
             messages = [
                 {
@@ -225,7 +352,15 @@ class ExtractionService:
                 # Greedy decoding, not sampling: this is a single-answer extraction task, and
                 # sampling's per-token randomness is exactly what let a plausible-looking but
                 # fabricated logo URL and a corrupted FSSAI digit through in testing.
-                generated_ids = self.model.generate(**inputs, max_new_tokens=1024, do_sample=False)
+                #
+                # repetition_penalty is a separate axis from sampling — it reweights logits
+                # before the (still-greedy) argmax rather than adding randomness, so it doesn't
+                # reopen that risk. It's here because greedy decoding was observed getting stuck
+                # repeating one ingredient ("Gum Arabic", "Gum Arabic", ...) for the full
+                # max_new_tokens budget, cutting the response off mid-string with no closing
+                # brace — truncated JSON no repair can safely complete without guessing content.
+                # 1.15 is the standard mitigation value for this exact failure shape.
+                generated_ids = self.model.generate(**inputs, max_new_tokens=1024, do_sample=False, repetition_penalty=1.15)
                 
             # Trim the prompt from the output
             generated_ids_trimmed = [
@@ -239,7 +374,20 @@ class ExtractionService:
                 end_idx = response_text.rfind('}') + 1
                 if start_idx == -1 or end_idx == 0:
                     raise ValueError("No JSON object found")
-                label_data = json.loads(response_text[start_idx:end_idx])
+                candidate = response_text[start_idx:end_idx]
+                try:
+                    label_data = json.loads(candidate)
+                except json.JSONDecodeError:
+                    # Retry against the observed, narrowly-scoped repairs
+                    # rather than giving up immediately — see each helper for
+                    # the specific malformation it targets. These are not a
+                    # general-purpose JSON repair: each one exists because
+                    # this model was seen producing that exact shape, and
+                    # each preserves the printed text rather than discarding
+                    # the part it cannot parse.
+                    repaired = _quote_unquoted_numeric_unit_values(candidate)
+                    repaired = _split_merged_key_value_pairs(repaired)
+                    label_data = json.loads(repaired)
             except (json.JSONDecodeError, ValueError):
                 print(f"Failed to parse VLM output as JSON: {response_text}")
                 label_data = {}

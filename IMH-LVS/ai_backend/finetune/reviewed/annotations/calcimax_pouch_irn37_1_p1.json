@@ -1,0 +1,26 @@
+{
+  "label": {
+    "address": null,
+    "brand_name": "Calcimax",
+    "claims": null,
+    "colour_theme": [
+      "Blue"
+    ],
+    "customer_care_email": null,
+    "customer_care_number": null,
+    "flavour": null,
+    "fssai_number": null,
+    "ingredients": null,
+    "layout": null,
+    "logo": null,
+    "manufacturing_company": null,
+    "marketing_company": null,
+    "nutrition_table": null,
+    "package_size": null,
+    "product_name": "Calcimax Gummies"
+  },
+  "page": 1,
+  "reviewed": true,
+  "reviewedAt": 1,
+  "sourceFile": "Calcimax Pouch IRN37-1.jpeg"
+}

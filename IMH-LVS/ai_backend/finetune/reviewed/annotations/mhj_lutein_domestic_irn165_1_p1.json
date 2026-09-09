@@ -1,0 +1,37 @@
+{
+  "label": {
+    "address": null,
+    "brand_name": "WOOBY",
+    "claims": [
+      "No Artificial Colours",
+      "No Preservatives",
+      "Naturally Derived Additives",
+      "Clinically Trialled Actives",
+      "See The Bright Side",
+      "Blue Light Protection",
+      "Strong Eyes & Sharp Sight",
+      "Gluten Free",
+      "Teeth Friendly",
+      "USFDA Registered Facility"
+    ],
+    "colour_theme": [
+      "Orange"
+    ],
+    "customer_care_email": null,
+    "customer_care_number": null,
+    "flavour": "Strawberry-Mint",
+    "fssai_number": null,
+    "ingredients": null,
+    "layout": "Poster-style front panel",
+    "logo": null,
+    "manufacturing_company": null,
+    "marketing_company": null,
+    "nutrition_table": null,
+    "package_size": "30 Gummies",
+    "product_name": "Eye Wellness Kids Gummies (Lutein+)"
+  },
+  "page": 1,
+  "reviewed": true,
+  "reviewedAt": 1,
+  "sourceFile": "MHJ Lutein Domestic IRN165-1.pdf"
+}

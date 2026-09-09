@@ -29,3 +29,17 @@ __pycache__/
 env/
 venv/
 .venv/
+
+# AI model fine-tuning working data — derived from Final_dataset (itself
+# kept out of the repo) and regenerable via ai_backend/finetune/*.py;
+# the scripts and review-page template are the tracked source, not this.
+ai_backend/finetune/images/
+ai_backend/finetune/review_images/
+ai_backend/finetune/annotations/
+ai_backend/finetune/review_page.html
+ai_backend/finetune/checkpoints/
+ai_backend/finetune/adapters/
+# Built by build_training_set.py from reviewed/, and embeds absolute local
+# image paths; eval/ is scored output. Both regenerable, neither portable.
+ai_backend/finetune/dataset/
+ai_backend/finetune/eval/

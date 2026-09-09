@@ -1,0 +1,51 @@
+{
+  "label": {
+    "address": "DSM-030/031, DLF Corporate Towers, Shivaji Marg, New Delhi - 110015, INDIA",
+    "brand_name": null,
+    "claims": [
+      "No Artificial Colours",
+      "No Preservatives",
+      "Naturally Derived Sweetener",
+      "Gluten Free (by nature)"
+    ],
+    "colour_theme": [
+      "Orange"
+    ],
+    "customer_care_email": "support@wooby.in",
+    "customer_care_number": "+91 78650 06500",
+    "flavour": "Strawberry-Mint",
+    "fssai_number": "13324009000080",
+    "ingredients": [
+      "Cane Sugar",
+      "Water",
+      "Gelling Agents (INS 440, 418, 407)",
+      "Acidity Regulator (INS 330, & 331iii)",
+      "Sodium Chloride",
+      "Lutegen Zeaxanthin Complex",
+      "Strawberry-Mint Flavour",
+      "Natural Sweetener Stevia (INS 960)"
+    ],
+    "layout": null,
+    "logo": null,
+    "manufacturing_company": "IM Healthcare Pvt. Ltd.",
+    "marketing_company": "MHJ Pharmaconcepts Private Limited",
+    "nutrition_table": {
+      "Added Sugar": "0 g",
+      "Dietary Fiber (as pectin)": "0.05 g",
+      "Energy": "4.5 kcal (<1% DV)",
+      "Fats": "0 g (0% DV)",
+      "Lutein (Lutegen, 50mg Marigold Flower/Tagetes erecta Extract)": "10 mg (<0.5% DV)",
+      "Proteins": "0 g",
+      "Sodium": "4 mg (0% DV)",
+      "Sugars": "0 g",
+      "Total Carbohydrate": "2 g",
+      "Zeaxanthin (Lutegen, 50mg Marigold Flower/Tagetes erecta Extract)": "2 mg"
+    },
+    "package_size": "30 Gummies",
+    "product_name": null
+  },
+  "page": 2,
+  "reviewed": true,
+  "reviewedAt": 1,
+  "sourceFile": "EYE WELLNESS DOMESTIC LABEL MHJ.pdf"
+}

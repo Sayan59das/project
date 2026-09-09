@@ -1,0 +1,34 @@
+{
+  "label": {
+    "address": null,
+    "brand_name": "WOOBY",
+    "claims": [
+      "Pectin Based",
+      "Gluten Free",
+      "Lab Tested",
+      "Chewy & Fun",
+      "Goodness in Every Bite",
+      "Teeth Friendly",
+      "USFDA Registered Facility"
+    ],
+    "colour_theme": [
+      "Green (Lime)"
+    ],
+    "customer_care_email": null,
+    "customer_care_number": null,
+    "flavour": null,
+    "fssai_number": null,
+    "ingredients": null,
+    "layout": "Poster-style front panel",
+    "logo": null,
+    "manufacturing_company": null,
+    "marketing_company": null,
+    "nutrition_table": null,
+    "package_size": "30 Gummies",
+    "product_name": "Nature's Immunity Blend Kids Gummies"
+  },
+  "page": 1,
+  "reviewed": true,
+  "reviewedAt": 1,
+  "sourceFile": "MHJ Immunity Domestic IRN217-1.pdf"
+}

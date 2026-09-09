@@ -1,0 +1,70 @@
+{
+  "label": {
+    "address": "Plot No. 70/85/86, Bhatoli Kalan, Baddi (H.P.); A.O.: SCO No. 48, Sector-5, MDC, PKL (H.R.) 134114",
+    "brand_name": "BioFaith",
+    "claims": [
+      "Supports Hair Health",
+      "Helps Maintain Healthy Skin",
+      "Helps Maintain Healthy Nails",
+      "Free From Gluten | Milk | Soy"
+    ],
+    "colour_theme": [
+      "Grey",
+      "Brown",
+      "Beige"
+    ],
+    "customer_care_email": "info@biofaith.in",
+    "customer_care_number": "0172-4045014",
+    "flavour": "Strawberry",
+    "fssai_number": "10924999000008",
+    "ingredients": [
+      "Corn Syrup",
+      "Sugar",
+      "Water",
+      "Gelling Agents (INS 440, 418, 407)",
+      "Acidity Regulator (INS 330, & 331iii)",
+      "Vitamin C",
+      "Vitamin E",
+      "Inositol",
+      "Zinc",
+      "Vitamin B6",
+      "Strawberry Flavour",
+      "Food Colour: Black Carrot Concentrate (Daucus Carota root extract)",
+      "Vitamin A",
+      "Folic Acid",
+      "Biotin",
+      "Iodine",
+      "Vitamin B12",
+      "Natural Sweetener Stevia (INS 960)"
+    ],
+    "layout": "Bottle label (jar cap circles + wraparound body label)",
+    "logo": "Stylised leaf-swirl B in the BioFaith wordmark",
+    "manufacturing_company": "IM Healthcare Pvt. Ltd.",
+    "marketing_company": "BioFaith (A Division of LXIR Medilabs Pvt. Ltd.)",
+    "nutrition_table": {
+      "Biotin": "30 mcg (100% DV)",
+      "Dietary Fiber (as Pectin)": "0.05 g",
+      "Energy": "8 kcal (<1% DV)",
+      "Fats": "0 g (0% DV)",
+      "Folate (1 Folic acid = 1.7 Folate equivalent)": "220 mcg (100% DV)",
+      "Inositol": "2.5 mg (<1% DV)",
+      "Iodine (as Potassium Iodide)": "21 mcg (14% DV)",
+      "Proteins": "0 g (0% DV)",
+      "Sodium": "4 mg (<0.5% DV)",
+      "Sugars": "1.6 g",
+      "Total Carbohydrate": "2.2 g",
+      "Vitamin A (as Vitamin A Palmitate)": "300 mcg (35% DV)",
+      "Vitamin B12 (as Cyanocobalamin)": "1 mcg (45% DV)",
+      "Vitamin B6 (as Pyridoxine HCl)": "0.25 mg (13% DV)",
+      "Vitamin C (as Ascorbic Acid)": "11.25 mg (17% DV)",
+      "Vitamin E (as D-alpha Tocopherol Acetate)": "10 mg (100% DV)",
+      "Zinc (as Zinc Citrate)": "1 mg (8% DV)"
+    },
+    "package_size": "30 Gummies",
+    "product_name": "Hair, Skin & Nails Gummies (Rich in Biotin)"
+  },
+  "page": 1,
+  "reviewed": true,
+  "reviewedAt": 1,
+  "sourceFile": "HSN IRN75-1.pdf"
+}

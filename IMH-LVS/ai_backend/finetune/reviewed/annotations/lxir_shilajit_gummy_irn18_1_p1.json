@@ -1,0 +1,54 @@
+{
+  "label": {
+    "address": "Plot No. 70/85/86, Bhatoli Kalan, Baddi (H.P.); A.O.: SCO No. 48, Sector-5, MDC, PKL (H.R.) 134114; C/O: A/101, Dhruv Olivia, Vastu Chime CHS, Shraddhanand Road, Vile Parle (East), Mumbai 57",
+    "brand_name": "BioFaith",
+    "claims": [
+      "Sugar Free",
+      "Balya (Body Strengthener)",
+      "Vrishya (Aphrodisiac)",
+      "Vajikar (Enhances Vigor and Vitality)",
+      "Ayurvedic Proprietary Medicine"
+    ],
+    "colour_theme": [
+      "Dark Green",
+      "Brown",
+      "Gold"
+    ],
+    "customer_care_email": "info@biofaith.in",
+    "customer_care_number": "+91 7837 97 9797",
+    "flavour": "Tamarind",
+    "fssai_number": null,
+    "ingredients": [
+      "Truextracts Purified Shilajit Resin",
+      "Ashwagandha (Withania Somnifera) Root Extract",
+      "Black Musli (Curculigo orchioides) Root Extract",
+      "Gokhru (Tribulus terrestris) Whole Plant Extract",
+      "Panax ginseng (Korean Ginseng) Root Extract",
+      "Ginger (Zingiber officinalis) Root Extract",
+      "Kaunch (Mucuna pruriens) Seed Extract",
+      "Akarkara (Anacyclus pyrethrum) Flower Extract",
+      "Tamarind Flavour",
+      "Excipients QS"
+    ],
+    "layout": "Bottle label (wraparound + cap circles)",
+    "logo": null,
+    "manufacturing_company": "IM Healthcare Pvt. Ltd.",
+    "marketing_company": "BioFaith (A Division of LXIR Medilabs Pvt. Ltd.)",
+    "nutrition_table": {
+      "Akarkara (Spanish Chamomile, Anacyclus pyrethrum Flower Extract)": "5 mg",
+      "Ashwagandha (Withania Somnifera Root Extract)": "50 mg",
+      "Black Musli (Curculigo orchioides Root Extract, std. saponin 20%)": "10 mg",
+      "Ginger (Zingiber officinalis Root Extract, std.)": "5 mg",
+      "Gokhru (Tribulus terrestris Whole Plant Extract, std. saponin 40%)": "5 mg",
+      "Kaunch (Mucuna pruriens Seed Extract)": "5 mg",
+      "Panax ginseng (Korean Ginseng, Root Extract)": "5 mg",
+      "Truextracts Purified Shilajit Resin (Asphaltum punjabinum, 75% fulvic acid, Pure Himalayan Shilajit)": "200 mg"
+    },
+    "package_size": "30 Gummies",
+    "product_name": "Shudh Shilajit Gummies"
+  },
+  "page": 1,
+  "reviewed": true,
+  "reviewedAt": 1,
+  "sourceFile": "LXIR Shilajit gummy IRN18-1.pdf"
+}

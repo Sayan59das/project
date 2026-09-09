@@ -1,0 +1,66 @@
+{
+  "label": {
+    "address": "Plot No. 70/85/86, Bhatoli Kalan, Baddi (H.P.); A.O.: SCO No. 48, Sector-5, MDC, PKL (H.R.) 134114",
+    "brand_name": "BioFaith",
+    "claims": [
+      "Supports Menstrual Comfort",
+      "Supports Hormonal Balance",
+      "Supports Overall Well-being",
+      "Free From Gluten | Milk | Soy"
+    ],
+    "colour_theme": [
+      "Dusty Pink",
+      "Rose"
+    ],
+    "customer_care_email": "info@biofaith.in",
+    "customer_care_number": "0172-4045014",
+    "flavour": "Strawberry",
+    "fssai_number": "10924999000008",
+    "ingredients": [
+      "Corn Syrup",
+      "Sugar",
+      "Water",
+      "Gelling Agents (INS 440, 418, 407)",
+      "Acidity Regulator (INS 330 & 331iii)",
+      "Lemon Grass",
+      "Chamomile",
+      "Pumpkin Seed Extract",
+      "Chaste berry",
+      "Beet root Extract",
+      "Vitamin B6",
+      "Strawberry Flavour",
+      "Food Colours: Black Carrot Concentrate (Daucus Carota root extract)",
+      "Natural Coating (INS903 & INS905e)",
+      "Folic Acid",
+      "Vitamin B12",
+      "Natural Sweetener Stevia (INS 960)"
+    ],
+    "layout": "Bottle label (jar cap circles + wraparound body label)",
+    "logo": "Stylised leaf-swirl B in the BioFaith wordmark",
+    "manufacturing_company": "IM Healthcare Pvt. Ltd.",
+    "marketing_company": "BioFaith (A Division of LXIR Medilabs Pvt. Ltd.)",
+    "nutrition_table": {
+      "Beet Root Extract (Beta vulgaris)": "10 mg",
+      "Chamomile (Matricaria chamomilla/recutita aerial parts extract)": "20 mg",
+      "Chasteberry (Vitex agnus-castus fruit extract)": "10 mg",
+      "Dietary Fiber (as Pectin)": "0.06 g",
+      "Energy": "8.3 kcal (<1% DV)",
+      "Fats": "0 g (0% DV)",
+      "Folate (1 Folic acid = 1.7 Folate Equivalent)": "100 mcg (45% DV)",
+      "Lemon Grass (Rosha ghas whole plant) Extract": "50 mg",
+      "Proteins": "0 g (0% DV)",
+      "Pumpkin Seed Extract (Cucurbita pepo, C. maxima)": "20 mg",
+      "Sodium": "4 mg (<0.5% DV)",
+      "Sugars": "1.68 g",
+      "Total Carbohydrate": "2.28 g",
+      "Vitamin B12 (as Cyanocobalamin)": "2 mcg (91% DV)",
+      "Vitamin B6 (as Pyridoxine HCl)": "0.5 mg (26% DV)"
+    },
+    "package_size": "30 Gummies",
+    "product_name": "PMS Gummies (Chamomile & Chasteberry)"
+  },
+  "page": 1,
+  "reviewed": true,
+  "reviewedAt": 1,
+  "sourceFile": "PMS VF IRN71-1.pdf"
+}

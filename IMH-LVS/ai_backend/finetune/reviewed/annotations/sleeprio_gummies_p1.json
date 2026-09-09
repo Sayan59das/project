@@ -1,0 +1,58 @@
+{
+  "label": {
+    "address": "654, Arjun Nagar, Nanhera Road, Ambala Cantt, Haryana, India - 133001",
+    "brand_name": "Sleeprio",
+    "claims": [
+      "Sleep Better. Wake Refreshed.",
+      "Riomedica Relax Gummies are thoughtfully formulated with melatonin and botanical extracts to support restful sleep and relaxation",
+      "Support Restful Sleep & Relaxation",
+      "Supports Relaxation",
+      "Promotes Restful Sleep",
+      "Helps Reduce Stress",
+      "Cruelty Free",
+      "Gluten Free",
+      "Gelatin Free"
+    ],
+    "colour_theme": [
+      "Purple",
+      "White"
+    ],
+    "customer_care_email": "riomedicahealthcare@gmail.com",
+    "customer_care_number": "+91 82229 99972",
+    "flavour": "Strawberry",
+    "fssai_number": "10824999000328",
+    "ingredients": [
+      "Corn Syrup",
+      "Sugar",
+      "Water",
+      "Gelling Agents (INS 440, 418, 407)",
+      "Acidity Regulator (INS 330 & 331iii)",
+      "Ashwagandha",
+      "Melatonin",
+      "Strawberry Flavour",
+      "Food Colours: Black Carrot Concentrate (Daucus carota root extract)",
+      "Natural Sweetener Stevia (INS 960)"
+    ],
+    "layout": "Carton",
+    "logo": "Green leaf icon above the RIOMEDICA wordmark",
+    "manufacturing_company": "IM Healthcare Pvt. Ltd.",
+    "marketing_company": "Riomedica Healthcare Pvt. Ltd.",
+    "nutrition_table": {
+      "Ashwagandha (Withania Somnifera Root Extract)": "50 mg",
+      "Dietary Fiber (as Pectin)": "0.06 g",
+      "Energy": "8.8 kcal (<1% DV)",
+      "Fats": "0 g (0% DV)",
+      "Melatonin (as N-Acetyl-5-Methoxytryptamine)": "5 mg",
+      "Proteins": "0 g (0% DV)",
+      "Sodium": "4 mg (<0.5% DV)",
+      "Sugars": "1.77 g",
+      "Total Carbohydrate": "2.4 g"
+    },
+    "package_size": "10 Gummies",
+    "product_name": "Relax Gummies for Adults"
+  },
+  "page": 1,
+  "reviewed": true,
+  "reviewedAt": 1,
+  "sourceFile": "Sleeprio Gummies.pdf"
+}

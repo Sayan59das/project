@@ -15,3 +15,6 @@ einops
 timm
 attrdict
 pytest
+peft
+bitsandbytes
+datasets

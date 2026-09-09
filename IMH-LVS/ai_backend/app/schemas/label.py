@@ -12,11 +12,28 @@ _LIST_FIELDS = ("colour_theme", "claims", "ingredients")
 
 
 def _as_list(value: Any) -> Any:
-    if value is None or isinstance(value, list):
+    if value is None:
         return value
     if isinstance(value, str):
         parts = [part.strip() for part in value.split(",")]
         return [part for part in parts if part]
+    if isinstance(value, list):
+        # Each item should be a plain string; the model has also been seen
+        # returning claims/ingredients as a list of small objects instead
+        # (e.g. {"name": "Strong Bones", "description": "Calcium + Vitamin
+        # D"}), which fails validation outright rather than just being a
+        # wrong value — collapse each dict item to one string, the same
+        # "coerce the shape, don't reject good data" treatment _as_dict
+        # below already gives nutrition_table.
+        result = []
+        for item in value:
+            if isinstance(item, dict):
+                joined = ", ".join(str(v) for v in item.values() if v not in (None, ""))
+                if joined:
+                    result.append(joined)
+            elif item not in (None, ""):
+                result.append(str(item))
+        return result
     return [value]
 
 

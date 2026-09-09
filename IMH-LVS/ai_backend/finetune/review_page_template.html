@@ -1,0 +1,574 @@
+<title>Label Extraction Review</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Source+Serif+4:opsz,wght@8..60,500;8..60,600;8..60,700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<style>
+  :root{
+    --paper:#F6F3EC;
+    --raised:#FFFFFF;
+    --ink:#1B211F;
+    --ink-soft:#5B635F;
+    --line:#DCD5C4;
+    --line-strong:#C7BEA8;
+    --accent:#2B6E61;
+    --accent-ink:#FFFFFF;
+    --accent-soft:#E1EEEA;
+    --warn:#A6743A;
+    --warn-soft:#F4E9D8;
+    --danger:#A8412F;
+    --shadow: 0 1px 2px rgba(27,33,31,0.06), 0 8px 24px rgba(27,33,31,0.06);
+    --serif: "Source Serif 4", Georgia, "Times New Roman", serif;
+    --sans: "IBM Plex Sans", -apple-system, "Segoe UI", sans-serif;
+    --mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){
+      --paper:#14181A;
+      --raised:#1C2224;
+      --ink:#EDEAE1;
+      --ink-soft:#A9B0AC;
+      --line:#2C3436;
+      --line-strong:#3A4345;
+      --accent:#57AC99;
+      --accent-ink:#07201B;
+      --accent-soft:#1D3530;
+      --warn:#D8A45C;
+      --warn-soft:#3A2E1C;
+      --danger:#D97C68;
+      --shadow: 0 1px 2px rgba(0,0,0,0.3), 0 8px 24px rgba(0,0,0,0.35);
+    }
+  }
+  :root[data-theme="dark"]{
+    --paper:#14181A;
+    --raised:#1C2224;
+    --ink:#EDEAE1;
+    --ink-soft:#A9B0AC;
+    --line:#2C3436;
+    --line-strong:#3A4345;
+    --accent:#57AC99;
+    --accent-ink:#07201B;
+    --accent-soft:#1D3530;
+    --warn:#D8A45C;
+    --warn-soft:#3A2E1C;
+    --danger:#D97C68;
+    --shadow: 0 1px 2px rgba(0,0,0,0.3), 0 8px 24px rgba(0,0,0,0.35);
+  }
+
+  *{box-sizing:border-box;}
+  body{
+    background:var(--paper);
+    color:var(--ink);
+    font-family:var(--sans);
+    font-size:14px;
+    line-height:1.5;
+  }
+  h1,h2,h3{font-family:var(--serif); text-wrap:balance; margin:0;}
+  .mono{font-family:var(--mono);}
+  button{font-family:inherit; font-size:inherit;}
+  ::selection{background:var(--accent-soft);}
+
+  /* ---------- top bar ---------- */
+  .topbar{
+    position:sticky; top:0; z-index:20;
+    display:flex; align-items:center; gap:20px;
+    padding:16px 24px;
+    background:var(--paper);
+    border-bottom:1px solid var(--line);
+  }
+  .topbar h1{font-size:20px; font-weight:600; letter-spacing:-0.01em;}
+  .topbar .eyebrow{
+    font-family:var(--mono); font-size:11px; letter-spacing:0.08em; text-transform:uppercase;
+    color:var(--ink-soft); margin-bottom:2px; display:block;
+  }
+  .progress-wrap{margin-left:auto; display:flex; align-items:center; gap:12px;}
+  .progress-count{font-family:var(--mono); font-size:13px; color:var(--ink-soft); white-space:nowrap; font-variant-numeric:tabular-nums;}
+  .progress-track{
+    width:160px; height:6px; border-radius:3px; background:var(--line); overflow:hidden;
+  }
+  .progress-fill{height:100%; background:var(--accent); border-radius:3px; transition:width .3s ease;}
+
+  .container{max-width:1180px; margin:0 auto; padding:24px;}
+  .intro{
+    max-width:66ch; color:var(--ink-soft); font-size:14px; margin:0 0 22px;
+  }
+  .intro strong{color:var(--ink); font-weight:600;}
+
+  /* ---------- filter tabs ---------- */
+  .tabs{display:flex; gap:6px; margin-bottom:18px;}
+  .tab{
+    padding:7px 14px; border-radius:999px; border:1px solid var(--line);
+    background:var(--raised); color:var(--ink-soft); cursor:pointer;
+    font-size:13px; font-weight:500;
+  }
+  .tab[aria-pressed="true"]{background:var(--ink); color:var(--paper); border-color:var(--ink);}
+  :root[data-theme="dark"] .tab[aria-pressed="true"], @media (prefers-color-scheme:dark){}
+  .tab .count{font-family:var(--mono); margin-left:6px; opacity:.75;}
+
+  /* ---------- grid ---------- */
+  .grid{
+    display:grid;
+    grid-template-columns:repeat(auto-fill, minmax(210px,1fr));
+    gap:16px;
+  }
+  .card{
+    background:var(--raised); border:1px solid var(--line); border-radius:10px;
+    overflow:hidden; cursor:pointer; text-align:left; padding:0;
+    box-shadow:var(--shadow);
+    display:flex; flex-direction:column;
+    transition:transform .12s ease, border-color .12s ease;
+  }
+  .card:hover{transform:translateY(-2px); border-color:var(--line-strong);}
+  .card:focus-visible{outline:2px solid var(--accent); outline-offset:2px;}
+  .card .thumb{
+    width:100%; aspect-ratio:4/5; object-fit:cover; display:block;
+    background:var(--paper); border-bottom:1px solid var(--line);
+  }
+  .card .meta{padding:10px 12px 12px; display:flex; flex-direction:column; gap:6px;}
+  .card .fname{
+    font-size:12.5px; font-weight:500; line-height:1.35;
+    overflow:hidden; text-overflow:ellipsis; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical;
+  }
+  .card .row{display:flex; align-items:center; justify-content:space-between; gap:8px;}
+  .page-tag{font-family:var(--mono); font-size:11px; color:var(--ink-soft);}
+  .chip{
+    font-size:10.5px; font-weight:600; letter-spacing:.03em; text-transform:uppercase;
+    padding:3px 8px; border-radius:999px; white-space:nowrap;
+  }
+  .chip.reviewed{background:var(--accent-soft); color:var(--accent);}
+  .chip.pending{background:var(--warn-soft); color:var(--warn);}
+
+  /* ---------- detail view ---------- */
+  .detail-top{display:flex; align-items:center; gap:14px; margin-bottom:18px; flex-wrap:wrap;}
+  .backlink{
+    font-size:13px; color:var(--ink-soft); background:none; border:none; cursor:pointer;
+    display:flex; align-items:center; gap:6px; padding:6px 0;
+  }
+  .backlink:hover{color:var(--ink);}
+  .nav-btns{display:flex; gap:8px; margin-left:auto;}
+  .btn{
+    border-radius:7px; border:1px solid var(--line); background:var(--raised); color:var(--ink);
+    padding:8px 14px; font-size:13px; font-weight:500; cursor:pointer;
+  }
+  .btn:hover{border-color:var(--line-strong);}
+  .btn:disabled{opacity:.4; cursor:not-allowed;}
+  .btn-primary{background:var(--accent); border-color:var(--accent); color:var(--accent-ink); font-weight:600;}
+  .btn-primary:hover{filter:brightness(1.05);}
+  .btn-ghost{background:none; border-color:transparent; color:var(--ink-soft);}
+  .btn-ghost:hover{color:var(--danger);}
+  .btn-sm{padding:5px 10px; font-size:12px;}
+
+  .detail-grid{display:grid; grid-template-columns:minmax(260px,38%) 1fr; gap:28px; align-items:start;}
+  @media (max-width:820px){.detail-grid{grid-template-columns:1fr;}}
+
+  .image-pane{position:sticky; top:76px;}
+  .image-pane img{
+    width:100%; border-radius:10px; border:1px solid var(--line); box-shadow:var(--shadow);
+    cursor:zoom-in; display:block;
+  }
+  .image-caption{
+    margin-top:10px; font-size:12px; color:var(--ink-soft);
+    display:flex; justify-content:space-between; gap:8px; font-family:var(--mono);
+  }
+
+  .field{margin-bottom:16px;}
+  .field label{
+    display:block; font-size:11.5px; font-weight:600; text-transform:uppercase; letter-spacing:.05em;
+    color:var(--ink-soft); margin-bottom:6px;
+  }
+  .field .hint{font-size:11.5px; color:var(--ink-soft); margin-top:5px; font-weight:400; text-transform:none; letter-spacing:0;}
+  .field input[type=text], .field textarea{
+    width:100%; padding:9px 11px; border:1px solid var(--line); border-radius:7px;
+    background:var(--raised); color:var(--ink); font-family:var(--sans); font-size:13.5px;
+  }
+  .field input.mono-field{font-family:var(--mono);}
+  .field input:focus, .field textarea:focus{outline:none; border-color:var(--accent); box-shadow:0 0 0 3px var(--accent-soft);}
+  .field textarea{min-height:64px; resize:vertical;}
+  .fields-2col{display:grid; grid-template-columns:1fr 1fr; gap:0 16px;}
+  @media (max-width:520px){.fields-2col{grid-template-columns:1fr;}}
+  .section-title{
+    font-family:var(--serif); font-size:15px; font-weight:600; margin:26px 0 14px;
+    padding-bottom:8px; border-bottom:1px solid var(--line);
+  }
+  .section-title:first-child{margin-top:0;}
+
+  .nutrient-row{display:grid; grid-template-columns:1fr 1fr auto; gap:8px; margin-bottom:8px; align-items:center;}
+  .nutrient-row input{padding:8px 10px; border:1px solid var(--line); border-radius:6px; background:var(--raised); color:var(--ink); font-family:var(--mono); font-size:13px;}
+  .icon-btn{
+    width:30px; height:30px; border-radius:6px; border:1px solid var(--line); background:var(--raised);
+    color:var(--ink-soft); cursor:pointer; font-size:15px; line-height:1;
+  }
+  .icon-btn:hover{color:var(--danger); border-color:var(--danger);}
+  .add-row{font-size:12.5px; color:var(--accent); background:none; border:none; cursor:pointer; font-weight:600; padding:4px 0;}
+
+  .save-bar{
+    display:flex; align-items:center; gap:12px; margin-top:24px; padding-top:18px; border-top:1px solid var(--line);
+  }
+  .save-status{font-size:12.5px; color:var(--ink-soft); font-family:var(--mono);}
+  .save-status.ok{color:var(--accent);}
+
+  .lightbox{
+    position:fixed; inset:0; background:rgba(10,12,11,0.82); z-index:50;
+    display:flex; align-items:center; justify-content:center; padding:5vw; cursor:zoom-out;
+  }
+  .lightbox img{max-width:100%; max-height:100%; border-radius:6px; box-shadow:0 20px 60px rgba(0,0,0,.5);}
+
+  .banner{
+    background:var(--warn-soft); color:var(--warn); border:1px solid var(--warn); border-radius:8px;
+    padding:10px 14px; font-size:13px; margin-bottom:18px;
+  }
+  .empty-state{padding:60px 20px; text-align:center; color:var(--ink-soft);}
+  @media (prefers-reduced-motion: reduce){ *{transition:none !important;} }
+</style>
+
+<div class="topbar">
+  <div>
+    <span class="eyebrow">AI Label Reading Module</span>
+    <h1>Label Extraction Review</h1>
+  </div>
+  <div class="progress-wrap">
+    <div class="progress-track"><div class="progress-fill" id="progressFill" style="width:0%"></div></div>
+    <div class="progress-count" id="progressCount">&hellip; / &hellip; reviewed</div>
+  </div>
+</div>
+
+<div class="container" id="app">
+  <p class="intro">Loading&hellip;</p>
+</div>
+
+<script>
+/*__PAGES_DATA__*/
+
+var STATE = {
+  view: 'grid',
+  filter: 'all',
+  activeSlug: null,
+  docs: {},          // slug -> stored document data
+  db: null,
+  dbReady: false,
+  lightboxOpen: false
+};
+
+var FIELD_DEFS = [
+  { key: 'brand_name', label: 'Brand Name', type: 'text' },
+  { key: 'product_name', label: 'Product Name', type: 'text' },
+  { key: 'marketing_company', label: 'Marketing Company', type: 'text' },
+  { key: 'manufacturing_company', label: 'Manufacturing Company', type: 'text' },
+  { key: 'fssai_number', label: 'FSSAI Number', type: 'text', mono: true, hint: 'Exactly 14 digits, or leave blank if not printed here.' },
+  { key: 'package_size', label: 'Package Size', type: 'text', hint: 'e.g. "30 Gummies", "150 g"' },
+  { key: 'flavour', label: 'Flavour', type: 'text' },
+  { key: 'colour_theme', label: 'Colour Theme', type: 'text', hint: 'Comma-separated, e.g. Orange, Yellow' },
+  { key: 'logo', label: 'Logo', type: 'text', hint: 'Describe the graphic mark, not the brand name text.' },
+  { key: 'layout', label: 'Layout / Design', type: 'text' },
+  { key: 'customer_care_number', label: 'Customer Care Number', type: 'text' },
+  { key: 'customer_care_email', label: 'Customer Care Email', type: 'text' },
+  { key: 'address', label: 'Address', type: 'text', full: true },
+  { key: 'claims', label: 'Claims', type: 'list', hint: 'One claim per line.' },
+  { key: 'ingredients', label: 'Ingredients', type: 'list', hint: 'One ingredient per line.' }
+];
+
+function el(tag, attrs, children){
+  var e = document.createElement(tag);
+  attrs = attrs || {};
+  for (var k in attrs){
+    if (k === 'class') e.className = attrs[k];
+    else if (k === 'html') e.innerHTML = attrs[k];
+    else e.setAttribute(k, attrs[k]);
+  }
+  (children||[]).forEach(function(c){ if (c) e.appendChild(c); });
+  return e;
+}
+
+function pageDoc(slug){
+  return STATE.docs[slug] || null;
+}
+
+function isReviewed(slug){
+  var d = pageDoc(slug);
+  return !!(d && d.reviewed);
+}
+
+function reviewedCount(){
+  return PAGES.filter(function(p){ return isReviewed(p.slug); }).length;
+}
+
+function updateProgress(){
+  var total = PAGES.length;
+  var done = reviewedCount();
+  document.getElementById('progressCount').textContent = done + ' / ' + total + ' reviewed';
+  document.getElementById('progressFill').style.width = (total ? (done/total*100) : 0) + '%';
+}
+
+async function initDb(){
+  try{
+    STATE.db = await claude.use('db');
+  }catch(e){ STATE.db = null; }
+  if (!STATE.db){
+    render();
+    return;
+  }
+  STATE.db.collection('annotations').onSnapshot(function(snap){
+    var next = {};
+    snap.docs.forEach(function(d){ next[d.id] = d.data(); });
+    STATE.docs = next;
+    STATE.dbReady = true;
+    updateProgress();
+    render();
+  }, function(err){
+    console.error('[review] db subscription error', err);
+  });
+}
+
+function render(){
+  var app = document.getElementById('app');
+  app.innerHTML = '';
+  if (!STATE.db){
+    app.appendChild(el('div', {class:'banner'}, [document.createTextNode(
+      "Realtime saving isn't available in this view, so edits here won't be kept. Open this page from its Claude artifact link to review for real."
+    )]));
+  }
+  if (STATE.view === 'detail' && STATE.activeSlug){
+    renderDetail(app);
+  } else {
+    renderGrid(app);
+  }
+  updateProgress();
+}
+
+function renderGrid(app){
+  app.appendChild(el('p', {class:'intro'}, [document.createTextNode(
+    'Each card below is one printed face of a label. Open it, check the AI’s guess against the image, and fix any field that’s wrong. '
+  ), el('strong', {}, [document.createTextNode('Leave a field blank if it isn’t printed on that particular page')]), document.createTextNode(
+    ' — nutrition and ingredient details are usually on the back face, not the front.'
+  )]));
+
+  var tabs = el('div', {class:'tabs'});
+  var counts = { all: PAGES.length, pending: PAGES.length - reviewedCount(), reviewed: reviewedCount() };
+  [['all','All'],['pending','Needs review'],['reviewed','Reviewed']].forEach(function(pair){
+    var key = pair[0], label = pair[1];
+    var btn = el('button', {class:'tab', 'aria-pressed': String(STATE.filter===key)}, [
+      document.createTextNode(label),
+      el('span', {class:'count'}, [document.createTextNode(String(counts[key]))])
+    ]);
+    btn.addEventListener('click', function(){ STATE.filter = key; render(); });
+    tabs.appendChild(btn);
+  });
+  app.appendChild(tabs);
+
+  var list = PAGES.filter(function(p){
+    if (STATE.filter === 'pending') return !isReviewed(p.slug);
+    if (STATE.filter === 'reviewed') return isReviewed(p.slug);
+    return true;
+  });
+
+  if (!list.length){
+    app.appendChild(el('div', {class:'empty-state'}, [document.createTextNode('Nothing in this view.')]));
+    return;
+  }
+
+  var grid = el('div', {class:'grid'});
+  list.forEach(function(p){
+    var reviewed = isReviewed(p.slug);
+    var card = el('button', {class:'card'}, [
+      el('img', {class:'thumb', src:p.image, alt:p.sourceFile, loading:'lazy'}),
+      el('div', {class:'meta'}, [
+        el('div', {class:'fname', title:p.sourceFile}, [document.createTextNode(p.sourceFile)]),
+        el('div', {class:'row'}, [
+          el('span', {class:'page-tag'}, [document.createTextNode('page ' + p.page + ' of ' + p.pageCount)]),
+          el('span', {class:'chip ' + (reviewed?'reviewed':'pending')}, [document.createTextNode(reviewed?'Reviewed':'Needs review')])
+        ])
+      ])
+    ]);
+    card.addEventListener('click', function(){ STATE.view='detail'; STATE.activeSlug=p.slug; render(); window.scrollTo(0,0); });
+    grid.appendChild(card);
+  });
+  app.appendChild(grid);
+}
+
+function currentIndex(){
+  return PAGES.findIndex(function(p){ return p.slug === STATE.activeSlug; });
+}
+
+function goToOffset(offset){
+  var idx = currentIndex() + offset;
+  if (idx < 0 || idx >= PAGES.length) return;
+  STATE.activeSlug = PAGES[idx].slug;
+  render();
+  window.scrollTo(0,0);
+}
+
+function listToText(arr){ return Array.isArray(arr) ? arr.join('\n') : (arr || ''); }
+function textToList(str){
+  var lines = String(str||'').split('\n').map(function(s){return s.trim();}).filter(Boolean);
+  return lines.length ? lines : null;
+}
+function csvToList(str){
+  var parts = String(str||'').split(',').map(function(s){return s.trim();}).filter(Boolean);
+  return parts.length ? parts : null;
+}
+
+function renderDetail(app){
+  var page = PAGES[currentIndex()];
+  if (!page){ STATE.view='grid'; renderGrid(app); return; }
+  var doc = pageDoc(page.slug) || {};
+  var label = doc.label || {};
+  var nutrition = (label.nutrition_table && typeof label.nutrition_table === 'object') ? label.nutrition_table : {};
+  var nutritionRows = Object.keys(nutrition).map(function(k){ return [k, String(nutrition[k])]; });
+  if (!nutritionRows.length) nutritionRows = [['','']];
+
+  var top = el('div', {class:'detail-top'}, [
+    (function(){
+      var b = el('button', {class:'backlink'}, [document.createTextNode('← All labels')]);
+      b.addEventListener('click', function(){ STATE.view='grid'; render(); });
+      return b;
+    })(),
+    (function(){
+      var wrap = el('div', {class:'nav-btns'});
+      var prev = el('button', {class:'btn btn-sm'}, [document.createTextNode('← Prev')]);
+      var next = el('button', {class:'btn btn-sm'}, [document.createTextNode('Next →')]);
+      if (currentIndex() === 0) prev.disabled = true;
+      if (currentIndex() === PAGES.length-1) next.disabled = true;
+      prev.addEventListener('click', function(){ goToOffset(-1); });
+      next.addEventListener('click', function(){ goToOffset(1); });
+      wrap.appendChild(prev); wrap.appendChild(next);
+      return wrap;
+    })()
+  ]);
+  app.appendChild(top);
+
+  var grid = el('div', {class:'detail-grid'});
+
+  var imgPane = el('div', {class:'image-pane'}, [
+    el('img', {src:page.image, alt:page.sourceFile, id:'detailImg'}),
+    el('div', {class:'image-caption'}, [
+      el('span', {}, [document.createTextNode(page.sourceFile)]),
+      el('span', {}, [document.createTextNode('page ' + page.page + '/' + page.pageCount)])
+    ])
+  ]);
+  imgPane.querySelector('img').addEventListener('click', function(){ openLightbox(page.image); });
+  grid.appendChild(imgPane);
+
+  var formPane = el('div', {class:'form-pane'});
+  formPane.appendChild(el('div', {class:'section-title'}, [document.createTextNode('Identity & compliance')]));
+  var idFields = el('div', {class:'fields-2col'});
+  var inputs = {};
+
+  function makeTextField(def){
+    var wrap = el('div', {class: 'field' + (def.full ? '' : '')});
+    wrap.appendChild(el('label', {}, [document.createTextNode(def.label)]));
+    var input = el('input', {type:'text', class: def.mono ? 'mono-field' : ''});
+    input.value = label[def.key] || '';
+    inputs[def.key] = input;
+    wrap.appendChild(input);
+    if (def.hint) wrap.appendChild(el('div', {class:'hint'}, [document.createTextNode(def.hint)]));
+    return wrap;
+  }
+  function makeListField(def){
+    var wrap = el('div', {class:'field'});
+    wrap.appendChild(el('label', {}, [document.createTextNode(def.label)]));
+    var ta = el('textarea', {});
+    ta.value = listToText(label[def.key]);
+    inputs[def.key] = ta;
+    wrap.appendChild(ta);
+    if (def.hint) wrap.appendChild(el('div', {class:'hint'}, [document.createTextNode(def.hint)]));
+    return wrap;
+  }
+
+  FIELD_DEFS.forEach(function(def){
+    if (def.key === 'claims') { formPane.appendChild(el('div', {class:'section-title'}, [document.createTextNode('Claims & ingredients')])); }
+    var field = def.type === 'list' ? makeListField(def) : makeTextField(def);
+    if (def.full || def.type === 'list'){
+      formPane.appendChild(field);
+    } else {
+      idFields.appendChild(field);
+    }
+  });
+  formPane.insertBefore(idFields, formPane.children[1]);
+
+  // Nutrition table
+  formPane.appendChild(el('div', {class:'section-title'}, [document.createTextNode('Nutrition table')]));
+  var nutriWrap = el('div', {id:'nutriWrap'});
+  function addNutriRow(name, amount){
+    var row = el('div', {class:'nutrient-row'});
+    var nameInput = el('input', {type:'text', placeholder:'Nutrient (e.g. Vitamin C)'});
+    nameInput.value = name || '';
+    var amtInput = el('input', {type:'text', placeholder:'Amount (e.g. 50mg)'});
+    amtInput.value = amount || '';
+    var del = el('button', {class:'icon-btn', type:'button', title:'Remove row'}, [document.createTextNode('✕')]);
+    del.addEventListener('click', function(){ row.remove(); });
+    row.appendChild(nameInput); row.appendChild(amtInput); row.appendChild(del);
+    nutriWrap.appendChild(row);
+  }
+  nutritionRows.forEach(function(r){ addNutriRow(r[0], r[1]); });
+  formPane.appendChild(nutriWrap);
+  var addRowBtn = el('button', {class:'add-row', type:'button'}, [document.createTextNode('+ Add nutrient row')]);
+  addRowBtn.addEventListener('click', function(){ addNutriRow('',''); });
+  formPane.appendChild(addRowBtn);
+
+  // Save bar
+  var status = el('span', {class:'save-status'}, [document.createTextNode(doc.reviewed ? ('Marked reviewed' + (doc.reviewedAt ? ' · ' + new Date(doc.reviewedAt).toLocaleString() : '')) : 'Not yet reviewed')]);
+  if (doc.reviewed) status.classList.add('ok');
+  var saveBtn = el('button', {class:'btn btn-primary'}, [document.createTextNode('Save & Mark Reviewed')]);
+  var unreviewBtn = el('button', {class:'btn btn-ghost btn-sm'}, [document.createTextNode('Mark unreviewed')]);
+  saveBtn.addEventListener('click', function(){ save(page, inputs, nutriWrap, status, true); });
+  unreviewBtn.addEventListener('click', function(){ save(page, inputs, nutriWrap, status, false); });
+  var saveBar = el('div', {class:'save-bar'}, [saveBtn, unreviewBtn, status]);
+  formPane.appendChild(saveBar);
+
+  grid.appendChild(formPane);
+  app.appendChild(grid);
+}
+
+async function save(page, inputs, nutriWrap, statusEl, markReviewed){
+  var label = {};
+  FIELD_DEFS.forEach(function(def){
+    var raw = inputs[def.key].value;
+    if (def.key === 'colour_theme') label[def.key] = csvToList(raw);
+    else if (def.type === 'list') label[def.key] = textToList(raw);
+    else label[def.key] = raw.trim() ? raw.trim() : null;
+  });
+  var nutrition = {};
+  Array.prototype.forEach.call(nutriWrap.querySelectorAll('.nutrient-row'), function(row){
+    var inputsInRow = row.querySelectorAll('input');
+    var name = inputsInRow[0].value.trim();
+    var amt = inputsInRow[1].value.trim();
+    if (name) nutrition[name] = amt;
+  });
+  label.nutrition_table = Object.keys(nutrition).length ? nutrition : null;
+
+  var body = {
+    sourceFile: page.sourceFile,
+    page: page.page,
+    label: label,
+    reviewed: !!markReviewed,
+    reviewedAt: markReviewed ? Date.now() : null
+  };
+
+  if (!STATE.db){
+    statusEl.textContent = 'Not saved — open via the artifact link.';
+    return;
+  }
+  statusEl.textContent = 'Saving…';
+  statusEl.classList.remove('ok');
+  try{
+    await STATE.db.doc('annotations/' + page.slug).set(body);
+    statusEl.textContent = markReviewed ? 'Saved · marked reviewed' : 'Saved as not reviewed';
+    if (markReviewed) statusEl.classList.add('ok');
+    if (markReviewed){
+      var idx = currentIndex();
+      if (idx < PAGES.length - 1){
+        setTimeout(function(){ goToOffset(1); }, 350);
+      }
+    }
+  }catch(e){
+    statusEl.textContent = 'Save failed: ' + (e && e.message ? e.message : 'unknown error');
+  }
+}
+
+function openLightbox(src){
+  var box = el('div', {class:'lightbox'}, [el('img', {src:src})]);
+  box.addEventListener('click', function(){ box.remove(); });
+  document.body.appendChild(box);
+}
+
+initDb();
+render();
+</script>
