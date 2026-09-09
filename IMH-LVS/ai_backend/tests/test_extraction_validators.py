@@ -19,6 +19,7 @@ from app.services.extraction import (
     _has_content,
     _looks_like_colour_name,
     _missing_fields,
+    _normalize_literal_null_strings,
     _resolve_inference_device,
     _tile_image,
     _validate_colour_theme,
@@ -155,6 +156,33 @@ class TestMissingFields:
         assert _missing_fields({}, LABEL_FIELDS) == LABEL_FIELDS
 
 
+class TestNormalizeLiteralNullStrings:
+    """Observed concretely on a real label: the model wrote
+    `"fssai_number": "null"` — a real, non-blank 4-character string, not the
+    JSON null literal the prompt asks for. Left alone, that string reads as
+    legitimate content to _has_content and skips every recovery path, so it
+    must be turned into a real None as early as parsing."""
+
+    def test_quoted_null_becomes_none(self):
+        assert _normalize_literal_null_strings({"fssai_number": "null"}) == {"fssai_number": None}
+
+    def test_matches_case_insensitively_and_ignores_surrounding_space(self):
+        assert _normalize_literal_null_strings({"a": "Null", "b": "NULL", "c": "  null  "}) == {
+            "a": None, "b": None, "c": None
+        }
+
+    def test_a_real_value_is_left_untouched(self):
+        data = {"brand_name": "NutriBears", "fssai_number": "10021062000026"}
+        assert _normalize_literal_null_strings(data) == data
+
+    def test_a_real_json_null_is_left_as_none(self):
+        assert _normalize_literal_null_strings({"logo": None}) == {"logo": None}
+
+    def test_non_string_values_are_left_untouched(self):
+        data = {"colour_theme": ["Red", "White"], "nutrition_table": {"Vitamin C": "50mg"}}
+        assert _normalize_literal_null_strings(data) == data
+
+
 class TestBuildCompletionPrompt:
     def test_lists_exactly_the_requested_fields_and_no_others(self):
         prompt = _build_completion_prompt(["marketing_company", "address", "package_size"])
@@ -287,8 +315,11 @@ class TestExtractFromImageCompletionRetry:
             calls.append(max_new_tokens)
             if len(calls) == 1:
                 return dict(TestExtractFromImageCompletionRetry.FIRST_PASS_MISSING_TAIL)
-            # Resolves every omitted field, so nothing is left for tiling.
-            return {field: "x" for field in TestExtractFromImageCompletionRetry.OMITTED}
+            # Resolves every field the first pass left blank — the six
+            # omitted fields AND the ones it wrote as an explicit null/empty
+            # shell (logo, layout, fssai_number, claims, nutrition_table,
+            # ingredients) — so nothing is left for tiling.
+            return {field: "x" for field in LABEL_FIELDS}
 
         with patch.object(ExtractionService, "_load_model", lambda self: None), \
              patch.object(ExtractionService, "_generate_json", fake_generate):
@@ -327,7 +358,18 @@ class TestExtractFromImageCompletionRetry:
         assert result.address is None
         assert result.package_size is None
 
-    def test_no_retry_when_nothing_was_omitted(self):
+    def test_a_confident_all_null_answer_still_gets_retried_and_tiled(self):
+        # An explicit null used to be trusted outright as the model's honest
+        # "not legible" and skip both recovery paths — no key was ever
+        # "omitted" here, so the old omitted-only check saw nothing to do.
+        # Proven too trusting on a real label: fssai_number came back blank
+        # on the main pass despite being printed on the page, and because
+        # nothing was technically omitted, it never got a second look at
+        # all. Every blank field now gets the same one-retry-then-tile
+        # chance regardless of whether it was omitted or written null —
+        # a genuinely blank label just costs the extra generations before
+        # confirming null, which is the honest tradeoff for not silently
+        # losing a real value the way fssai_number was.
         calls = []
 
         def fake_generate(self, image, prompt, max_new_tokens=1024):
@@ -336,9 +378,12 @@ class TestExtractFromImageCompletionRetry:
 
         with patch.object(ExtractionService, "_load_model", lambda self: None), \
              patch.object(ExtractionService, "_generate_json", fake_generate):
-            self._service().extract_from_image(self._image())
+            result = self._service().extract_from_image(self._image())
 
-        assert len(calls) == 1  # no wasted second or further GPU pass
+        # 1 (first pass) + 1 (whole-page retry) + 9 (every tile, since none
+        # of them ever finds anything either).
+        assert len(calls) == 11
+        assert result.brand_name is None
 
     def test_no_retry_when_the_first_pass_produced_nothing_at_all(self):
         # A totally empty {} means the first pass failed outright (e.g. no
@@ -389,8 +434,10 @@ class TestExtractFromImageCompletionRetry:
                 return dict(TestExtractFromImageCompletionRetry.FIRST_PASS_MISSING_TAIL)
             if len(calls) == 2:
                 return {}
-            # The very first tile resolves everything still missing.
-            return {field: "x" for field in TestExtractFromImageCompletionRetry.OMITTED}
+            # The very first tile resolves everything still missing — the
+            # omitted fields AND the ones the first pass had already left
+            # blank with an explicit null/empty shell.
+            return {field: "x" for field in LABEL_FIELDS}
 
         with patch.object(ExtractionService, "_load_model", lambda self: None), \
              patch.object(ExtractionService, "_generate_json", fake_generate):

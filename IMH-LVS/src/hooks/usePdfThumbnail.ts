@@ -25,7 +25,15 @@ function getPdfjs() {
 export async function renderPdfFirstPageToDataUrl(fileUrl: string): Promise<string | null> {
   try {
     const pdfjsLib = await getPdfjs();
-    const pdf = await pdfjsLib.getDocument(fileUrl).promise;
+    // withCredentials: true — artwork files are served from an
+    // auth-protected backend endpoint (/api/artworks/:id/file, behind
+    // requireSession's httpOnly cookie). pdf.js's own networking layer does
+    // not send credentials by default even for a same-origin-looking URL,
+    // so without this every real uploaded artwork's PDF request comes back
+    // 401 and the preview silently falls back to "not available" — a blob:
+    // URL (the not-yet-saved file straight from the upload dialog) ignores
+    // this option harmlessly, so it's safe to always pass it.
+    const pdf = await pdfjsLib.getDocument({ url: fileUrl, withCredentials: true }).promise;
     const page = await pdf.getPage(1);
     const viewport = page.getViewport({ scale: 1.5 });
     const canvas = document.createElement('canvas');

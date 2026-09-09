@@ -173,6 +173,26 @@ def _has_content(value):
     return True  # numbers, bools: never observed blank-shelled, taken as real
 
 
+def _normalize_literal_null_strings(data):
+    """Turns a top-level value the model spelled out as the STRING "null"
+    into the actual JSON null it was clearly trying to write.
+
+    Observed concretely on a real label's fssai_number: the model's raw JSON
+    contained `"fssai_number": "null"` — quoted, a real 4-character string —
+    rather than the unquoted `null` literal the prompt asks for. That string
+    is non-blank, so _has_content sees it as real content and every recovery
+    path below (the completion retry, the tile fallback) skips the field
+    entirely, leaving it to be caught only by _validate_fssai_number at the
+    very end — which rejects it correctly, but without ever giving the model
+    the same second look a genuinely omitted field gets. Normalizing here,
+    right after parsing, means a quoted "null" is indistinguishable from the
+    real thing everywhere downstream."""
+    return {
+        key: None if isinstance(value, str) and value.strip().lower() == "null" else value
+        for key, value in data.items()
+    }
+
+
 # Anchors and size for the tiling fallback below: a 3x3 grid of overlapping
 # ~40%-of-the-page crops. Confirmed empirically, not guessed — a label was
 # found where marketing_company, address, customer_care_number and
@@ -535,7 +555,7 @@ class ExtractionService:
                 raise ValueError("No JSON object found")
             candidate = response_text[start_idx:end_idx]
             try:
-                return json.loads(candidate)
+                return _normalize_literal_null_strings(json.loads(candidate))
             except json.JSONDecodeError:
                 # Retry against the observed, narrowly-scoped repairs
                 # rather than giving up immediately — see each helper for
@@ -546,7 +566,7 @@ class ExtractionService:
                 # the part it cannot parse.
                 repaired = _quote_unquoted_numeric_unit_values(candidate)
                 repaired = _split_merged_key_value_pairs(repaired)
-                return json.loads(repaired)
+                return _normalize_literal_null_strings(json.loads(repaired))
         except (json.JSONDecodeError, ValueError):
             print(f"Failed to parse VLM output as JSON: {response_text}")
             return {}
@@ -569,11 +589,25 @@ class ExtractionService:
             # None — and because it is still reading the actual image for an
             # actual value, a field that genuinely isn't legible still comes
             # back null afterward, exactly as it should.
+            #
+            # The same retry also covers a field the main pass DID mention
+            # but left with nothing usable (null, "", or — normalized above
+            # — the literal string "null"). That was deliberately excluded
+            # at first, on the theory that an explicit null is the model's
+            # honest "not legible" and retrying it would just be guessing.
+            # Proven wrong on a real label: fssai_number came back blank on
+            # the main pass despite being printed on the page, and the retry
+            # mechanism only ever looked at omitted keys, so it never got a
+            # second look at all. Retrying a field that turns out to
+            # genuinely be absent just reconfirms null at the cost of one
+            # extra generation — cheap insurance against the alternative,
+            # which is a real value silently lost with no second attempt.
             omitted = _missing_fields(label_data, LABEL_FIELDS)
-            if omitted and label_data:
-                print(f"First pass never mentioned {omitted} — retrying once for just those fields.")
-                completion = self._generate_json(image, _build_completion_prompt(omitted), max_new_tokens=384)
-                for field in omitted:
+            blank = [key for key in LABEL_FIELDS if not _has_content(label_data.get(key))]
+            if blank and label_data:
+                print(f"First pass left {blank} blank ({omitted} of those never mentioned at all) — retrying once for just those fields.")
+                completion = self._generate_json(image, _build_completion_prompt(blank), max_new_tokens=384)
+                for field in blank:
                     if field in completion and _has_content(completion[field]):
                         label_data[field] = completion[field]
                     else:
@@ -596,7 +630,7 @@ class ExtractionService:
                 # tile grid stands in for that manual crop, stopping the
                 # moment every requested field has a real answer.
                 still_missing = [
-                    field for field in omitted
+                    field for field in blank
                     if field not in _TILE_INELIGIBLE_FIELDS and not _has_content(label_data.get(field))
                 ]
                 if still_missing:
