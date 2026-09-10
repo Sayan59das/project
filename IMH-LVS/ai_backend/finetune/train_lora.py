@@ -24,6 +24,17 @@ import math
 import os
 from pathlib import Path
 
+# Must be set before torch's first CUDA call (i.e. before `import torch`
+# below actually touches the GPU) — expandable_segments lets the CUDA
+# allocator grow one segment instead of hunting for a new contiguous block
+# per allocation, which is what turns a fragmented-but-technically-enough
+# GPU into a real OutOfMemoryError. Confirmed necessary on a 16GB T4 running
+# the 7B model: the crash's own message ("14.56 GiB of which 673.81 MiB is
+# free") was fragmentation, not a true capacity shortfall — training was
+# barely into epoch 1. Harmless default off the 6GB local card too, so this
+# is unconditional rather than another env-var opt-in.
+os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
+
 import torch
 from PIL import Image
 from torch.utils.data import Dataset
@@ -47,8 +58,11 @@ LEARNING_RATE = 1e-4
 WARMUP_FRACTION = 0.1
 # 44 pages is a small set: a high LoRA rank has more capacity to memorise it
 # than to learn from it. r=16 is the smallest rank that still gave a falling
-# validation loss here.
-LORA_RANK = 16
+# validation loss here (2B model, 6GB card). Overridable for the same reason
+# as MODEL_PATH/ADAPTER_OUT above: a bigger base model's own activations
+# leave less headroom for the adapter's, and this is a second, independent
+# lever on that if the allocator fix alone isn't enough — default unchanged.
+LORA_RANK = int(os.environ.get("FINETUNE_LORA_RANK", "16"))
 
 
 class LabelDataset(Dataset):
@@ -250,7 +264,14 @@ def main() -> None:
     print(f"{len(train_set)} training pages, {len(val_set)} validation pages")
 
     import bitsandbytes as bnb
-    optimizer = bnb.optim.AdamW8bit(
+    # Paged, not plain, AdamW8bit: a paged optimizer spills its state to CPU
+    # RAM under GPU memory pressure instead of hard-failing — exactly the
+    # OOM shape hit training a 7B model on a 16GB T4 (crashed in the
+    # backward pass of epoch 1, well before any optimizer.step()). Purely a
+    # memory-management difference; the math AdamW8bit performs is
+    # unchanged, so this doesn't affect what gets learned, only whether a
+    # memory spike crashes the run.
+    optimizer = bnb.optim.PagedAdamW8bit(
         [p for p in model.parameters() if p.requires_grad], lr=LEARNING_RATE, weight_decay=0.01
     )
     steps_per_epoch = math.ceil(len(train_set) / GRAD_ACCUM)
