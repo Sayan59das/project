@@ -44,6 +44,13 @@ def file_digest(path: Path) -> str:
     return hashlib.md5(path.read_bytes()).hexdigest()
 
 
+REVIEWED_ANNOTATIONS = Path(__file__).resolve().parent / "reviewed" / "annotations"
+
+
+def has_reviewed_annotation(slug: str) -> bool:
+    return any(REVIEWED_ANNOTATIONS.glob(f"{slug}_p*.json"))
+
+
 def main() -> None:
     present = [d for d in SOURCE_DIRS if d.is_dir()]
     if not present:
@@ -66,15 +73,32 @@ def main() -> None:
     # "Immunogum 4S IRN131-1.pdf" share an MD5. Rasterising both would
     # double-weight that page in training and, worse, could put one copy in
     # train and its twin in validation — leakage that reads as a good score.
-    seen_digests: dict[str, Path] = {}
-
+    #
+    # Which duplicate survives is chosen DELIBERATELY, not by whichever
+    # happens to sort first: a reviewed annotation already references one
+    # specific slug, and picking the other one silently orphans that real,
+    # hand-verified ground truth. Confirmed to actually happen, not just
+    # theoretical: consolidating what used to be two separate source folders
+    # (each internally sorted) into one merged "all labels" folder reordered
+    # this exact Immunogum pair and broke build_training_set.py's lookup.
+    by_digest: dict[str, list[Path]] = {}
     for source in source_files:
-        digest = file_digest(source)
-        if digest in seen_digests:
-            print(f"  skipping {source.name} — byte-identical to {seen_digests[digest].name}")
-            continue
-        seen_digests[digest] = source
+        by_digest.setdefault(file_digest(source), []).append(source)
 
+    resolved_files = []
+    for digest, group in by_digest.items():
+        if len(group) == 1:
+            resolved_files.append(group[0])
+            continue
+        reviewed = [f for f in group if has_reviewed_annotation(slugify(f.stem))]
+        winner = reviewed[0] if reviewed else sorted(group)[0]
+        for loser in sorted(group):
+            if loser != winner:
+                reason = " (kept: has a reviewed annotation)" if reviewed else ""
+                print(f"  skipping {loser.name} — byte-identical to {winner.name}{reason}")
+        resolved_files.append(winner)
+
+    for source in sorted(resolved_files):
         slug = slugify(source.stem)
 
         if source.suffix.lower() == ".pdf":
