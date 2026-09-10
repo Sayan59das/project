@@ -34,9 +34,13 @@ from app.services.extraction import EXTRACTION_PROMPT, MAX_PIXELS, MIN_PIXELS
 
 BASE = Path(__file__).resolve().parent
 DATASET = BASE / "dataset"
-ADAPTER_OUT = BASE / "adapters" / "label-extraction-lora"
+# Overridable so the same script trains a bigger model (e.g. on a Colab T4
+# with more VRAM) without touching the file the local 6GB-card setup
+# depends on — both env vars are unset by default, so local behavior is
+# byte-for-byte unchanged unless a caller explicitly sets them.
+ADAPTER_OUT = Path(os.environ.get("FINETUNE_ADAPTER_OUT", str(BASE / "adapters" / "label-extraction-lora")))
 
-MODEL_PATH = "Qwen/Qwen2-VL-2B-Instruct"
+MODEL_PATH = os.environ.get("FINETUNE_MODEL_PATH", "Qwen/Qwen2-VL-2B-Instruct")
 EPOCHS = 6
 GRAD_ACCUM = 8
 LEARNING_RATE = 1e-4

@@ -26,8 +26,12 @@ from PIL import Image
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 # Every folder of raw label files the company has supplied, oldest first.
 # Adding a batch is adding a line here — the rest of the pipeline keys off
-# the manifest this writes, not off any one folder name.
-SOURCE_DIRS = [REPO_ROOT / "Final_dataset", REPO_ROOT / "New Data"]
+# the manifest this writes, not off any one folder name. Final_dataset/ and
+# New Data/ were consolidated into one "all labels" folder (84 files,
+# including old, new, and byte-identical duplicates across the two original
+# batches — file_digest()'s dedup below is what actually handles those, not
+# this list).
+SOURCE_DIRS = [REPO_ROOT / "all labels"]
 OUTPUT_DIR = Path(__file__).resolve().parent / "images"
 
 
