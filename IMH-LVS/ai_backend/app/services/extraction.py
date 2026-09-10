@@ -417,7 +417,12 @@ class ExtractionService:
         if self.model is None and not self.use_mock:
             device = _resolve_inference_device(torch.cuda.is_available(), os.environ.get("ALLOW_CPU_INFERENCE", ""))
 
-            model_path = "Qwen/Qwen2-VL-2B-Instruct"
+            # Overridable so the same service can be pointed at a bigger
+            # fine-tune (e.g. evaluate_adapter.py checking a 7B adapter
+            # trained on a Colab T4) without touching what a normal, unset
+            # local run loads — mirrors the same FINETUNE_MODEL_PATH pattern
+            # finetune/train_lora.py already uses, and for the same reason.
+            model_path = os.environ.get("FINETUNE_MODEL_PATH", "Qwen/Qwen2-VL-2B-Instruct")
             # Qwen2-VL's image processor has no resolution cap by default
             # (longest_edge defaults to ~12.8 megapixels) — a label scanned
             # at 200 DPI easily exceeds that untouched, producing thousands

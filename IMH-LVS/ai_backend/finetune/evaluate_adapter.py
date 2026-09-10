@@ -25,7 +25,11 @@ from PIL import Image
 
 BASE = Path(__file__).resolve().parent
 VAL = BASE / "dataset" / "val.jsonl"
-ADAPTER = BASE / "adapters" / "label-extraction-lora"
+# Same env var and same reasoning as train_lora.py's ADAPTER_OUT: unset
+# locally (unchanged default), but lets `tuned` mode check an adapter
+# trained elsewhere — e.g. the 7B Colab run, which saves to a Drive path,
+# not this local folder.
+ADAPTER = Path(os.environ.get("FINETUNE_ADAPTER_OUT", str(BASE / "adapters" / "label-extraction-lora")))
 RESULTS = BASE / "eval"
 
 FIELDS = [
