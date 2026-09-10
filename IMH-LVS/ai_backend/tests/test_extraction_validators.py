@@ -385,11 +385,20 @@ class TestExtractFromImageCompletionRetry:
         assert len(calls) == 11
         assert result.brand_name is None
 
-    def test_no_retry_when_the_first_pass_produced_nothing_at_all(self):
-        # A totally empty {} means the first pass failed outright (e.g. no
-        # JSON object found at all) rather than stopping partway through a
-        # real answer — retrying "all 16 fields" in that case would just
-        # repeat a very similar failure, not a meaningfully smaller task.
+    def test_a_totally_failed_first_pass_still_gets_retried_and_tiled(self):
+        # A totally empty {} means the first pass produced no parseable JSON
+        # at all (e.g. no closing brace was ever generated). This used to
+        # skip retry entirely, on the theory that retrying "all 16 fields"
+        # would just repeat a very similar failure. Proven wrong on real
+        # eval runs: the concrete failure shape behind an empty {} is a
+        # repetition-loop degeneration (the model gets stuck repeating a
+        # short phrase for the full token budget instead of answering),
+        # which the whole-page prompt provoked — the completion retry and
+        # tile fallback are not "the same task again", they're a much
+        # narrower prompt on a smaller token budget and, for tiles, a
+        # cropped region, all of which give the loop meaningfully less room
+        # to happen again. Same call count as the all-explicit-null case
+        # below because a bare {} produces the same "every field blank" set.
         calls = []
 
         def fake_generate(self, image, prompt, max_new_tokens=1024):
@@ -400,7 +409,9 @@ class TestExtractFromImageCompletionRetry:
              patch.object(ExtractionService, "_generate_json", fake_generate):
             result = self._service().extract_from_image(self._image())
 
-        assert len(calls) == 1
+        # 1 (first pass) + 1 (whole-page retry) + 9 (every tile, since none
+        # of them ever finds anything either).
+        assert len(calls) == 11
         assert result.brand_name is None
 
     def test_tile_fallback_recovers_a_field_the_whole_page_retry_could_not(self):

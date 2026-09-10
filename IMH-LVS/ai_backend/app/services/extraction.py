@@ -2,6 +2,7 @@ import os
 import io
 import json
 import re
+import sys
 import torch
 from PIL import Image
 from pdf2image import convert_from_bytes
@@ -539,7 +540,17 @@ class ExtractionService:
             # max_new_tokens budget, cutting the response off mid-string with no closing
             # brace — truncated JSON no repair can safely complete without guessing content.
             # 1.15 is the standard mitigation value for this exact failure shape.
-            generated_ids = self.model.generate(**inputs, max_new_tokens=max_new_tokens, do_sample=False, repetition_penalty=1.15)
+            #
+            # repetition_penalty alone was not enough: fine-tuning eval runs kept
+            # reproducing the same loop (a "Pale [colour]"/"Food Dyes Detergent..."-style
+            # list that never terminates) even with it set. no_repeat_ngram_size is a hard
+            # constraint rather than a soft reweighting — it makes a 4-token sequence
+            # literally impossible to repeat — so the two work at different strengths on
+            # the same failure mode. 4 is short enough to actually block the observed loops
+            # (which repeat a 1-3 token phrase) while long enough not to forbid legitimate
+            # short reuse elsewhere in a label (e.g. a unit like "100 mg" recurring across
+            # different nutrition rows, which will differ in the surrounding tokens).
+            generated_ids = self.model.generate(**inputs, max_new_tokens=max_new_tokens, do_sample=False, repetition_penalty=1.15, no_repeat_ngram_size=4)
 
         # Trim the prompt from the output
         generated_ids_trimmed = [
@@ -568,7 +579,17 @@ class ExtractionService:
                 repaired = _split_merged_key_value_pairs(repaired)
                 return _normalize_literal_null_strings(json.loads(repaired))
         except (json.JSONDecodeError, ValueError):
-            print(f"Failed to parse VLM output as JSON: {response_text}")
+            # The retry/tile-fallback paths below make this reachable far more
+            # often than before (see extract_from_image), and real model output
+            # has been observed containing characters (e.g. a Unicode
+            # replacement character from a garbled decode) that the console's
+            # encoding — cp1252 by default on Windows — cannot print at all,
+            # crashing the whole extraction on what should be a logged failure.
+            # Re-encoding defensively here keeps this a diagnostic print, never
+            # a second point of failure on top of the one it's reporting.
+            console_encoding = sys.stdout.encoding or "utf-8"
+            safe_text = response_text.encode(console_encoding, errors="replace").decode(console_encoding)
+            print(f"Failed to parse VLM output as JSON: {safe_text}")
             return {}
 
     def extract_from_image(self, image: Image.Image) -> ExtractedLabel:
@@ -604,7 +625,19 @@ class ExtractionService:
             # which is a real value silently lost with no second attempt.
             omitted = _missing_fields(label_data, LABEL_FIELDS)
             blank = [key for key in LABEL_FIELDS if not _has_content(label_data.get(key))]
-            if blank and label_data:
+            # Deliberately NOT conditioned on `label_data` being non-empty. A
+            # totally empty {} (the first pass produced no parseable JSON at
+            # all — observed concretely as a repetition-loop degeneration
+            # that runs past max_new_tokens with no closing brace) used to
+            # skip retry entirely, on the theory that repeating "all 16
+            # fields" would just reproduce the same failure. Proven wrong on
+            # real eval runs: that degeneration is provoked by the full
+            # page's own complexity/prompt, and the completion retry isn't
+            # the same task — it's a much narrower prompt on a 384-token
+            # budget (vs 1024), and the tile fallback below crops to a small
+            # region — both meaningfully smaller asks with real room to
+            # succeed where the whole-page pass looped instead of answering.
+            if blank:
                 print(f"First pass left {blank} blank ({omitted} of those never mentioned at all) — retrying once for just those fields.")
                 completion = self._generate_json(image, _build_completion_prompt(blank), max_new_tokens=384)
                 for field in blank:

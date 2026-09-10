@@ -92,27 +92,85 @@ gap this file used to describe) and used to train a LoRA adapter, sitting at
 `ai_backend/finetune/adapters/label-extraction-lora/` (gitignored, ~74MB,
 regenerable via `train_lora.py`).
 
-**Evaluated today against the 6-page held-out validation split**
-(`python -m finetune.evaluate_adapter base|tuned`, run from `ai_backend/`):
+**2026-09-09 evaluation, 6-page held-out validation split:**
 
 | | Base (no adapter) | Tuned (LoRA adapter) |
 |---|---|---|
 | Overall | **38.2%** | **36.3%** |
 
-The adapter is **not an improvement** — four of six pages scored a bit
+The adapter was **not an improvement** — four of six pages scored a bit
 better, but one page (`sleeprio_irn157_1_p1`) completely collapsed: the
 fine-tuned model entered a degenerate repetition loop (a nonsensical,
 endlessly-repeating "Pale [colour]" list inside the nutrition-table field),
 which broke JSON parsing entirely and zeroed that page's score. That one
 failure dragged the average below the base model's.
 
+**2026-09-10: retrained on a bigger dataset (the "New Data" batch — Immunogum,
+Iron, Cal Vit D, Derocal, etc. added to `Final_dataset/`), same result.**
+`prepare_dataset.py`/`build_training_set.py` were extended with real fixes
+(byte-identical-file dedup, ICC-profile stripping so Pillow doesn't choke on
+a CMYK JPEG, and union-find grouping so validation is held out by real
+product family — brand+product+FSSAI signals shared across pages — not by
+filename, which was silently leaking near-duplicate artwork between train
+and validation before). Training ran 5 of 6 planned epochs (interrupted when
+the previous session ended; val loss was still falling each epoch: 0.55 →
+0.40 → 0.35 → 0.33 → **0.32**) — the saved adapter reflects epoch 5.
+
+Evaluated against the new, larger 16-page validation split
+(`PYTHONPATH=. python finetune/evaluate_adapter.py base|tuned`, run from
+`ai_backend/` — the `-m finetune.evaluate_adapter` form above also works,
+`PYTHONPATH=.` is only needed for the direct-script form):
+
+| | Base (no adapter) | Tuned (LoRA adapter) | Tesseract-only (no AI) |
+|---|---|---|---|
+| Overall | **34.6%** | **33.8%** | **33.9%** |
+| Pages returned completely blank | 3 of 16 | **8 of 16** | — |
+
+**Same conclusion as 2026-09-09, worse in one respect**: more data alone did
+not fix the degenerate repetition loop — it happened again, on different
+pages, and the fine-tuned model gave up completely (all-null) on over twice
+as many pages as the untrained base model. The fine-tuned model is
+statistically tied with *plain OCR and no AI at all*. **Root cause found**:
+`extract_from_image` in `ai_backend/app/services/extraction.py` only ran its
+completion-retry/tile-fallback recovery when the first-pass output was
+non-empty (`if blank and label_data:`) — so a page whose first pass failed
+*completely* (which is exactly what a repetition-loop degeneration produces:
+unparseable JSON with no closing brace) got **zero** recovery attempts,
+while a partially-bad page got full recovery. Fixed today (see bugs list
+below) but **not yet re-evaluated to completion** — see "In progress" below.
+
 **Do not set `LABEL_LORA_ADAPTER`** — production should keep running the base
 model until this is revisited. Next steps, in likely order of impact: (1)
-more annotated training examples (44 is small), (2) check the training
-recipe for whatever is causing the repetition-loop degeneration (repetition
-penalty / learning rate / an overfit adapter latching onto a wrong pattern
-are all plausible, none confirmed), (3) re-evaluate before ever flipping the
-adapter on in production.
+finish validating today's fix (below), (2) more annotated training examples
+(44–60 is still small) now that the repetition-loop recovery gap is closed,
+(3) still-unconfirmed training-recipe causes of the repetition loop itself
+(repetition penalty / learning rate / an overfit adapter latching onto a
+wrong pattern), (4) re-evaluate before ever flipping the adapter on in
+production.
+
+### In progress — resume after 8pm today (2026-09-10)
+
+Two real bugs were fixed today in `ai_backend/app/services/extraction.py`
+(see "Bugs found and fixed" below for the full detail), and both are
+covered by the existing 63-test suite (`cd ai_backend && python -m pytest
+tests/ -v` — passes). What's **not yet done**: re-running the 16-page tuned
+eval with both fixes in place to see the actual before/after accuracy
+number. A run was started but stopped partway through (1 of 16 pages done —
+retries now genuinely run, so each page can take much longer than before,
+budget more like 45–60+ minutes for the full 16 pages, not the ~15 minutes
+it took pre-fix). To resume:
+```
+cd ai_backend && PYTHONPATH="." python finetune/evaluate_adapter.py tuned > finetune/eval_tuned_after_fix.log 2>&1
+```
+then compare `finetune/eval/tuned.json`'s `overall` and `blank_results`
+against the 33.8%/8-blank numbers above. Also uncommitted/unstaged in this
+session, worth deciding on: 16 new files under
+`ai_backend/finetune/reviewed/annotations/` are `git add`-staged (user
+confirmed today these should be tracked) but not committed; the
+`PDFTOPPM_PATH` env var addition (`backend/src/config/env.ts`,
+`backend/src/services/pdf.service.ts`, `.env.example`) and the
+`build_training_set.py`/`prepare_dataset.py` changes described above are
+modified but not staged or committed.
 
 ## Bugs found and fixed today (2026-09-09)
 
@@ -157,6 +215,34 @@ adapter on in production.
   retry + up to 9 isolated tile crops). Raised to 120000 for testing; **not
   yet persisted to `backend/.env`** — do that before relying on the AI
   fallback for a label with many blank fields.
+
+## Bugs found and fixed today (2026-09-10)
+
+- **Total first-pass extraction failure skipped all recovery.** See "Model
+  fine-tuning" above for the full story — `extract_from_image`'s
+  `if blank and label_data:` guard meant a first pass that produced zero
+  parseable JSON (the shape a repetition-loop degeneration produces) got
+  no completion-retry and no tile fallback, while a partial failure got
+  full recovery. Changed to `if blank:` so total failures get the same
+  (much narrower, much more likely to succeed) recovery attempt. Test
+  `test_no_retry_when_the_first_pass_produced_nothing_at_all` renamed to
+  `test_a_totally_failed_first_pass_still_gets_retried_and_tiled` and
+  rewritten to assert the new behavior. Also added `no_repeat_ngram_size=4`
+  to the `model.generate()` call in `_generate_json` alongside the existing
+  `repetition_penalty=1.15` — a hard constraint against short-phrase loops
+  as a second line of defense, since the penalty alone had twice failed to
+  prevent one (2026-09-09 and 2026-09-10 eval runs).
+- **Fixing the bug above immediately exposed a second, pre-existing one**:
+  the retry/tile-fallback path now actually runs for totally-failed pages,
+  and real model output on a garbled page can contain a character (observed:
+  a Unicode replacement character, `�`) that Windows' default console
+  encoding (cp1252) cannot print — crashing the whole extraction with
+  `UnicodeEncodeError` on what should have been a harmless diagnostic
+  `print()` of the failed JSON. This code path was previously dead for
+  total failures (see bug above), so the crash was never reachable until
+  today's fix made it reachable. Fixed in the same file's `_generate_json`:
+  the diagnostic print now re-encodes with `errors="replace"` against
+  `sys.stdout.encoding` before printing.
 
 ## Known open issues (not fixed, real, worth picking up)
 
@@ -221,6 +307,18 @@ shells — export it fresh in every new shell that starts either service:
 ```
 export PATH="/c/Users/sayan/AppData/Local/Microsoft/WinGet/Packages/oschwartz10612.Poppler_Microsoft.Winget.Source_8wekyb3d8bbwe/poppler-25.07.0/Library/bin:$PATH"
 ```
+
+**Python interpreter for `ai_backend`**: use the plain `python` on PATH
+(system install, currently 3.14 — confirmed today it has `torch` 2.11+cu128
+with CUDA available and `bitsandbytes` 0.50.2). **`backend/venv/` is a red
+herring** — it has `torch`/`transformers`/`accelerate` but NOT
+`bitsandbytes`, so anything doing 4-bit loading (training or eval) fails
+with `ImportError: Using bitsandbytes 4-bit quantization requires
+bitsandbytes` if run with that venv's interpreter. Also: running a
+`finetune/*.py` script directly (`python finetune/evaluate_adapter.py`) needs
+`PYTHONPATH=.` set (from `ai_backend/`) for the `from app.services...` import
+to resolve — the `python -m finetune.evaluate_adapter` form doesn't need it,
+since `-m` puts the cwd on `sys.path` automatically.
 
 **GPU**: local machine is an RTX 4050 laptop (6GB VRAM) — enough for exactly
 ONE Qwen2-VL-2B instance at a time. Running the live `ai_backend` server
