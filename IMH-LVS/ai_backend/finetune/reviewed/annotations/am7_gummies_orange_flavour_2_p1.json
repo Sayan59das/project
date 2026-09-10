@@ -1,0 +1,62 @@
+{
+  "image_file": "am7_gummies_orange_flavour_2_p1.png",
+  "sourceFile": "AM7 GUMMIES - ORANGE  FLAVOUR (2).pdf",
+  "page": 1,
+  "reviewed": true,
+  "reviewedAt": 1,
+  "label": {
+    "brand_name": "GUERISON",
+    "product_name": "AM7 Gummies",
+    "colour_theme": [
+      "Orange"
+    ],
+    "flavour": "Orange",
+    "claims": [
+      "Gelatin Free",
+      "Gluten Free",
+      "Nut Free",
+      "Soy Free"
+    ],
+    "logo": null,
+    "layout": "Rectangle carton, front panel",
+    "nutrition_table": {
+      "Energy": "16 kcal",
+      "Total Carbohydrate": "4 g",
+      "Sugars": "3.2 g",
+      "Dietary Fiber (as Pectin)": "0.1 g",
+      "Proteins": "0 g",
+      "Fats": "0 g",
+      "Sodium": "8 mg",
+      "Omega 3 (DHA/Algal DHA 10%)": "100 mg",
+      "Vitamin C (as Ascorbic Acid)": "30 mg",
+      "Vitamin E (as D-Alpha Tocopherol Acetate)": "5.04 mg",
+      "Lutein 20%": "4 mg",
+      "Astaxanthin 2%": "160 mcg",
+      "Zeaxanthin 10%": "800 mcg",
+      "Vitamin A (as Vitamin A Palmitate)": "499.8 mcg"
+    },
+    "fssai_number": "10021062000026",
+    "ingredients": [
+      "Corn Syrup",
+      "Sugar",
+      "Water",
+      "Gelling Agents (INS 440, 418, 407)",
+      "Acidity Regulator (INS 330, & 331iii)",
+      "Omega 3",
+      "Vitamin C",
+      "Vitamin E",
+      "Lutein 20%",
+      "Orange Flavour and Food Colour: Paprika (INS 160c)",
+      "Astaxanthin 2%",
+      "Zeaxanthin 10%",
+      "Vitamin A",
+      "Natural Sweetener Stevia (INS 960)"
+    ],
+    "marketing_company": "Guerison Infusions Private Limited",
+    "address": "Plot No. 620, Phase - V, Udyog Vihar, Gurugram, Haryana - 122016",
+    "customer_care_number": "+91 98 710 54 111",
+    "customer_care_email": "info@guerison.in",
+    "package_size": "15 Gummies",
+    "manufacturing_company": "IM Healthcare Pvt. Ltd."
+  }
+}

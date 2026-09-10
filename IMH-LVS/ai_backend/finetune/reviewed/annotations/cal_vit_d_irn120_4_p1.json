@@ -1,0 +1,48 @@
+{
+  "image_file": "cal_vit_d_irn120_4_p1.png",
+  "sourceFile": "Cal. Vit D IRN120-4.pdf",
+  "page": 1,
+  "reviewed": true,
+  "reviewedAt": 1,
+  "label": {
+    "brand_name": "ChewNectar",
+    "product_name": "Calcium 125 mg + Vitamin D 200 IU Gummy",
+    "colour_theme": [
+      "Yellow"
+    ],
+    "flavour": "Mango, Strawberry",
+    "claims": [
+      "Support for Strong, Healthy Bones and Teeth"
+    ],
+    "logo": null,
+    "layout": null,
+    "nutrition_table": {
+      "Calories": "12 kcal",
+      "Total Carbohydrate": "3.2 g",
+      "Sugar": "2.4 g",
+      "Dietary Fiber (as pectin)": "0.08 g",
+      "Proteins": "0 g",
+      "Fats": "0 g",
+      "Sodium": "4 mg",
+      "Calcium (as Tricalcium Phosphate)": "125 mg",
+      "Vitamin D (as Ergocalciferol) (200IU of Vitamin D=5mcg)": "200 IU"
+    },
+    "fssai_number": "13324998000073",
+    "ingredients": [
+      "Corn Syrup",
+      "Sugar",
+      "Water",
+      "Gelling Agents (INS 440)",
+      "Acidity Regulator (INS 330 & 331iii)",
+      "Tricalcium Phosphate",
+      "Mango & Strawberry Flavour and Food Colour: Curcumin (INS 100) & Black Carrot Concentrate (Daucus Carota root extract)",
+      "Vitamin D"
+    ],
+    "marketing_company": "Neonutriva Healthcare Pvt. Ltd.",
+    "address": "Registered office: B-1/357 Janakpuri, New Delhi - 110058. Corporate office: NESCO IT Park, Building 4, North Wing, Western Express Highway, Goregaon, Mumbai, Maharashtra",
+    "customer_care_number": "+91 9650 88 8164",
+    "customer_care_email": "customercare@neonutriva.com",
+    "package_size": "30 N",
+    "manufacturing_company": "IM Healthcare Pvt. Ltd."
+  }
+}

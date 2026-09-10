@@ -1,0 +1,48 @@
+{
+  "image_file": "iron_irn121_4_p1.png",
+  "sourceFile": "Iron IRN121-4.pdf",
+  "page": 1,
+  "reviewed": true,
+  "reviewedAt": 1,
+  "label": {
+    "brand_name": "ChewNectar",
+    "product_name": "Iron Gummies",
+    "colour_theme": [
+      "Purple"
+    ],
+    "flavour": "Strawberry",
+    "claims": [
+      "Supports overall vitality and energy levels",
+      "Helps maintain normal iron metabolism",
+      "Cruelty Free"
+    ],
+    "logo": null,
+    "layout": null,
+    "nutrition_table": {
+      "Energy": "16 kcal",
+      "Total Carbohydrate": "4.4 g",
+      "Sugars": "3.2 g",
+      "Dietary Fiber (as Pectin)": "0.10 g",
+      "Proteins": "0 g",
+      "Fats": "0 g",
+      "Sodium": "8 mg",
+      "Iron (as Ferric Pyrophosphate) (from SunActive Fe standardized to 8% elemental Iron)": "13 mg"
+    },
+    "fssai_number": "13324998000073",
+    "ingredients": [
+      "Corn Syrup",
+      "Sugar",
+      "Water",
+      "Gelling Agents (INS 440, 418, 407)",
+      "Acidity Regulator (INS 330, & 331iii)",
+      "Iron. Strawberry Flavour and Food Colour: Black Carrot Concentrate (Daucus Carota root extract)",
+      "Natural Sweetener Stevia (INS 960)"
+    ],
+    "marketing_company": "Neonutriva Healthcare Pvt. Ltd.",
+    "address": "Registered office: B-1/357 Janakpuri, New Delhi - 110058. Corporate office: NESCO IT Park, Building 4, North Wing, Western Express Highway, Goregaon, Mumbai, Maharashtra",
+    "customer_care_number": "+91 9650 88 8164",
+    "customer_care_email": "customercare@neonutriva.com",
+    "package_size": "30 N",
+    "manufacturing_company": "IM Healthcare Pvt. Ltd."
+  }
+}

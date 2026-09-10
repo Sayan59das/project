@@ -1,0 +1,51 @@
+{
+  "image_file": "derocal_irn177_1_p1.png",
+  "sourceFile": "Derocal IRN177-1.pdf",
+  "page": 1,
+  "reviewed": true,
+  "reviewedAt": 1,
+  "label": {
+    "brand_name": "Derocal-G",
+    "product_name": "Calcium 125mg & Vitamin D 200IU Gummies",
+    "colour_theme": [
+      "Green",
+      "White"
+    ],
+    "flavour": "Mango, Strawberry",
+    "claims": [
+      "100% Veg",
+      "Gelatin Free",
+      "Gluten Free"
+    ],
+    "logo": null,
+    "layout": null,
+    "nutrition_table": {
+      "Calories": "12 kcal",
+      "Total Carbohydrate": "3.2 g",
+      "Sugar": "2.4 g",
+      "Dietary Fiber (as pectin)": "0.08 g",
+      "Proteins": "0 g",
+      "Fats": "0 g",
+      "Sodium": "4 mg",
+      "Calcium (as Tricalcium Phosphate)": "125 mg",
+      "Vitamin D (as Ergocalciferol) (200IU of Vitamin D=5 mcg)": "200 IU"
+    },
+    "fssai_number": "12219026000458",
+    "ingredients": [
+      "Corn Syrup",
+      "Sugar",
+      "Water",
+      "Gelling Agents (INS 440)",
+      "Acidity Regulator (INS 330, & 331iii)",
+      "Tricalcium Phosphate",
+      "Mango & Strawberry Flavour and Food Colour: Curcumin (INS 100) & Black Carrot Concentrate (Daucus Carota root extract)",
+      "Vitamin D"
+    ],
+    "marketing_company": "Deepar Pharmaceuticals Pvt. Ltd.",
+    "address": "Plot no.- 3/416, (Basement), Chitrakoot Scheme, Sector No. 3, Ajmer Road, Jaipur, (Rajasthan) - 302021",
+    "customer_care_number": "+91 77423-40000",
+    "customer_care_email": "deeparpharmaceuticals@gmail.com",
+    "package_size": "30 Gummies",
+    "manufacturing_company": "IM Healthcare Pvt. Ltd."
+  }
+}

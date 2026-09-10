@@ -1,0 +1,62 @@
+{
+  "image_file": "immunogum_4s_irn131_1_p1.png",
+  "sourceFile": "Immunogum 4S IRN131-1.pdf",
+  "page": 1,
+  "reviewed": true,
+  "reviewedAt": 1,
+  "label": {
+    "brand_name": "Arte Medico",
+    "product_name": "Inmunogum - Gomitas de Vitamina C, E, Zinc, Arandano y Sauco con sabor a mango",
+    "colour_theme": [
+      "Red",
+      "Pink"
+    ],
+    "flavour": "Mango",
+    "claims": [
+      "Libre de Gelatina",
+      "Libre de Gluten",
+      "Libre de Lacteos",
+      "Libre de Mani",
+      "Libre de Nuez",
+      "Libre de Soya"
+    ],
+    "logo": null,
+    "layout": null,
+    "nutrition_table": {
+      "Calorias": "16 cal",
+      "Carbohidratos totales": "4.4 g",
+      "Azucares": "3.2 g",
+      "Fibra Dietetica (como pectina)": "0.10 g",
+      "Grasas": "0 g",
+      "Vitamina C (como Acido Ascorbico)": "50 mg",
+      "Vitamina E (como Acetato de D-alfa tocoferol)": "10 mg",
+      "Zinc (como citrato de Zinc)": "6 mg",
+      "Extracto de arandano (vaccinium corymbosum estandarizado a 25% de Antocianina)": "50 mg",
+      "Extracto de sauco (Sambucus Niagra estandarizado a 4% de Flavonas)": "100 mg"
+    },
+    "fssai_number": "10021062000026",
+    "ingredients": [
+      "Acido Citrico",
+      "Sabor a mango",
+      "Extracto de sauco",
+      "Vitamina E",
+      "Pectina",
+      "Zinc",
+      "Goma gellan",
+      "Agua",
+      "Extracto de arandano",
+      "Vitamina C",
+      "Citrato de sodio",
+      "Carragenina",
+      "Jarabe de maiz",
+      "Azucar",
+      "Stevia"
+    ],
+    "marketing_company": "Distribuidora Arte Medico C.A.",
+    "address": "Casa de Representacion, C.C. Piar, Catia La Mar, Edo. La Guaira, Venezuela",
+    "customer_care_number": null,
+    "customer_care_email": null,
+    "package_size": "11 g (4 Gomitas)",
+    "manufacturing_company": "IM Healthcare Pvt. Ltd."
+  }
+}

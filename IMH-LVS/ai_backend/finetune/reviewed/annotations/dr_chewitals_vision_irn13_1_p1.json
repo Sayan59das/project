@@ -1,0 +1,61 @@
+{
+  "image_file": "dr_chewitals_vision_irn13_1_p1.png",
+  "sourceFile": "Dr. Chewitals Vision IRN13-1.pdf",
+  "page": 1,
+  "reviewed": true,
+  "reviewedAt": 1,
+  "label": {
+    "brand_name": "Dr. Chewitals",
+    "product_name": "Complete Wellness Gummy - Vision",
+    "colour_theme": [
+      "Blue"
+    ],
+    "flavour": "Strawberry Mix Flavour",
+    "claims": [
+      "For Optimum Eyecare",
+      "Perfect blend of Vitamins and Carotenoids",
+      "Gluten Free"
+    ],
+    "logo": null,
+    "layout": null,
+    "nutrition_table": {
+      "Energy": "16 kcal",
+      "Total Carbohydrate": "4.4 g",
+      "Sugars": "3.2 g",
+      "Dietary fiber (Pectin)": "0.10 g",
+      "Proteins": "0 g",
+      "Fats": "0 g",
+      "Sodium": "8 mg",
+      "Omega 3: DHA (Algal DHA 10%) (Docosahexaenoic acid)": "100 mg",
+      "Vitamin C (as Ascorbic Acid)": "30 mg",
+      "Vitamin E (as D-alpha Tocopherol Acetate)": "5.04 mg",
+      "Lutein 20%": "4 mg",
+      "Astaxanthin 2%": "1600 mcg",
+      "Zeaxanthin 10%": "800 mcg",
+      "Vitamin A (as Vitamin A Palmitate)": "499.8 mcg"
+    },
+    "fssai_number": "11522013000203",
+    "ingredients": [
+      "Corn Syrup",
+      "Sugar",
+      "Water",
+      "Gelling Agents (INS 440, 418, 407)",
+      "Acidity Regulator (INS 330, & 331iii)",
+      "Omega 3",
+      "Vitamin C",
+      "Vitamin E",
+      "Lutein 20%",
+      "Strawberry Mix Flavour and Food Colour: Black Carrot Concentrate (Daucus Carota root extract)",
+      "Astaxanthin 2%",
+      "Zeaxanthin 10%",
+      "Vitamin A",
+      "Natural Sweetener Stevia (INS 960)"
+    ],
+    "marketing_company": "Maypharm Lifesciences Pvt. Ltd.",
+    "address": "87, Vishal Industries, Subhash Nagar Road, Near CEAT Tyres, Bhandup, Mumbai - 400078, Maharashtra, India",
+    "customer_care_number": "+91 9930 031582",
+    "customer_care_email": "customercare@mypharm.com",
+    "package_size": "30 N",
+    "manufacturing_company": "IM Healthcare Pvt. Ltd."
+  }
+}

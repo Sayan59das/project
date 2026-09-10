@@ -1,0 +1,27 @@
+{
+  "image_file": "am7_gummies_orange_flavour_2_p2.png",
+  "sourceFile": "AM7 GUMMIES - ORANGE  FLAVOUR (2).pdf",
+  "page": 2,
+  "reviewed": true,
+  "reviewedAt": 1,
+  "label": {
+    "brand_name": "GUERISON",
+    "product_name": "AM7 Gummies",
+    "colour_theme": [
+      "Orange"
+    ],
+    "flavour": null,
+    "claims": null,
+    "logo": "White 'GUERISON' wordmark with an abstract swoosh emblem above it, on an orange circular cap face",
+    "layout": "Circular cap face",
+    "nutrition_table": null,
+    "fssai_number": null,
+    "ingredients": null,
+    "marketing_company": null,
+    "address": null,
+    "customer_care_number": null,
+    "customer_care_email": null,
+    "package_size": null,
+    "manufacturing_company": null
+  }
+}

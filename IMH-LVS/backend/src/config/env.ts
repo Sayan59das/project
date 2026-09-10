@@ -63,6 +63,14 @@ export const env = {
   pdfMaxOcrPages: parsePositiveNumber(process.env.PDF_MAX_OCR_PAGES, 5),
   // DPI used when rasterizing scanned PDF pages via pdftoppm before OCR.
   pdfRasterDpi: parsePositiveNumber(process.env.PDF_RASTER_DPI, 300),
+  // The pdftoppm executable to run. Defaults to the bare command name, which
+  // resolves correctly wherever poppler-utils was installed onto the
+  // system PATH (e.g. `apt-get install poppler-utils` in a container). Set
+  // this to an absolute path when that isn't true — confirmed necessary on
+  // this Windows dev machine, where winget installs poppler to a
+  // per-package directory it does NOT add to PATH, so every new shell
+  // otherwise has to export it by hand before pdftoppm can be found at all.
+  pdftoppmPath: process.env.PDFTOPPM_PATH?.trim() || 'pdftoppm',
   // Verbose extraction debugging (raw PDF/OCR text, parsed fields, and the
   // source text each field was matched from) — logged to the console ONLY
   // when explicitly enabled, and never on by default. Meant for temporary

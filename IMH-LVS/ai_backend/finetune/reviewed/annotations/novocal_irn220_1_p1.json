@@ -1,0 +1,52 @@
+{
+  "image_file": "novocal_irn220_1_p1.png",
+  "sourceFile": "Novocal IRN220-1.pdf",
+  "page": 1,
+  "reviewed": true,
+  "reviewedAt": 1,
+  "label": {
+    "brand_name": "Novocal-Kid",
+    "product_name": "Calcium + Vitamin D Gummies",
+    "colour_theme": [
+      "Green",
+      "White",
+      "Orange"
+    ],
+    "flavour": "Mango, Strawberry",
+    "claims": [
+      "Great Taste",
+      "Health Supplement",
+      "Gluten Free"
+    ],
+    "logo": null,
+    "layout": null,
+    "nutrition_table": {
+      "Calories": "12 kcal",
+      "Total Carbohydrate": "3.2 g",
+      "Sugar": "2.4 g",
+      "Dietary Fiber (as pectin)": "0.08 g",
+      "Proteins": "0 g",
+      "Fats": "0 g",
+      "Sodium": "4 mg",
+      "Calcium (as Tricalcium Phosphate)": "125 mg",
+      "Vitamin D (as Ergocalciferol) (200IU of Vitamin D=5mcg)": "200 IU"
+    },
+    "fssai_number": "12123801000014",
+    "ingredients": [
+      "Corn Syrup",
+      "Sugar",
+      "Water",
+      "Gelling Agents (INS 440)",
+      "Acidity Regulator (INS 330, & 331iii)",
+      "Tricalcium Phosphate",
+      "Mango & Strawberry Flavour and Food Colour: Curcumin (INS 100) & Black Carrot Concentrate (Daucus Carota root extract)",
+      "Vitamin D"
+    ],
+    "marketing_company": "Captab Biotec",
+    "address": "Plot No. D-235 C, Industrial Area, Phase 8B, Mohali - 160071",
+    "customer_care_number": "092161-43222",
+    "customer_care_email": "novogenpharma@gmail.com",
+    "package_size": "30 N",
+    "manufacturing_company": "IM Healthcare Pvt. Ltd."
+  }
+}

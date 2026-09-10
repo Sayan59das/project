@@ -143,7 +143,7 @@ export async function rasterizePdfPages(
   try {
     await fs.promises.writeFile(sourcePath, pdfBuffer);
 
-    await execFileAsync('pdftoppm', [
+    await execFileAsync(env.pdftoppmPath, [
       '-png',
       '-r',
       String(options.dpi ?? env.pdfRasterDpi),
