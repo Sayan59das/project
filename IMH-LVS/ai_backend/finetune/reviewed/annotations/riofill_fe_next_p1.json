@@ -1,4 +1,10 @@
 {
+  "sourceFile": "Riofill Fe Next.pdf",
+  "page": 1,
+  "reviewed": true,
+  "reviewedAt": 1789132800056,
+  "isFront": true,
+  "aiReviewNotes": "package_size is genuinely ambiguous on this label: the front ribbon badge reads '10 GUMMIES' (kept, matching the existing value) but the back panel's own regulatory fields say 'Net Content: 30 N' and 'No. of Serving: per container 15' at 2 gummies/serving (=30). This looks like a real inconsistency in the artwork itself, not a misread — please confirm which count is correct.",
   "label": {
     "address": "654, Arjun Nagar, Nanhera Road, Ambala Cantt, Haryana, India - 133001",
     "brand_name": "Riofill fe Next",
@@ -62,10 +68,5 @@
     },
     "package_size": "10 Gummies",
     "product_name": "Iron Gummies"
-  },
-  "page": 1,
-  "reviewed": true,
-  "reviewedAt": 1789132800056,
-  "isFront": true,
-  "aiReviewNotes": "package_size is genuinely ambiguous on this label: the front ribbon badge reads '10 GUMMIES' (kept, matching the existing value) but the back panel's own regulatory fields say 'Net Content: 30 N' and 'No. of Serving: per container 15' at 2 gummies/serving (=30). This looks like a real inconsistency in the artwork itself, not a misread — please confirm which count is correct."
+  }
 }

@@ -44,3 +44,8 @@ ai_backend/finetune/adapters/
 # image paths; eval/ is scored output. Both regenerable, neither portable.
 ai_backend/finetune/dataset/
 ai_backend/finetune/eval/
+
+# ai_backend/eval/score.py's raw per-run output (predictions, full field
+# breakdown) — regenerable by re-running score.py. RESULTS.md (the summary
+# every accuracy number must trace back to) is NOT ignored and stays tracked.
+ai_backend/eval/runs/
