@@ -249,11 +249,27 @@ cloud notebook, no hosted API, ever sees it.
     — the corrected rule is: product name must always match; FSSAI is now
     only allowed to substitute for a mismatched *company* name, never for
     the product name. 9 new tests in `tests/test_identification.py`.
-- **Phase B — an honest scoreboard.** A full human re-review of all 60
-  annotation files (real `reviewedAt` timestamps, a new `is_front` field),
-  and a new `ai_backend/eval/score.py` that becomes the one source of truth
-  for every future accuracy number, replacing `evaluate_adapter.py`'s
-  scoring. Gates every phase after it.
+- **Phase B — an honest scoreboard — scorer done, review in progress.**
+  `ai_backend/eval/score.py` is built and is now the one source of truth for
+  every future accuracy number (see `ai_backend/eval/RESULTS.md`), replacing
+  `evaluate_adapter.py`'s scoring — it groups by label (a whole product's
+  PDF, however many pages), scores every field/list-item/nutrition-row as
+  CORRECT/WRONG/MISSING, and never silently guesses through a ground-truth
+  conflict. All 60 annotations got an AI-driven first-pass correction (real
+  `reviewedAt` timestamps, a new `is_front` field, real mistakes fixed);
+  still needs a human spot-check pass before it's fully trusted.
+  **First real baseline recorded (2026-09-11): today's existing one-shot
+  Qwen2-VL-2B pipeline scores 13.7% overall against the 60 reviewed labels
+  — but that number alone is misleading without its breakdown.** Simple
+  single-fact fields (brand name, product name, phone number, package size)
+  score 42-53%, in the same ballpark as the old fine-tuning numbers. What
+  drags the average down is long structured content — nutrition tables
+  (5.1%), ingredients (10.6%), claims (9.1%) — which the old, coarser
+  page-level scoring used to hide by weighting a whole table the same as
+  one scalar field. This is genuinely useful evidence for the plan: those
+  are exactly the fields Phase C's PDF-text-layer reading should fix,
+  since they're usually real, already-correct text sitting in the PDF file
+  itself, not something an AI model needs to transcribe from an image.
 - **Phase C — use the PDF's own text layer.** `pdf.service.ts` gains
   `extractTextSpans()` (font size, position, rotation per span, from
   `pdfjs-dist`'s `getTextContent()`), panel/line segmentation, and
