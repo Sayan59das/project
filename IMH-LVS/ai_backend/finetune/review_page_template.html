@@ -135,6 +135,20 @@
   }
   .chip.reviewed{background:var(--accent-soft); color:var(--accent);}
   .chip.pending{background:var(--warn-soft); color:var(--warn);}
+  .chip.front{background:var(--line); color:var(--ink-soft);}
+
+  .front-field{
+    display:flex; align-items:center; gap:9px; padding:11px 13px;
+    background:var(--accent-soft); border:1px solid var(--accent); border-radius:8px;
+    margin-bottom:18px; cursor:pointer;
+  }
+  .front-field input{width:16px; height:16px; accent-color:var(--accent); cursor:pointer;}
+  .front-field span{font-size:13.5px; font-weight:500; color:var(--ink);}
+
+  .zoom-hint{
+    background:none; border:none; color:var(--accent); font-size:12px; font-weight:600;
+    cursor:pointer; padding:2px 0;
+  }
 
   /* ---------- detail view ---------- */
   .detail-top{display:flex; align-items:center; gap:14px; margin-bottom:18px; flex-wrap:wrap;}
@@ -235,15 +249,18 @@
 </div>
 
 <script>
-/*__PAGES_DATA__*/
+// Pages are fetched from this same machine's review_server.py — see that
+// file's own docstring for why nothing here ever calls out to a hosted
+// service. PAGES starts empty and is populated by loadPages() below.
+var PAGES = [];
 
 var STATE = {
   view: 'grid',
   filter: 'all',
   activeSlug: null,
   docs: {},          // slug -> stored document data
-  db: null,
-  dbReady: false,
+  loaded: false,
+  loadError: null,
   lightboxOpen: false
 };
 
@@ -297,33 +314,47 @@ function updateProgress(){
   document.getElementById('progressFill').style.width = (total ? (done/total*100) : 0) + '%';
 }
 
-async function initDb(){
-  try{
-    STATE.db = await claude.use('db');
-  }catch(e){ STATE.db = null; }
-  if (!STATE.db){
-    render();
-    return;
-  }
-  STATE.db.collection('annotations').onSnapshot(function(snap){
-    var next = {};
-    snap.docs.forEach(function(d){ next[d.id] = d.data(); });
-    STATE.docs = next;
-    STATE.dbReady = true;
-    updateProgress();
-    render();
-  }, function(err){
-    console.error('[review] db subscription error', err);
+function applyPages(pages){
+  PAGES = pages.map(function(p){
+    return {
+      slug: p.slug,
+      sourceFile: p.sourceFile,
+      page: p.page,
+      pageCount: p.pageCount,
+      image: '/images/thumb/' + encodeURIComponent(p.slug) + '.jpg',
+      fullRes: '/images/fullres/' + encodeURIComponent(p.slug) + '.jpg'
+    };
   });
+  var docs = {};
+  pages.forEach(function(p){ if (p.doc) docs[p.slug] = p.doc; });
+  STATE.docs = docs;
+}
+
+async function loadPages(){
+  try{
+    var resp = await fetch('/api/pages');
+    if (!resp.ok) throw new Error('server responded ' + resp.status);
+    applyPages(await resp.json());
+    STATE.loaded = true;
+  }catch(e){
+    STATE.loadError = e && e.message ? e.message : 'unknown error';
+  }
+  render();
 }
 
 function render(){
   var app = document.getElementById('app');
   app.innerHTML = '';
-  if (!STATE.db){
+  if (STATE.loadError){
     app.appendChild(el('div', {class:'banner'}, [document.createTextNode(
-      "Realtime saving isn't available in this view, so edits here won't be kept. Open this page from its Claude artifact link to review for real."
+      "Couldn't reach the local review server (" + STATE.loadError + "). Run `python finetune/review_server.py` " +
+      "from ai_backend/ and open this page at http://127.0.0.1:8850/ instead."
     )]));
+    return;
+  }
+  if (!STATE.loaded){
+    app.appendChild(el('p', {class:'intro'}, [document.createTextNode('Loading…')]));
+    return;
   }
   if (STATE.view === 'detail' && STATE.activeSlug){
     renderDetail(app);
@@ -335,7 +366,11 @@ function render(){
 
 function renderGrid(app){
   app.appendChild(el('p', {class:'intro'}, [document.createTextNode(
-    'Each card below is one printed face of a label. Open it, check the AI’s guess against the image, and fix any field that’s wrong. '
+    'Each card below is one printed face of a label. Open it, check the AI’s guess against the image (use '
+  ), el('strong', {}, [document.createTextNode('View full resolution')]), document.createTextNode(
+    ' to read small print like the FSSAI number), tick '
+  ), el('strong', {}, [document.createTextNode('This is the FRONT')]), document.createTextNode(
+    ' when it applies, and fix any field that’s wrong. '
   ), el('strong', {}, [document.createTextNode('Leave a field blank if it isn’t printed on that particular page')]), document.createTextNode(
     ' — nutrition and ingredient details are usually on the back face, not the front.'
   )]));
@@ -367,13 +402,16 @@ function renderGrid(app){
   var grid = el('div', {class:'grid'});
   list.forEach(function(p){
     var reviewed = isReviewed(p.slug);
+    var doc = pageDoc(p.slug);
+    var chips = [el('span', {class:'chip ' + (reviewed?'reviewed':'pending')}, [document.createTextNode(reviewed?'Reviewed':'Needs review')])];
+    if (doc && doc.isFront) chips.unshift(el('span', {class:'chip front'}, [document.createTextNode('Front')]));
     var card = el('button', {class:'card'}, [
       el('img', {class:'thumb', src:p.image, alt:p.sourceFile, loading:'lazy'}),
       el('div', {class:'meta'}, [
         el('div', {class:'fname', title:p.sourceFile}, [document.createTextNode(p.sourceFile)]),
         el('div', {class:'row'}, [
           el('span', {class:'page-tag'}, [document.createTextNode('page ' + p.page + ' of ' + p.pageCount)]),
-          el('span', {class:'chip ' + (reviewed?'reviewed':'pending')}, [document.createTextNode(reviewed?'Reviewed':'Needs review')])
+          el('div', {class:'row', style:'gap:6px;'}, chips)
         ])
       ])
     ]);
@@ -436,17 +474,31 @@ function renderDetail(app){
 
   var grid = el('div', {class:'detail-grid'});
 
+  var zoomHint = el('button', {class:'zoom-hint', type:'button'}, [document.createTextNode('View full resolution ↗')]);
+  zoomHint.addEventListener('click', function(){ openLightbox(page.fullRes || page.image); });
   var imgPane = el('div', {class:'image-pane'}, [
     el('img', {src:page.image, alt:page.sourceFile, id:'detailImg'}),
     el('div', {class:'image-caption'}, [
-      el('span', {}, [document.createTextNode(page.sourceFile)]),
-      el('span', {}, [document.createTextNode('page ' + page.page + '/' + page.pageCount)])
+      el('span', {}, [document.createTextNode(page.sourceFile + ' · page ' + page.page + '/' + page.pageCount)]),
+      zoomHint
     ])
   ]);
-  imgPane.querySelector('img').addEventListener('click', function(){ openLightbox(page.image); });
+  imgPane.querySelector('img').addEventListener('click', function(){ openLightbox(page.fullRes || page.image); });
   grid.appendChild(imgPane);
 
   var formPane = el('div', {class:'form-pane'});
+
+  var frontCheckbox = el('input', {type:'checkbox', id:'isFrontCheckbox'});
+  frontCheckbox.checked = !!doc.isFront;
+  var frontField = el('label', {class:'front-field'}, [
+    frontCheckbox,
+    el('span', {}, [document.createTextNode('This is the FRONT of the label')])
+  ]);
+  formPane.appendChild(frontField);
+  formPane.appendChild(el('div', {class:'hint', style:'margin:-12px 0 18px;'}, [document.createTextNode(
+    'Check this for the primary consumer-facing panel (brand/product name, main claims). Leave unchecked for a back, side, or nutrition-only panel.'
+  )]));
+
   formPane.appendChild(el('div', {class:'section-title'}, [document.createTextNode('Identity & compliance')]));
   var idFields = el('div', {class:'fields-2col'});
   var inputs = {};
@@ -508,8 +560,8 @@ function renderDetail(app){
   if (doc.reviewed) status.classList.add('ok');
   var saveBtn = el('button', {class:'btn btn-primary'}, [document.createTextNode('Save & Mark Reviewed')]);
   var unreviewBtn = el('button', {class:'btn btn-ghost btn-sm'}, [document.createTextNode('Mark unreviewed')]);
-  saveBtn.addEventListener('click', function(){ save(page, inputs, nutriWrap, status, true); });
-  unreviewBtn.addEventListener('click', function(){ save(page, inputs, nutriWrap, status, false); });
+  saveBtn.addEventListener('click', function(){ save(page, inputs, nutriWrap, frontCheckbox, status, true); });
+  unreviewBtn.addEventListener('click', function(){ save(page, inputs, nutriWrap, frontCheckbox, status, false); });
   var saveBar = el('div', {class:'save-bar'}, [saveBtn, unreviewBtn, status]);
   formPane.appendChild(saveBar);
 
@@ -517,7 +569,7 @@ function renderDetail(app){
   app.appendChild(grid);
 }
 
-async function save(page, inputs, nutriWrap, statusEl, markReviewed){
+async function save(page, inputs, nutriWrap, frontCheckbox, statusEl, markReviewed){
   var label = {};
   FIELD_DEFS.forEach(function(def){
     var raw = inputs[def.key].value;
@@ -535,21 +587,21 @@ async function save(page, inputs, nutriWrap, statusEl, markReviewed){
   label.nutrition_table = Object.keys(nutrition).length ? nutrition : null;
 
   var body = {
-    sourceFile: page.sourceFile,
-    page: page.page,
     label: label,
-    reviewed: !!markReviewed,
-    reviewedAt: markReviewed ? Date.now() : null
+    isFront: !!frontCheckbox.checked,
+    reviewed: !!markReviewed
   };
 
-  if (!STATE.db){
-    statusEl.textContent = 'Not saved — open via the artifact link.';
-    return;
-  }
   statusEl.textContent = 'Saving…';
   statusEl.classList.remove('ok');
   try{
-    await STATE.db.doc('annotations/' + page.slug).set(body);
+    var resp = await fetch('/api/pages/' + encodeURIComponent(page.slug), {
+      method: 'PUT',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(body)
+    });
+    if (!resp.ok) throw new Error('server responded ' + resp.status);
+    STATE.docs[page.slug] = await resp.json();
     statusEl.textContent = markReviewed ? 'Saved · marked reviewed' : 'Saved as not reviewed';
     if (markReviewed) statusEl.classList.add('ok');
     if (markReviewed){
@@ -569,6 +621,5 @@ function openLightbox(src){
   document.body.appendChild(box);
 }
 
-initDb();
-render();
+loadPages();
 </script>

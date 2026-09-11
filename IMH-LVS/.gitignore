@@ -35,6 +35,7 @@ venv/
 # the scripts and review-page template are the tracked source, not this.
 ai_backend/finetune/images/
 ai_backend/finetune/review_images/
+ai_backend/finetune/review_fullres/
 ai_backend/finetune/annotations/
 ai_backend/finetune/review_page.html
 ai_backend/finetune/checkpoints/
