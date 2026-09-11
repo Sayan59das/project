@@ -26,7 +26,9 @@ on a feature branch with uncommitted work) will fix it.
   regression. Re-confirm this is still the case (not a real break) before
   trusting it as "code is fine."
 - Frontend: `npx tsc --noEmit && npm test` → 42/42.
-- AI backend (Python): `cd ai_backend && python -m pytest tests/ -v` → 63/63.
+- AI backend (Python): `cd ai_backend && python -m pytest tests/ -v` → 74/74
+  (63 baseline + 2 new decoding-settings tests + 9 new identification tests,
+  see "Extraction rebuild plan" below).
 
 **Brief compliance**: every section (§3–§11) has a real implementation, but
 three specific things below are less finished than earlier notes here
@@ -50,13 +52,16 @@ other real, still-open gap — see "Model fine-tuning" below.
   plus the new `/api/labels/identify-product` endpoint (`productIdentification`
   service, backend `labels.controller.ts`). **Correction: this is a plain
   string-equality rule, not an AI model.** `ai_backend`'s `/identify-product`
-  (`ai_backend/app/api/v1/endpoints.py`) matches an existing product by exact
-  FSSAI-number equality, OR by exact (case-insensitive) Product Name +
-  Marketing Company equality — no fuzzy matching, no model inference. It's
-  also entirely OFF unless `AI_EXTRACTION_URL` is set: `identifyProductAt()`
-  returns `unavailable` immediately when that env var is unset, so a
-  deployment without it configured gets none of this matching at all,
-  silently. Exact match reuses the product; a near-match is surfaced to a human;
+  (`ai_backend/app/api/v1/endpoints.py`, matching logic now in
+  `app/services/identification.py`'s `find_matching_product()`) requires an
+  exact (case-insensitive) Product Name match, plus either an exact
+  Marketing Company match OR a matching FSSAI number — no fuzzy matching, no
+  model inference, and (as of Phase A of the extraction rebuild, see below)
+  FSSAI number can no longer substitute for the product name itself, only
+  for the company name. It's also entirely OFF unless `AI_EXTRACTION_URL` is
+  set: `identifyProductAt()` returns `unavailable` immediately when that env
+  var is unset, so a deployment without it configured gets none of this
+  matching at all, silently. Exact match reuses the product; a near-match is surfaced to a human;
   genuinely new products get created; versions are issued under a
   Postgres advisory lock (`nextVersionNumber` in `artwork.repository.ts`,
   scoped to `product_id + marketing_company + artwork_type`) so concurrent
@@ -220,13 +225,30 @@ accuracy number that isn't a row in `ai_backend/eval/RESULTS.md` once that
 file exists (Phase B). Client label artwork never leaves this machine — no
 cloud notebook, no hosted API, ever sees it.
 
-- **Phase A — housekeeping (this phase).** Merge in a pending fix branch for
-  a decoding/FSSAI-identity bug (blocked — see below), delete the
-  cloud-training files this repo should never have had, correct several
-  claims in this file that turned out to be wrong or stale (see "Current
-  state" and the corrected bullets above). **Blocked on the user**: the
-  branch `fix/decoding-ban-and-fssai-identity` isn't on `origin` yet, so it
-  can't be merged — needs the user to push it (do not hand-reimplement it).
+- **Phase A — housekeeping — done.** Deleted the cloud-training files this
+  repo should never have had, corrected several claims in this file that
+  turned out to be wrong or stale (see "Current state" and the corrected
+  bullets above), and fixed two specific bugs directly (the branch these
+  were originally planned to arrive on, `fix/decoding-ban-and-fssai-identity`,
+  turned out not to exist anywhere — confirmed with the user, then
+  implemented in place of it):
+  - `no_repeat_ngram_size` in `ai_backend/app/services/extraction.py` raised
+    from 4 to 32 — 4 turned out to be tight enough to ban legitimate short
+    phrase reuse on a real label (a repeated unit like "100 mg", an
+    ingredient also named in a claim), which pushed the model into
+    low-probability tokens and produced its own malformed output. See the
+    updated comment at the call site for the full reasoning. Covered by
+    `TestGenerateJsonDecodingSettings` in `test_extraction_validators.py`.
+  - The `/identify-product` FSSAI-matching rule had a real bug: it treated
+    a matching FSSAI number alone as sufficient for "same product", but an
+    FSSAI licence identifies a *company*, not a single product — one
+    company can sell several distinct products under one licence, so this
+    could wrongly match two different products together. Pulled the rule
+    out into a new, unit-tested pure function,
+    `ai_backend/app/services/identification.py`'s `find_matching_product()`
+    — the corrected rule is: product name must always match; FSSAI is now
+    only allowed to substitute for a mismatched *company* name, never for
+    the product name. 9 new tests in `tests/test_identification.py`.
 - **Phase B — an honest scoreboard.** A full human re-review of all 60
   annotation files (real `reviewedAt` timestamps, a new `is_front` field),
   and a new `ai_backend/eval/score.py` that becomes the one source of truth

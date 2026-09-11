@@ -3,6 +3,7 @@ from typing import List
 from app.schemas.label import ExtractedLabel, Version, Product
 from app.services.extraction import ExtractionService
 from app.services.comparison import ComparisonService
+from app.services.identification import find_matching_product
 from app.services.reporting import ReportingService
 import json
 
@@ -25,24 +26,9 @@ async def read_label(file: UploadFile = File(...)):
 @router.post("/identify-product")
 async def identify_product(extracted_label: ExtractedLabel, existing_products: List[Product] = []):
     """Step 2: Identify Product API. Returns existing product if matched, else New Product."""
-    if not extracted_label.product_name or not extracted_label.marketing_company:
-        return {"status": "New Product / No Match", "product": None}
-        
-    for product in existing_products:
-        # Match based on identical FSSAI number (if present) OR (Name + Company)
-        name_match = product.product_name.lower() == extracted_label.product_name.lower()
-        company_match = product.marketing_company.lower() == extracted_label.marketing_company.lower()
-        
-        fssai_match = False
-        if product.fssai_number and extracted_label.fssai_number:
-            fssai_match = product.fssai_number.strip() == extracted_label.fssai_number.strip()
-            
-        if fssai_match or (name_match and company_match):
-            return {
-                "status": "Existing Product Found",
-                "product": product
-            }
-            
+    match = find_matching_product(extracted_label, existing_products)
+    if match:
+        return {"status": "Existing Product Found", "product": match}
     return {"status": "New Product / No Match", "product": None}
 
 @router.post("/compare-label")

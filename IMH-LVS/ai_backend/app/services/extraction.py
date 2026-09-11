@@ -549,13 +549,20 @@ class ExtractionService:
             # repetition_penalty alone was not enough: fine-tuning eval runs kept
             # reproducing the same loop (a "Pale [colour]"/"Food Dyes Detergent..."-style
             # list that never terminates) even with it set. no_repeat_ngram_size is a hard
-            # constraint rather than a soft reweighting — it makes a 4-token sequence
+            # constraint rather than a soft reweighting — it makes an N-token sequence
             # literally impossible to repeat — so the two work at different strengths on
-            # the same failure mode. 4 is short enough to actually block the observed loops
-            # (which repeat a 1-3 token phrase) while long enough not to forbid legitimate
-            # short reuse elsewhere in a label (e.g. a unit like "100 mg" recurring across
-            # different nutrition rows, which will differ in the surrounding tokens).
-            generated_ids = self.model.generate(**inputs, max_new_tokens=max_new_tokens, do_sample=False, repetition_penalty=1.15, no_repeat_ngram_size=4)
+            # the same failure mode. This was first set to 4, on the theory that 4 was
+            # short enough to block the observed loops while long enough not to forbid
+            # legitimate short reuse elsewhere in a label. In practice it was too tight:
+            # real labels legitimately repeat short phrases (a unit like "100 mg" recurring
+            # across different nutrition rows, an ingredient named in both the ingredients
+            # list and a claim), and banning the model from ever repeating a 4-token
+            # sequence forced it into low-probability tokens to route around those
+            # legitimate repeats — producing its own kind of malformed output. 32 is long
+            # enough that only a genuine degenerate loop (the same phrase or list fragment
+            # repeating for many tokens straight) trips the ban, while ordinary short reuse
+            # elsewhere on the label does not.
+            generated_ids = self.model.generate(**inputs, max_new_tokens=max_new_tokens, do_sample=False, repetition_penalty=1.15, no_repeat_ngram_size=32)
 
         # Trim the prompt from the output
         generated_ids_trimmed = [

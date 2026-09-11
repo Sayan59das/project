@@ -530,6 +530,73 @@ class TestExtractFromImageCompletionRetry:
         assert result.marketing_company == "A Unicare Pharma"
 
 
+class TestGenerateJsonDecodingSettings:
+    """_generate_json's actual model.generate(...) call, exercised through
+    fake model/processor doubles rather than mocking _generate_json itself
+    (every other test in this file does that) — so these are the only tests
+    that would catch a regression in the real decoding kwargs."""
+
+    class _FakeInputs(dict):
+        """Mimics HF's BatchFeature enough for _generate_json's three uses of
+        it: **inputs (mapping unpack into generate()), .input_ids (attribute
+        access for the prompt-trim step), and .to(device)."""
+
+        def to(self, device):
+            return self
+
+        @property
+        def input_ids(self):
+            return self["input_ids"]
+
+    class _FakeProcessor:
+        def apply_chat_template(self, messages, add_generation_prompt=True):
+            return "PROMPT"
+
+        def __call__(self, text, images, padding=True, return_tensors="pt"):
+            return TestGenerateJsonDecodingSettings._FakeInputs(input_ids=[[1, 2, 3]])
+
+        def batch_decode(self, ids, skip_special_tokens=True, clean_up_tokenization_spaces=False):
+            return ['{"brand_name": "x"}']
+
+    class _FakeModel:
+        def __init__(self):
+            self.device = "cpu"
+            self.calls = []
+
+        def generate(self, **kwargs):
+            self.calls.append(kwargs)
+            return [[1, 2, 3, 4]]
+
+    def _service(self):
+        service = ExtractionService(use_mock=False)
+        service.model = self._FakeModel()
+        service.processor = self._FakeProcessor()
+        return service
+
+    def test_uses_greedy_decoding_with_a_repetition_penalty(self):
+        service = self._service()
+        service._generate_json(Image.new("RGB", (10, 10)), "prompt")
+        call = service.model.calls[0]
+        assert call["do_sample"] is False
+        assert call["repetition_penalty"] == 1.15
+
+    def test_blocks_repeats_at_32_tokens_not_4(self):
+        # A hard ban on repeating a 4-token sequence turned out to be too
+        # tight: real labels legitimately reuse short phrases (a unit like
+        # "100 mg" recurring across different nutrition rows, or an
+        # ingredient named in both the ingredients list and a claim), and
+        # forcing the model to avoid those legitimate short repeats pushed
+        # it into low-probability tokens that produced their own kind of
+        # malformed output. 32 tokens is long enough that only a genuine
+        # degenerate loop (the same phrase or list fragment repeating for
+        # many tokens straight) trips it, while ordinary short reuse
+        # elsewhere on the label does not.
+        service = self._service()
+        service._generate_json(Image.new("RGB", (10, 10)), "prompt")
+        call = service.model.calls[0]
+        assert call["no_repeat_ngram_size"] == 32
+
+
 class TestCompanyNameCrossFieldCopyRejection:
     """A marketing/manufacturing company value that exactly matches the
     brand or product name is the same confusion observed directly in
