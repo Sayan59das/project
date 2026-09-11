@@ -9,6 +9,14 @@ run), so this only needs those 16 page images (a small, separate zip)
 plus the reviewed annotations already committed to this repo — both far
 smaller than the full raw-file set.
 
+Checkpoints after every page to CHECKPOINT_PATH and skips already-done
+slugs on startup — both Colab and Kaggle's free sessions have been
+observed disconnecting mid-run with no warning (once each, confirmed
+live), and this 16-page run takes long enough (~10 min/page with the
+retry/tile-fallback path) that losing all of it to one disconnect is a
+real, not theoretical, cost. Safe to re-run this same command after any
+interruption; it picks back up rather than starting over.
+
 Expects, run from ai_backend/:
     - finetune/images/<slug>.png for each of the 16 validation slugs
       below (extract val_images.zip there first)
@@ -27,6 +35,7 @@ from PIL import Image
 BASE = Path(__file__).resolve().parent
 IMAGES = BASE / "images"
 ANNOTATIONS = BASE / "reviewed" / "annotations"
+CHECKPOINT_PATH = BASE / "eval" / "kaggle_checkpoint.json"
 
 sys.path.insert(0, str(BASE))
 from build_training_set import canonical_target  # noqa: E402
@@ -46,6 +55,17 @@ VAL_SLUGS = [
 ]
 
 
+def load_checkpoint() -> dict:
+    if CHECKPOINT_PATH.is_file():
+        return json.loads(CHECKPOINT_PATH.read_text(encoding="utf-8"))
+    return {}
+
+
+def save_checkpoint(results: dict) -> None:
+    CHECKPOINT_PATH.parent.mkdir(parents=True, exist_ok=True)
+    CHECKPOINT_PATH.write_text(json.dumps(results, indent=2, ensure_ascii=False), encoding="utf-8")
+
+
 def main() -> None:
     # ExtractionService picks 4-bit vs. fp16 loading, and whether to attach
     # an adapter at all, from LABEL_LORA_ADAPTER specifically — not the
@@ -57,8 +77,6 @@ def main() -> None:
     adapter_out = os.environ.get("FINETUNE_ADAPTER_OUT", "")
     if adapter_out:
         os.environ["LABEL_LORA_ADAPTER"] = adapter_out
-
-    from app.services.extraction import EXTRACTION_PROMPT, ExtractionService
 
     rows = []
     for slug in VAL_SLUGS:
@@ -72,25 +90,39 @@ def main() -> None:
         label = doc.get("data", doc)["label"]
         rows.append({"slug": slug, "image": str(image_path), "target": canonical_target(label)})
 
-    service = ExtractionService(use_mock=False)
+    results = load_checkpoint()
+    remaining = [row for row in rows if row["slug"] not in results]
+
+    if not remaining:
+        print("All pages already checkpointed — nothing left to run.")
+    else:
+        print(f"{len(results)} pages already checkpointed, {len(remaining)} left to run.")
+        from app.services.extraction import ExtractionService
+        service = ExtractionService(use_mock=False)
+
+        for row in remaining:
+            predicted = service.extract_from_image(Image.open(row["image"]).convert("RGB")).model_dump()
+            results[row["slug"]] = predicted
+            save_checkpoint(results)
+
+            expected = json.loads(row["target"])
+            page_credit = sum(score_field(f, predicted.get(f), expected.get(f))[0] for f in FIELDS)
+            print(f"  {row['slug']}: {page_credit / len(FIELDS):.1%}", flush=True)
+
+    # Final tally always recomputed from the full checkpoint (this run's new
+    # pages plus whatever an earlier, interrupted run already saved), so the
+    # summary is correct whether this run did 16 pages or just the last 1.
     per_field = {field: [0.0, 0.0] for field in FIELDS}
     blank_results = 0
-
     for row in rows:
         expected = json.loads(row["target"])
-        predicted = service.extract_from_image(Image.open(row["image"]).convert("RGB")).model_dump()
-
+        predicted = results[row["slug"]]
         if all(predicted.get(field) in (None, [], {}) for field in FIELDS):
             blank_results += 1
-
-        page_credit = 0.0
         for field in FIELDS:
             credit, possible = score_field(field, predicted.get(field), expected.get(field))
             per_field[field][0] += credit
             per_field[field][1] += possible
-            page_credit += credit
-
-        print(f"  {row['slug']}: {page_credit / len(FIELDS):.1%}", flush=True)
 
     total_credit = sum(v[0] for v in per_field.values())
     total_possible = sum(v[1] for v in per_field.values())
