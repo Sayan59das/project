@@ -10,7 +10,7 @@ to work out.
 in the repo root is the authoritative requirements spec for the AI Label
 Reading & Comparison module. Section numbers below (§3, §7, etc.) refer to it.
 
-## Current state (as of 2026-09-09)
+## Current state (as of 2026-09-11)
 
 **Branch**: `feature/durable-artwork-storage`, pushed directly onto `origin/main`
 (this repo's workflow pushes straight to `main`, no PR). If your local `main`
@@ -18,15 +18,25 @@ branch looks stale/behind, that's just an unfetched local ref — `origin/main`
 is current; `git fetch && git reset --hard origin/main` (on `main` only, never
 on a feature branch with uncommitted work) will fix it.
 
-**Test status — all green, verified fresh today**:
-- Backend: `cd backend && npx tsc --noEmit && node -r tsx/cjs --test "src/**/*.test.ts"` → 250/250
-- Frontend: `npx tsc --noEmit && npm test` → 42/42
-- AI backend (Python): `cd ai_backend && python -m pytest tests/ -v` → 63/63
+**Test status, verified fresh today (2026-09-11)**:
+- Backend: `cd backend && npx tsc --noEmit && node -r tsx/cjs --test "src/**/*.test.ts"` → 250 tests, **243 pass, 7 fail**.
+  All 7 failures are DB row-count/identity assertions (`db.repositories.test.ts`
+  and friends) thrown off by real rows a live-browser test session created
+  earlier today (see "Clean DB baseline row counts" below) — not a code
+  regression. Re-confirm this is still the case (not a real break) before
+  trusting it as "code is fine."
+- Frontend: `npx tsc --noEmit && npm test` → 42/42.
+- AI backend (Python): `cd ai_backend && python -m pytest tests/ -v` → 63/63.
 
-**Brief compliance**: every section (§3–§11) is implemented, including both
-items previously listed as gaps (durable file storage and `/identify-product`
-are now done — see below). The one real, still-open gap is model accuracy
-(fine-tuning didn't clear the bar — see "Model fine-tuning" below).
+**Brief compliance**: every section (§3–§11) has a real implementation, but
+three specific things below are less finished than earlier notes here
+claimed — durable file storage only survives on a persistent local disk, not
+on an ephemeral-filesystem host like Render (see below); `/identify-product`
+is a plain string-equality check, not AI matching; and §9's "Logo" signal is
+currently just an alias for the layout/dHash signal, not its own
+measurement. See the relevant bullets below for each. Extraction accuracy
+(how correctly text fields get read off a label in the first place) is the
+other real, still-open gap — see "Model fine-tuning" below.
 
 ## What's done
 
@@ -37,9 +47,16 @@ are now done — see below). The one real, still-open gap is model accuracy
   names/brands/flavours/companies anywhere — known-flavour/claim candidates
   are sourced from Masters at runtime.
 - **§4 Product/Version Identification** — `src/services/labelIntakeService.ts`
-  plus the new `/api/labels/identify-product` endpoint (FSSAI-aware AI-backed
-  matching, `productIdentification` service, backend `labels.controller.ts`).
-  Exact match reuses the product; a near-match is surfaced to a human;
+  plus the new `/api/labels/identify-product` endpoint (`productIdentification`
+  service, backend `labels.controller.ts`). **Correction: this is a plain
+  string-equality rule, not an AI model.** `ai_backend`'s `/identify-product`
+  (`ai_backend/app/api/v1/endpoints.py`) matches an existing product by exact
+  FSSAI-number equality, OR by exact (case-insensitive) Product Name +
+  Marketing Company equality — no fuzzy matching, no model inference. It's
+  also entirely OFF unless `AI_EXTRACTION_URL` is set: `identifyProductAt()`
+  returns `unavailable` immediately when that env var is unset, so a
+  deployment without it configured gets none of this matching at all,
+  silently. Exact match reuses the product; a near-match is surfaced to a human;
   genuinely new products get created; versions are issued under a
   Postgres advisory lock (`nextVersionNumber` in `artwork.repository.ts`,
   scoped to `product_id + marketing_company + artwork_type`) so concurrent
@@ -48,12 +65,20 @@ are now done — see below). The one real, still-open gap is model accuracy
   created V1, then matched the existing product and assigned V2, with a
   visible "matches existing product... will be saved as a new version" banner
   before saving.
-- **Durable artwork file storage** — real, working, and live-tested today.
-  `POST /api/artworks` (or the label-upload flow) saves the actual uploaded
-  bytes to `backend/uploads/artworks/<ARTWORK_ID>.<ext>` and serves them back
-  via the auth-protected `GET /api/artworks/:id/file`; `artworks.storage_key`
-  is populated. This used to be the #1 documented gap in this file — it's
-  done, not a blob-URL placeholder anymore.
+- **Durable artwork file storage — done for local disk, NOT yet done for
+  production.** `POST /api/artworks` (or the label-upload flow) saves the
+  actual uploaded bytes to `backend/uploads/artworks/<ARTWORK_ID>.<ext>` and
+  serves them back via the auth-protected `GET /api/artworks/:id/file`;
+  `artworks.storage_key` is populated — this used to be the #1 documented gap
+  in this file, and the local-disk part of it really is done, not a blob-URL
+  placeholder anymore. **But** if this app is deployed on a host with an
+  ephemeral filesystem (Render's free/standard web services, for example),
+  every new deploy wipes `backend/uploads/`, silently losing every saved
+  artwork file — so this is still a real, open production blocker, not a
+  finished item. The fix is a swap to real object storage (S3 or Cloudflare
+  R2); the change is confined to `backend/src/services/artworkFileStorage.service.ts`
+  (the one place that reads/writes `storage_key`), but that swap has not been
+  done yet.
 - **§5 Comparison flow** — `src/services/labelComparisonWorkflowService.ts`.
   Latest approved artwork is auto-selected, never user-picked. No-baseline
   correctly skips version comparison and goes straight to cross-company
@@ -73,7 +98,13 @@ are now done — see below). The one real, still-open gap is model accuracy
   rasterization (`fingerprintArtworkImage`): a grayscale perceptual hash
   (dHash, structural/layout) and an RGB colour histogram (palette), computed
   and reported separately because neither subsumes the other (a recolour with
-  the same layout MATCHes one and CONFLICTs the other).
+  the same layout MATCHes one and CONFLICTs the other). **"Logo" is NOT its
+  own signal yet** — the brief asks for Logo, Layout and Colour as three
+  things, but this code only has two measurements, and the file's own
+  comment says so: the "Logo" row is aliased to the same whole-page dHash as
+  "Design/Layout", because there is no logo-region detection step to crop a
+  logo out and compare it on its own. Don't mark §9 fully done until a real
+  `compareLogos()` exists (planned for Phase E of the extraction rebuild).
 - **§10 PDF Report** — `src/utils/comparisonReportPdf.ts` (jsPDF +
   jspdf-autotable, client-side). Summary, parameter table, nutrition table,
   visual comparison table, artwork images.
@@ -82,15 +113,37 @@ are now done — see below). The one real, still-open gap is model accuracy
 - **§12 (nutrition table rows)** — `LabelExtractionResult.nutritionTable`
   compared row-by-row in `compareNutritionTables()`.
 
-## Model fine-tuning — built, evaluated, NOT good enough to ship
+## Model fine-tuning — tried, NOT on the roadmap anymore
 
-Full QLoRA pipeline exists in `ai_backend/finetune/` (`prepare_dataset.py`,
-`build_training_set.py`, `train_lora.py`, `evaluate_adapter.py`). 44 real
-label pages were manually reviewed/annotated (`ai_backend/finetune/reviewed/annotations/`,
-committed — this is real ground truth now, not the "no annotations at all"
-gap this file used to describe) and used to train a LoRA adapter, sitting at
-`ai_backend/finetune/adapters/label-extraction-lora/` (gitignored, ~74MB,
-regenerable via `train_lora.py`).
+**Fine-tuning is no longer the plan. Do not resume it, and do not extend
+`ai_backend/finetune/`.** Two rounds of QLoRA fine-tuning were tried on this
+project (2B model, then a 7B model, full history below) and neither one
+produced a real accuracy win — the 7B run finished with a much better
+training loss than the 2B run (0.19 vs 0.32) but scored about the same on
+the same held-out pages (36.3% vs 35.4%), so a bigger model was not the
+answer either. On top of that, this client's label artwork is confidential
+and is not allowed to leave this machine — no cloud GPU notebook (Colab,
+Kaggle, or similar), no hosted API, ever gets a copy of any file under
+`Dataset_Example/`, `Final_dataset/`, `all labels/` or `backend/uploads/` —
+which rules out easily training a bigger model even if one might eventually
+help. The current plan instead is to fix the parts of the pipeline that
+throw away information the label PDF already gives us for free (its text
+layer's font sizes and positions), replace Tesseract with a better local OCR
+engine for stylized/outlined text, and use a local model (via Ollama) only
+as a narrow, schema-constrained resolver for the few fields geometry and OCR
+genuinely can't settle — never as a one-shot "read the whole label" call.
+See the extraction-rebuild plan for the current phase.
+
+Full QLoRA pipeline still exists in `ai_backend/finetune/` (`prepare_dataset.py`,
+`build_training_set.py`, `train_lora.py`, `evaluate_adapter.py`) and is being
+left in place as a record of what was tried, not as active tooling. 60
+label pages have been manually reviewed/annotated
+(`ai_backend/finetune/reviewed/annotations/`, committed) and were used to
+train the LoRA adapters below — but every one of those 60 files currently
+has the placeholder `"reviewedAt": 1` rather than a real timestamp, so how
+carefully each one was actually checked is unverified. A full human
+re-review pass is planned (see the extraction-rebuild plan's Phase B) before
+these are trusted as ground truth for anything new.
 
 **2026-09-09 evaluation, 6-page held-out validation split:**
 
@@ -121,56 +174,80 @@ Evaluated against the new, larger 16-page validation split
 `ai_backend/` — the `-m finetune.evaluate_adapter` form above also works,
 `PYTHONPATH=.` is only needed for the direct-script form):
 
-| | Base (no adapter) | Tuned (LoRA adapter) | Tesseract-only (no AI) |
-|---|---|---|---|
-| Overall | **34.6%** | **33.8%** | **33.9%** |
-| Pages returned completely blank | 3 of 16 | **8 of 16** | — |
+| | Base (no adapter) | Tuned (LoRA adapter) |
+|---|---|---|
+| Overall | **34.6%** | **33.8%** |
+| Pages returned completely blank | 3 of 16 | **8 of 16** |
+
+(An earlier version of this table also listed a "Tesseract-only (no AI):
+33.9%" column. That number has been removed — `evaluate_adapter.py` has no
+Tesseract-only mode, so there is no real run behind that figure. If a real
+plain-OCR baseline number is needed, it has to come from `ai_backend/eval/score.py`
+once that exists, not from this script.)
 
 **Same conclusion as 2026-09-09, worse in one respect**: more data alone did
 not fix the degenerate repetition loop — it happened again, on different
 pages, and the fine-tuned model gave up completely (all-null) on over twice
-as many pages as the untrained base model. The fine-tuned model is
-statistically tied with *plain OCR and no AI at all*. **Root cause found**:
+as many pages as the untrained base model. **Root cause found**:
 `extract_from_image` in `ai_backend/app/services/extraction.py` only ran its
 completion-retry/tile-fallback recovery when the first-pass output was
 non-empty (`if blank and label_data:`) — so a page whose first pass failed
 *completely* (which is exactly what a repetition-loop degeneration produces:
 unparseable JSON with no closing brace) got **zero** recovery attempts,
-while a partially-bad page got full recovery. Fixed today (see bugs list
-below) but **not yet re-evaluated to completion** — see "In progress" below.
+while a partially-bad page got full recovery. That bug was fixed
+(`if blank:`, see the bugs list below), and re-running the same 16-page tuned
+eval with the fix in place gave 35.4% (barely moved). A 7B model was then
+tried too, to test whether a bigger base model was the missing ingredient:
+it trained to a much better loss (0.19 vs the 2B run's 0.32) but scored
+36.3% on the same 16 pages — no meaningful improvement. Both results are
+consistent with the same conclusion: the ceiling here isn't model size or
+training data volume, it's the one-shot "read the whole page and guess JSON"
+approach itself. **`LABEL_LORA_ADAPTER` stays unset in production.** No
+further fine-tuning work is planned — see the "not on the roadmap" note at
+the top of this section for what replaces it.
 
-**Do not set `LABEL_LORA_ADAPTER`** — production should keep running the base
-model until this is revisited. Next steps, in likely order of impact: (1)
-finish validating today's fix (below), (2) more annotated training examples
-(44–60 is still small) now that the repetition-loop recovery gap is closed,
-(3) still-unconfirmed training-recipe causes of the repetition loop itself
-(repetition penalty / learning rate / an overfit adapter latching onto a
-wrong pattern), (4) re-evaluate before ever flipping the adapter on in
-production.
+## Extraction rebuild plan — six phases, in progress
 
-### In progress — resume after 8pm today (2026-09-10)
+Replaces fine-tuning as the plan for improving extraction accuracy (see
+above). Ground rules for every phase: write a failing test before writing
+the fix; never touch the database without the user's explicit per-action
+permission, and report any rows created by testing; treat the human-reviewed
+annotations as ground truth, and ask the human rather than guess when a
+field is ambiguous; commit each phase with a message describing what the
+scoreboard showed before/after; push each phase to its own
+`feat/extraction-<phase>` branch, never straight to `main`; never quote an
+accuracy number that isn't a row in `ai_backend/eval/RESULTS.md` once that
+file exists (Phase B). Client label artwork never leaves this machine — no
+cloud notebook, no hosted API, ever sees it.
 
-Two real bugs were fixed today in `ai_backend/app/services/extraction.py`
-(see "Bugs found and fixed" below for the full detail), and both are
-covered by the existing 63-test suite (`cd ai_backend && python -m pytest
-tests/ -v` — passes). What's **not yet done**: re-running the 16-page tuned
-eval with both fixes in place to see the actual before/after accuracy
-number. A run was started but stopped partway through (1 of 16 pages done —
-retries now genuinely run, so each page can take much longer than before,
-budget more like 45–60+ minutes for the full 16 pages, not the ~15 minutes
-it took pre-fix). To resume:
-```
-cd ai_backend && PYTHONPATH="." python finetune/evaluate_adapter.py tuned > finetune/eval_tuned_after_fix.log 2>&1
-```
-then compare `finetune/eval/tuned.json`'s `overall` and `blank_results`
-against the 33.8%/8-blank numbers above. Also uncommitted/unstaged in this
-session, worth deciding on: 16 new files under
-`ai_backend/finetune/reviewed/annotations/` are `git add`-staged (user
-confirmed today these should be tracked) but not committed; the
-`PDFTOPPM_PATH` env var addition (`backend/src/config/env.ts`,
-`backend/src/services/pdf.service.ts`, `.env.example`) and the
-`build_training_set.py`/`prepare_dataset.py` changes described above are
-modified but not staged or committed.
+- **Phase A — housekeeping (this phase).** Merge in a pending fix branch for
+  a decoding/FSSAI-identity bug (blocked — see below), delete the
+  cloud-training files this repo should never have had, correct several
+  claims in this file that turned out to be wrong or stale (see "Current
+  state" and the corrected bullets above). **Blocked on the user**: the
+  branch `fix/decoding-ban-and-fssai-identity` isn't on `origin` yet, so it
+  can't be merged — needs the user to push it (do not hand-reimplement it).
+- **Phase B — an honest scoreboard.** A full human re-review of all 60
+  annotation files (real `reviewedAt` timestamps, a new `is_front` field),
+  and a new `ai_backend/eval/score.py` that becomes the one source of truth
+  for every future accuracy number, replacing `evaluate_adapter.py`'s
+  scoring. Gates every phase after it.
+- **Phase C — use the PDF's own text layer.** `pdf.service.ts` gains
+  `extractTextSpans()` (font size, position, rotation per span, from
+  `pdfjs-dist`'s `getTextContent()`), panel/line segmentation, and
+  display-text/nutrition-table detection from that geometry — expected to be
+  the single biggest accuracy gain, with no AI model involved at all.
+- **Phase D — better OCR for stylized text.** Replace Tesseract with
+  RapidOCR for outlined/vectorized display text Tesseract can't read, using
+  IoU-diffing against the text layer to find where OCR is needed.
+- **Phase E — narrow, local-model resolvers.** Retire the one-shot "read the
+  whole label" Qwen2-VL call entirely. Use Ollama, running fully locally,
+  with schema-constrained JSON decoding, as a set of narrow resolver
+  functions only for the specific fields geometry + OCR couldn't settle.
+- **Phase F — confidence and human review.** Attach confidence/abstention
+  metadata to each extracted field and add a "needs review" flow in the
+  intake UI for low-confidence fields, instead of silently trusting
+  everything the pipeline produces.
 
 ## Bugs found and fixed today (2026-09-09)
 
@@ -246,34 +323,14 @@ modified but not staged or committed.
 
 ## Known open issues (not fixed, real, worth picking up)
 
-1. **Dead `/api/data/*` route still gets called from the frontend, on a
-   timer, and always fails.** Observed live and repeatedly during testing:
-   background requests to `/api/data/Brand`, `/api/data/Comparison`,
-   `/api/data/Flavour`, `/api/data/MarketingCompany`,
-   `/api/data/ManufacturingCompany`, `/api/data/Product` fire continuously
-   from somewhere in the Artwork Management page and always 401/503 (this
-   route doesn't exist as a real, working endpoint — it's the pre-migration
-   dead CRUD route mentioned in earlier session notes). It didn't block any
-   feature tested, but it's continuous failed network traffic in production
-   right now. Whoever picks this up: find the component/hook still calling
-   it (grep for `/api/data/`) and either point it at the real REST endpoints
-   or remove it.
-2. **Extraction latency vs. thoroughness is an open tradeoff, not yet
+1. **Extraction latency vs. thoroughness is an open tradeoff, not yet
    decided.** The widened retry/tile-fallback logic (see bug fixes above)
    trades speed for correctness — worst case per label is now 60–120s+.
    Options discussed with the user, none implemented: cap the tile budget to
    3–4 positions instead of 9, batch the tile calls into one GPU forward
    pass instead of 9 sequential ones, or narrow the widened retry back down
    to identity-critical fields only. Needs a decision before this matters in
-   practice (i.e. before the fine-tuning accuracy gap above is closed).
-3. **`pdftoppm`/poppler is not on the Node **backend's** PATH** in this dev
-   environment (a separate instance of the same gap already documented below
-   for `ai_backend`) — so `backend`'s own PDF-rasterization-for-OCR path
-   never runs; Tesseract currently only reads PDFs' embedded text layers.
-   Same fix, just needs doing for whichever shell starts `backend/` too:
-   ```
-   export PATH="/c/Users/sayan/AppData/Local/Microsoft/WinGet/Packages/oschwartz10612.Poppler_Microsoft.Winget.Source_8wekyb3d8bbwe/poppler-25.07.0/Library/bin:$PATH"
-   ```
+   practice.
 
 ## Architecture gotchas — read before touching comparison code
 
@@ -300,10 +357,15 @@ If you add a new way of reaching a protected endpoint, check it explicitly.
 
 **Poppler (`pdftoppm`) is required** for any PDF rasterization (OCR
 fallback, image previews, visual/colour comparison, PDF report artwork
-images) and is **not on PATH by default** in this dev environment, for
-*either* `ai_backend` or `backend` (see "Known open issues" above — this used
-to only be documented for `ai_backend`). PATH changes don't persist across
-shells — export it fresh in every new shell that starts either service:
+images), and is **not on PATH by default** in this dev environment.
+**`backend` no longer needs the PATH workaround** — `backend/.env`'s
+`PDFTOPPM_PATH` points straight at the poppler install (read by
+`backend/src/config/env.ts`, used in `pdf.service.ts`), so it's set once and
+just works, no per-shell export needed. `ai_backend` is still on the old
+workaround, though — it calls poppler through Python's `pdf2image`
+(`from pdf2image import convert_from_bytes` in `extraction.py`), which has
+no equivalent path-override setting, so it still needs poppler's `bin`
+folder exported onto PATH in every fresh shell that starts it:
 ```
 export PATH="/c/Users/sayan/AppData/Local/Microsoft/WinGet/Packages/oschwartz10612.Poppler_Microsoft.Winget.Source_8wekyb3d8bbwe/poppler-25.07.0/Library/bin:$PATH"
 ```
@@ -351,6 +413,15 @@ label auto-creates brand/marketing-company/flavour master rows via
 products=16  artworks=12  brands=11  flavours=8
 marketing_companies=7  manufacturing_companies=2  claims=4  product_categories=5
 ```
+**Currently one artwork and one product above this baseline**: a live-browser
+demo today uploaded a real label (`all labels/Cal. Vit D IRN120-1.pdf`)
+through the actual UI, creating **Artwork ART-0013** and **Product PRD-0017**
+("Calcium 125 mg + Vitamin D 200 IU Gummy", brand "ChewNectar"). Nobody has
+cleaned these up yet — that needs the user's explicit go-ahead first (see
+below), so the counts above and the next artwork ID (`ART-0014`, not
+`ART-0013`) will look "off by one" against a truly clean baseline until then.
+That's exactly what's causing today's 7 backend test failures noted above.
+
 If you do any live browser testing, check these afterward and clean up
 whatever you personally created (with the user's explicit sign-off each
 time — this is a destructive DB action) before trusting the test suite again.
@@ -369,9 +440,10 @@ fine-tuning" above; the annotations themselves ARE committed, under
 1. `git checkout feature/durable-artwork-storage && git pull` (or just work
    directly off `origin/main`, which this branch is currently in sync with).
 2. Start Postgres (should already be running as a local service).
-3. `export PATH=".../poppler-25.07.0/Library/bin:$PATH"` (see above) in
-   *every* new shell before running backend OR ai_backend tests, or anything
-   PDF-related — this bit both services this session.
+3. `backend` reads poppler's location from `PDFTOPPM_PATH` in `backend/.env`
+   — nothing to export for it. `ai_backend` still needs poppler's `bin`
+   folder on PATH in every fresh shell before running its tests or starting
+   its server (see "Architecture gotchas" above for the export command).
 4. Backend: `cd backend && npm run dev` (port 4000). Frontend production
    preview: `npm run build && npm run preview` at repo root — **rebuild
    first**, `preview` serves the stale `dist/` otherwise (bit us today). AI
