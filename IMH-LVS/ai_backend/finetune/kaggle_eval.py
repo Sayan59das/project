@@ -18,6 +18,7 @@ Run:
     PYTHONPATH=. python finetune/kaggle_eval.py
 """
 import json
+import os
 import sys
 from pathlib import Path
 
