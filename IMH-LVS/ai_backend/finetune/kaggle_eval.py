@@ -46,6 +46,17 @@ VAL_SLUGS = [
 
 
 def main() -> None:
+    # ExtractionService picks 4-bit vs. fp16 loading, and whether to attach
+    # an adapter at all, from LABEL_LORA_ADAPTER specifically — not the
+    # FINETUNE_ADAPTER_OUT this script (and train_lora.py) otherwise uses.
+    # Missing this the first time meant the 7B base loaded in full fp16 with
+    # no adapter, which alone is enough to exceed a 16GB GPU: real OOM
+    # ("14.56 GiB... 14.81 MiB free") confirmed live on Kaggle before any
+    # inference ran.
+    adapter_out = os.environ.get("FINETUNE_ADAPTER_OUT", "")
+    if adapter_out:
+        os.environ["LABEL_LORA_ADAPTER"] = adapter_out
+
     from app.services.extraction import EXTRACTION_PROMPT, ExtractionService
 
     rows = []
