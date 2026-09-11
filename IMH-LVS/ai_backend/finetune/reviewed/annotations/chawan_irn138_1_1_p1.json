@@ -9,7 +9,13 @@
       "Supports overall wellness and daily nutrition",
       "Convenient and tasty alternative to traditional Chyawanprash",
       "Gluten Free",
-      "Great Taste"
+      "Great Taste",
+      "No Gelatin",
+      "No Gluten",
+      "No Milk",
+      "No Peanut",
+      "No Nut",
+      "No Soy"
     ],
     "colour_theme": [
       "Brown",
@@ -81,6 +87,7 @@
   },
   "page": 1,
   "reviewed": true,
-  "reviewedAt": 1,
+  "reviewedAt": 1789132800012,
+  "isFront": true,
   "sourceFile": "Chawan IRN138-1 (1).pdf"
 }

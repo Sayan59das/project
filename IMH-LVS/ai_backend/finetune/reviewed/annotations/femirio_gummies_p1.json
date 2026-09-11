@@ -8,7 +8,11 @@
       "Helps soothe mild anxiety, manage everyday stress (Chamomile 20mg)",
       "Helps balance hormones, alleviate PMS & regulate menstrual cycles (Chasteberry 10mg)",
       "Gluten Free",
-      "Gelatin Free"
+      "Gelatin Free",
+      "Milk Free",
+      "Peanut Free",
+      "Nut Free",
+      "Soy Free"
     ],
     "colour": null,
     "colour_theme": [
@@ -22,7 +26,7 @@
       "Corn Syrup",
       "Sugar",
       "Water",
-      "Gelling Agents (INS 330, 418, 407)",
+      "Gelling Agents (INS 440, 418, 407)",
       "Acidity Regulator (INS 330 & 331iii)",
       "Lemon Grass",
       "Chamomile",
@@ -63,6 +67,7 @@
   },
   "page": 1,
   "reviewed": true,
-  "reviewedAt": 1,
+  "reviewedAt": 1789132800021,
+  "isFront": true,
   "sourceFile": "Femirio Gummies.pdf"
 }

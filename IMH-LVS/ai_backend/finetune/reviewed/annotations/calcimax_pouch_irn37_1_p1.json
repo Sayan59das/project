@@ -11,7 +11,7 @@
     "flavour": null,
     "fssai_number": null,
     "ingredients": null,
-    "layout": null,
+    "layout": "Pouch film print repeat (printer's job proof sheet)",
     "logo": null,
     "manufacturing_company": null,
     "marketing_company": null,
@@ -21,6 +21,7 @@
   },
   "page": 1,
   "reviewed": true,
-  "reviewedAt": 1,
+  "reviewedAt": 1789132800009,
+  "isFront": false,
   "sourceFile": "Calcimax Pouch IRN37-1.jpeg"
 }

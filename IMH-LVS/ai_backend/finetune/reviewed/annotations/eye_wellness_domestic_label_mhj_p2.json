@@ -6,7 +6,13 @@
       "No Artificial Colours",
       "No Preservatives",
       "Naturally Derived Sweetener",
-      "Gluten Free (by nature)"
+      "Gluten Free (by nature)",
+      "Gelatin Free",
+      "Milk Free",
+      "Peanut Free",
+      "Nut Free",
+      "Soy Free",
+      "Cruelty Free"
     ],
     "colour_theme": [
       "Orange"
@@ -46,6 +52,7 @@
   },
   "page": 2,
   "reviewed": true,
-  "reviewedAt": 1,
+  "reviewedAt": 1789132800020,
+  "isFront": false,
   "sourceFile": "EYE WELLNESS DOMESTIC LABEL MHJ.pdf"
 }

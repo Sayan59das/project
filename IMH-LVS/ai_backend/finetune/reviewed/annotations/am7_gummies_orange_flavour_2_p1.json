@@ -3,10 +3,12 @@
   "sourceFile": "AM7 GUMMIES - ORANGE  FLAVOUR (2).pdf",
   "page": 1,
   "reviewed": true,
-  "reviewedAt": 1,
+  "reviewedAt": 1789132800001,
+  "isFront": true,
+  "aiReviewNotes": "Two possible brand/company readings: the small 'GUERISON' wordmark+icon and the large 'AM7 gummies' wordmark both appear on-package. Set brand_name=AM7 (the prominent display name) and marketing_company=Guerison Infusions Private Limited, matching the pattern used for sibling Riomedica-marketed products, but this should be confirmed. This image is a single flattened full carton (front marketing panel + nutrition/ingredients together), not a separate front-only page.",
   "label": {
-    "brand_name": "GUERISON",
-    "product_name": "AM7 Gummies",
+    "brand_name": "AM7",
+    "product_name": "Eye Multivitamin Gummies for Kids & Adults",
     "colour_theme": [
       "Orange"
     ],
@@ -15,15 +17,16 @@
       "Gelatin Free",
       "Gluten Free",
       "Nut Free",
-      "Soy Free"
+      "Soy Free",
+      "Best in Class, Best in Taste"
     ],
-    "logo": null,
-    "layout": "Rectangle carton, front panel",
+    "logo": "Stylised wave/hand swoosh icon above the GUERISON wordmark",
+    "layout": "Carton (flattened, front and back content together)",
     "nutrition_table": {
       "Energy": "16 kcal",
-      "Total Carbohydrate": "4 g",
+      "Total Carbohydrate": "4.4 g",
       "Sugars": "3.2 g",
-      "Dietary Fiber (as Pectin)": "0.1 g",
+      "Dietary Fiber (as Pectin)": "0.10 g",
       "Proteins": "0 g",
       "Fats": "0 g",
       "Sodium": "8 mg",
@@ -31,11 +34,11 @@
       "Vitamin C (as Ascorbic Acid)": "30 mg",
       "Vitamin E (as D-Alpha Tocopherol Acetate)": "5.04 mg",
       "Lutein 20%": "4 mg",
-      "Astaxanthin 2%": "160 mcg",
+      "Astaxanthin 2%": "1600 mcg",
       "Zeaxanthin 10%": "800 mcg",
       "Vitamin A (as Vitamin A Palmitate)": "499.8 mcg"
     },
-    "fssai_number": "10021062000026",
+    "fssai_number": "10825005000687",
     "ingredients": [
       "Corn Syrup",
       "Sugar",

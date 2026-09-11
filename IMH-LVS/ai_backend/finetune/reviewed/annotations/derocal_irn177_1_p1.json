@@ -3,7 +3,8 @@
   "sourceFile": "Derocal IRN177-1.pdf",
   "page": 1,
   "reviewed": true,
-  "reviewedAt": 1,
+  "reviewedAt": 1789132800016,
+  "isFront": true,
   "label": {
     "brand_name": "Derocal-G",
     "product_name": "Calcium 125mg & Vitamin D 200IU Gummies",
@@ -15,10 +16,11 @@
     "claims": [
       "100% Veg",
       "Gelatin Free",
+      "Great Taste",
       "Gluten Free"
     ],
     "logo": null,
-    "layout": null,
+    "layout": "Carton (flattened, front + back panels)",
     "nutrition_table": {
       "Calories": "12 kcal",
       "Total Carbohydrate": "3.2 g",

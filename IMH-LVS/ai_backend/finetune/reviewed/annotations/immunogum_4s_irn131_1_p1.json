@@ -3,9 +3,11 @@
   "sourceFile": "Immunogum 4S IRN131-1.pdf",
   "page": 1,
   "reviewed": true,
-  "reviewedAt": 1,
+  "reviewedAt": 1789132800031,
+  "isFront": true,
+  "aiReviewNotes": "brand_name changed from 'Arte Medico' to 'Inmunogum' — 'Inmunogum' is the large product wordmark on the label; 'Arte + Médico' is the distributor's own logo/wordmark, already captured in marketing_company. Please confirm this split is right.",
   "label": {
-    "brand_name": "Arte Medico",
+    "brand_name": "Inmunogum",
     "product_name": "Inmunogum - Gomitas de Vitamina C, E, Zinc, Arandano y Sauco con sabor a mango",
     "colour_theme": [
       "Red",
@@ -20,8 +22,8 @@
       "Libre de Nuez",
       "Libre de Soya"
     ],
-    "logo": null,
-    "layout": null,
+    "logo": "Blue cross-in-square icon in the Arte Médico wordmark",
+    "layout": "Wraparound bottle label",
     "nutrition_table": {
       "Calorias": "16 cal",
       "Carbohidratos totales": "4.4 g",

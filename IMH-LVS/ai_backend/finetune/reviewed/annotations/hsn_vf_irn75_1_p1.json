@@ -6,7 +6,11 @@
       "Supports Hair Health",
       "Helps Maintain Healthy Skin",
       "Helps Maintain Healthy Nails",
-      "Free From Gluten | Milk | Soy"
+      "Free From Gluten | Milk | Soy",
+      "Gelatin Free",
+      "Peanut Free",
+      "Nut Free",
+      "Cruelty Free"
     ],
     "colour_theme": [
       "Grey",
@@ -65,6 +69,7 @@
   },
   "page": 1,
   "reviewed": true,
-  "reviewedAt": 1,
+  "reviewedAt": 1789132800029,
+  "isFront": true,
   "sourceFile": "HSN VF IRN75-1.pdf"
 }

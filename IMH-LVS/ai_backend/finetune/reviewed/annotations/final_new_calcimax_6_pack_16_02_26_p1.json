@@ -3,7 +3,11 @@
     "address": "A-177, Wagle Estate, Thane – 400 604 (Mumbai), INDIA",
     "brand_name": "Calcimax",
     "claims": [
-      "Strong Bones. Strong Family."
+      "Strong Bones. Strong Family.",
+      "Gluten Free",
+      "Gelatin Free",
+      "Sugar Free",
+      "Soy Free"
     ],
     "colour_theme": [
       "Blue",
@@ -23,7 +27,7 @@
       "Food Colour: Black Carrot Concentrate (Daucus Carota root extract)",
       "Vitamin D"
     ],
-    "layout": "Carton",
+    "layout": "Carton (flattened die-line proof, front + side + back panels)",
     "logo": null,
     "manufacturing_company": "IM Healthcare Pvt. Ltd.",
     "marketing_company": "Meyer Organics Pvt. Ltd.",
@@ -44,6 +48,7 @@
   },
   "page": 1,
   "reviewed": true,
-  "reviewedAt": 1,
+  "reviewedAt": 1789132800025,
+  "isFront": true,
   "sourceFile": "Final New-Calcimax 6 Pack 16.02.26  .pdf"
 }

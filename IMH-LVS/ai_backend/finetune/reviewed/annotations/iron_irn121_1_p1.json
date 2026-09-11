@@ -3,7 +3,8 @@
   "sourceFile": "Iron IRN121-1.pdf",
   "page": 1,
   "reviewed": true,
-  "reviewedAt": 1,
+  "reviewedAt": 1789132800032,
+  "isFront": true,
   "label": {
     "brand_name": "ChewNectar",
     "product_name": "Iron Gummies",
@@ -13,10 +14,11 @@
     "flavour": "Mango, Strawberry",
     "claims": [
       "Supports overall vitality and energy levels",
-      "Helps maintain normal iron metabolism"
+      "Helps maintain normal iron metabolism",
+      "Cruelty Free"
     ],
-    "logo": null,
-    "layout": null,
+    "logo": "Stylised 'N' emblem beside the Neonutriva wordmark in the 'Marketed By' block",
+    "layout": "Pillow pouch label",
     "nutrition_table": {
       "Energy": "16 kcal",
       "Total Carbohydrate": "4.4 g",

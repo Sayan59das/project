@@ -5,7 +5,14 @@
     "claims": [
       "No Artificial Colours",
       "No Preservatives",
-      "Naturally Derived Additives"
+      "Naturally Derived Additives",
+      "Gelatin Free",
+      "Milk Free",
+      "Peanut Free",
+      "Nut Free",
+      "Gluten Free",
+      "Soy Free",
+      "Cruelty Free"
     ],
     "colour_theme": [
       "Orange"
@@ -44,6 +51,7 @@
   },
   "page": 2,
   "reviewed": true,
-  "reviewedAt": 1,
+  "reviewedAt": 1789132800049,
+  "isFront": false,
   "sourceFile": "MHJ Lutein Domestic IRN165-1.pdf"
 }

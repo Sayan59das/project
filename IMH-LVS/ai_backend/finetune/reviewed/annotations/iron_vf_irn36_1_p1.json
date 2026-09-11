@@ -8,7 +8,12 @@
       "Gluten Free",
       "Great Taste",
       "Suitable for Kids and Adults",
-      "2 Gummies Per Day"
+      "2 Gummies Per Day",
+      "Gelatin Free",
+      "Milk Free",
+      "Peanut Free",
+      "Nut Free",
+      "Soy Free"
     ],
     "colour_theme": [
       "Red",
@@ -48,6 +53,7 @@
   },
   "page": 1,
   "reviewed": true,
-  "reviewedAt": 1,
+  "reviewedAt": 1789132800037,
+  "isFront": true,
   "sourceFile": "Iron VF IRN36-1.pdf"
 }

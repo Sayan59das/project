@@ -3,7 +3,8 @@
   "sourceFile": "Dr. Chewitals Vision IRN13-1.pdf",
   "page": 1,
   "reviewed": true,
-  "reviewedAt": 1,
+  "reviewedAt": 1789132800017,
+  "isFront": true,
   "label": {
     "brand_name": "Dr. Chewitals",
     "product_name": "Complete Wellness Gummy - Vision",
@@ -14,10 +15,15 @@
     "claims": [
       "For Optimum Eyecare",
       "Perfect blend of Vitamins and Carotenoids",
-      "Gluten Free"
+      "Gluten Free",
+      "Gelatin Free",
+      "Milk Free",
+      "Peanut Free",
+      "Nut Free",
+      "Soy Free"
     ],
-    "logo": null,
-    "layout": null,
+    "logo": "Blue stylised eye icon below the Dr. Chewitals wordmark",
+    "layout": "Wraparound bottle/pouch label",
     "nutrition_table": {
       "Energy": "16 kcal",
       "Total Carbohydrate": "4.4 g",
@@ -54,7 +60,7 @@
     "marketing_company": "Maypharm Lifesciences Pvt. Ltd.",
     "address": "87, Vishal Industries, Subhash Nagar Road, Near CEAT Tyres, Bhandup, Mumbai - 400078, Maharashtra, India",
     "customer_care_number": "+91 9930 031582",
-    "customer_care_email": "customercare@mypharm.com",
+    "customer_care_email": "customercare@maypharm.com",
     "package_size": "30 N",
     "manufacturing_company": "IM Healthcare Pvt. Ltd."
   }

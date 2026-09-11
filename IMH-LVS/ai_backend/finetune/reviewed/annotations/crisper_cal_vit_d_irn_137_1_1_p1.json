@@ -2,7 +2,14 @@
   "label": {
     "address": "Shop No. 8, Tehsil Chopla, Hapur, Uttar Pradesh-245101",
     "brand_name": "OLL",
-    "claims": null,
+    "claims": [
+      "Gelatin Free",
+      "Gluten Free",
+      "Milk Free",
+      "Peanut Free",
+      "Nut Free",
+      "Soy Free"
+    ],
     "colour_theme": [
       "Orange",
       "Yellow"
@@ -42,6 +49,7 @@
   },
   "page": 1,
   "reviewed": true,
-  "reviewedAt": 1,
+  "reviewedAt": 1789132800015,
+  "isFront": true,
   "sourceFile": "Crisper Cal. Vit. D IRN-137-1 (1).pdf"
 }

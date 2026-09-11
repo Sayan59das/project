@@ -3,7 +3,11 @@
     "address": "A-177, Wagle Estate, Thane – 400 604 (Mumbai), INDIA",
     "brand_name": "Calcimax",
     "claims": [
-      "Strong Bones. Strong Family."
+      "Strong Bones. Strong Family.",
+      "Gluten Free",
+      "Gelatin Free",
+      "Sugar Free",
+      "Soy Free"
     ],
     "colour_theme": [
       "Blue",
@@ -16,13 +20,14 @@
     "ingredients": [
       "Maltitol Syrup (INS 965)",
       "Water",
-      "Gelling Agents (INS 440, & 331(iii))",
+      "Gelling Agents (INS 440)",
+      "Acidity Regulator (INS 330, & 331(iii))",
       "Tricalcium Phosphate",
       "Strawberry Flavour",
       "Food Colour: Black Carrot Concentrate (Daucus Carota root extract)",
       "Vitamin D"
     ],
-    "layout": "Carton",
+    "layout": "Carton (flattened die-line proof, front + side + back panels)",
     "logo": null,
     "manufacturing_company": "IM Healthcare Pvt. Ltd.",
     "marketing_company": "Meyer Organics Pvt. Ltd.",
@@ -43,6 +48,7 @@
   },
   "page": 1,
   "reviewed": true,
-  "reviewedAt": 1,
+  "reviewedAt": 1789132800007,
+  "isFront": true,
   "sourceFile": "Calcimax Pack 30 IRN168-2.pdf"
 }

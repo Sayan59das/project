@@ -13,7 +13,13 @@
       "Cruelty Free",
       "For Every Day (1 Gummy Daily)",
       "For Great Health (2 Gummies Daily)",
-      "For Advanced Care (3 Gummies Daily)"
+      "For Advanced Care (3 Gummies Daily)",
+      "Gelatin Free",
+      "Gluten Free",
+      "Milk Free",
+      "Peanut Free",
+      "Nut Free",
+      "Soy Free"
     ],
     "colour_theme": [
       "Pink",
@@ -59,6 +65,7 @@
   },
   "page": 1,
   "reviewed": true,
-  "reviewedAt": 1,
-  "sourceFile": "Riofill Fe Next.pdf"
+  "reviewedAt": 1789132800056,
+  "isFront": true,
+  "aiReviewNotes": "package_size is genuinely ambiguous on this label: the front ribbon badge reads '10 GUMMIES' (kept, matching the existing value) but the back panel's own regulatory fields say 'Net Content: 30 N' and 'No. of Serving: per container 15' at 2 gummies/serving (=30). This looks like a real inconsistency in the artwork itself, not a misread — please confirm which count is correct."
 }

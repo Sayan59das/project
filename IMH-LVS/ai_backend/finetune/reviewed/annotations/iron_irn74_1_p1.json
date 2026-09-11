@@ -6,7 +6,11 @@
       "Helps Support Iron Levels",
       "Supports Formation Of Red Blood Cells",
       "Helps Reduce Tiredness",
-      "Free From Gluten | Milk | Soy"
+      "Free From Gluten | Milk | Soy",
+      "Gelatin Free",
+      "Peanut Free",
+      "Nut Free",
+      "Cruelty Free"
     ],
     "colour_theme": [
       "Red"
@@ -45,6 +49,7 @@
   },
   "page": 1,
   "reviewed": true,
-  "reviewedAt": 1,
+  "reviewedAt": 1789132800036,
+  "isFront": true,
   "sourceFile": "Iron IRN74-1.pdf"
 }

@@ -21,7 +21,8 @@
       "Corn Syrup",
       "Sugar",
       "Water",
-      "Gelling Agents (INS 440, & 331iii)",
+      "Gelling Agents (INS 440)",
+      "Acidity Regulator (INS 330, & 331iii)",
       "Tricalcium Phosphate",
       "Mango & Strawberry Flavour",
       "Food Colour: Curcumin (INS 100) & Black Carrot Concentrate (Daucus Carota root extract)",
@@ -47,6 +48,7 @@
   },
   "page": 1,
   "reviewed": true,
-  "reviewedAt": 1,
+  "reviewedAt": 1789132800011,
+  "isFront": true,
   "sourceFile": "Calrio IRN159-1.pdf"
 }

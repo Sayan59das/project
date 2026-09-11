@@ -11,7 +11,11 @@
       "Helps Reduce Stress",
       "Cruelty Free",
       "Gluten Free",
-      "Gelatin Free"
+      "Gelatin Free",
+      "Milk Free",
+      "Peanut Free",
+      "Nut Free",
+      "Soy Free"
     ],
     "colour_theme": [
       "Purple",
@@ -53,6 +57,7 @@
   },
   "page": 1,
   "reviewed": true,
-  "reviewedAt": 1,
-  "sourceFile": "Sleeprio Gummies.pdf"
+  "reviewedAt": 1789132800058,
+  "isFront": true,
+  "aiReviewNotes": "package_size is ambiguous the same way as Riofill Fe Next: the front ribbon says '10 GUMMIES' (kept) but the back panel's own nutrition table says 'No. of Serving per container 30' at 1 gummy/serving (=30) and 'Net Content: 30 N'. Looks like a real inconsistency in the artwork, not a misread — please confirm the true count."
 }

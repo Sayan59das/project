@@ -13,7 +13,12 @@
       "Gluten Free",
       "1 Gummy Daily",
       "For Growing & Active Kids",
-      "Feel Strong Feel Healthy"
+      "Feel Strong Feel Healthy",
+      "Gelatin Free",
+      "Milk Free",
+      "Peanut Free",
+      "Nut Free",
+      "Soy Free"
     ],
     "colour_theme": [
       "Purple",
@@ -71,6 +76,7 @@
   },
   "page": 1,
   "reviewed": true,
-  "reviewedAt": 1,
+  "reviewedAt": 1789132800050,
+  "isFront": true,
   "sourceFile": "Multivitamin Gummies.pdf"
 }

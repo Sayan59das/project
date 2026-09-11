@@ -6,7 +6,11 @@
       "Supports Menstrual Comfort",
       "Supports Hormonal Balance",
       "Supports Overall Well-being",
-      "Free From Gluten | Milk | Soy"
+      "Free From Gluten | Milk | Soy",
+      "Gelatin Free",
+      "Peanut Free",
+      "Nut Free",
+      "Cruelty Free"
     ],
     "colour_theme": [
       "Dusty Pink",
@@ -61,6 +65,7 @@
   },
   "page": 1,
   "reviewed": true,
-  "reviewedAt": 1,
+  "reviewedAt": 1789132800053,
+  "isFront": true,
   "sourceFile": "PMS IRN71-1.pdf"
 }

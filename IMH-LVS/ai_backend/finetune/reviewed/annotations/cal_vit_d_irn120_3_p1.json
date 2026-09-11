@@ -3,7 +3,8 @@
   "sourceFile": "Cal. Vit D IRN120-3.pdf",
   "page": 1,
   "reviewed": true,
-  "reviewedAt": 1,
+  "reviewedAt": 1789132800005,
+  "isFront": true,
   "label": {
     "brand_name": "ChewNectar",
     "product_name": "Calcium 125 mg + Vitamin D 200 IU Gummy",
@@ -12,10 +13,16 @@
     ],
     "flavour": "Mango, Strawberry",
     "claims": [
-      "Support for Strong, Healthy Bones and Teeth"
+      "Support for Strong, Healthy Bones and Teeth",
+      "No Gelatin",
+      "No Gluten",
+      "No Milk",
+      "No Peanut",
+      "No Nut",
+      "No Soy"
     ],
-    "logo": null,
-    "layout": null,
+    "logo": "Stylised 'N' emblem beside the Neonutriva wordmark in the 'Marketed By' block",
+    "layout": "Pillow pouch label",
     "nutrition_table": {
       "Calories": "12 kcal",
       "Total Carbohydrate": "3.2 g",

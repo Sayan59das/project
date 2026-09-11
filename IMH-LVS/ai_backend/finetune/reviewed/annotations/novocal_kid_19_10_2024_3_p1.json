@@ -3,7 +3,8 @@
   "sourceFile": "Novocal Kid 19-10-2024 (3).jpg",
   "page": 1,
   "reviewed": true,
-  "reviewedAt": 1,
+  "reviewedAt": 1789132800052,
+  "isFront": true,
   "label": {
     "brand_name": "Novocal-Kid",
     "product_name": "Calcium + Vitamin D Gummies",
@@ -19,7 +20,7 @@
       "Gluten Free"
     ],
     "logo": null,
-    "layout": null,
+    "layout": "Pouch label (flattened, front + back panels)",
     "nutrition_table": {
       "Calories": "12 kcal",
       "Total Carbohydrate": "3.2 g",
