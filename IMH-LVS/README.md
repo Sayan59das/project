@@ -270,11 +270,29 @@ cloud notebook, no hosted API, ever sees it.
   are exactly the fields Phase C's PDF-text-layer reading should fix,
   since they're usually real, already-correct text sitting in the PDF file
   itself, not something an AI model needs to transcribe from an image.
-- **Phase C — use the PDF's own text layer.** `pdf.service.ts` gains
-  `extractTextSpans()` (font size, position, rotation per span, from
-  `pdfjs-dist`'s `getTextContent()`), panel/line segmentation, and
-  display-text/nutrition-table detection from that geometry — expected to be
-  the single biggest accuracy gain, with no AI model involved at all.
+- **Phase C — use the PDF's own text layer — foundation done, field-location
+  logic not started.** `pdf.service.ts` now has `extractTextSpans()`: every
+  positioned run of real text in a PDF, with font size/position/rotation
+  intact (from `pdfjs-dist`'s `getTextContent()`) instead of being thrown
+  away like `extractPdfText()` does. Adjacent same-line glyph-runs from the
+  same font are merged into word/phrase spans. Verified against a real
+  label fixture (`she-arise-gummies.pdf`, a die-line proof with six
+  repeated copies of the brand name at different sizes) as well as a
+  synthetic one — 10 tests,
+  `backend/src/__tests__/pdf.service.textSpans.test.ts`. Deliberately kept
+  as a separate reading of the PDF rather than a refactor of
+  `extractPdfText()` onto a shared code path: `extractTextSpans()` merges
+  glyph-runs and drops blank EOL markers (noise for a position-aware
+  caller), but `extractPdfText()`'s own line-break logic depends on exactly
+  those markers to reconstruct blank lines — rebuilding one on top of the
+  other risked a silent regression in `extractPdfText()`'s existing
+  callers for no real benefit. **Not built yet**: anything that actually
+  *uses* the spans — panel/line segmentation, ranking display-text
+  candidates by relative font size, nutrition-table-row detection,
+  designer-debris filtering. `extractTextSpans()` is real, tested
+  infrastructure; it isn't wired into the extraction pipeline yet, and no
+  accuracy number should be expected to move until the field-location logic
+  on top of it exists.
 - **Phase D — better OCR for stylized text.** Replace Tesseract with
   RapidOCR for outlined/vectorized display text Tesseract can't read, using
   IoU-diffing against the text layer to find where OCR is needed.

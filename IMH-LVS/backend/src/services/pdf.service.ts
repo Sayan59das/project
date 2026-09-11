@@ -38,6 +38,118 @@ export type PdfTextExtractionResult = {
   pageCount: number;
 };
 
+// One positioned run of text from a PDF's real text layer — the geometric
+// facts extractPdfText() computes internally and then throws away once it
+// has flattened everything to a string. Phase C of the extraction rebuild
+// (see README.md) is built on this: e.g. "the biggest text on the page is
+// almost always the product name" is a real, usable signal once font size
+// survives past this point, and is simply not derivable from plain text.
+export type TextSpan = {
+  /** 1-indexed, matching PdfTextExtractionResult and the rest of this file. */
+  page: number;
+  text: string;
+  /** PDF user-space coordinates (points from the page's own origin), not pixels. */
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  /** Math.hypot(transform[0], transform[1]) — the glyph scale, in points. */
+  fontSize: number;
+  /** Math.atan2(transform[1], transform[0]), radians. 0 for normal upright text. */
+  rotation: number;
+  fontName: string;
+};
+
+// Two glyph-runs on the same line, from the same font, are merged into one
+// word/phrase span when the gap between them is at most this fraction of
+// the font size — small enough to be ordinary kerning between letters of
+// one word, not a real word boundary. Deliberately conservative (most of
+// this project's real label PDFs already emit word/phrase-level runs, not
+// individual glyphs — see the file-level comment above for how this was
+// checked against real fixtures) so this never fuses two genuinely
+// separate words that merely sit close together.
+const GLYPH_MERGE_GAP_RATIO = 0.3;
+
+/**
+ * Reads every positioned run of real text out of a PDF's text layer, with
+ * font size/position/rotation intact — the building block Phase C's
+ * higher-level field-location logic (not built yet) will read from,
+ * instead of guessing blind from an image. Adjacent same-line, same-font
+ * glyph-runs with only a small gap between them (ordinary kerning, not a
+ * word boundary) are merged into one span; the same limits apply as
+ * extractPdfText(): never throws, an unreadable/corrupt/encrypted PDF or
+ * one with no text layer just returns an empty array.
+ */
+export async function extractTextSpans(pdfBuffer: Buffer, options: { maxPages?: number } = {}): Promise<TextSpan[]> {
+  try {
+    const pdfjsLib = await loadPdfJs();
+    const doc = await pdfjsLib.getDocument({ data: new Uint8Array(pdfBuffer), useSystemFonts: true }).promise;
+    const pageLimit = Math.min(options.maxPages ?? doc.numPages, doc.numPages);
+
+    const spans: TextSpan[] = [];
+    for (let pageNumber = 1; pageNumber <= pageLimit; pageNumber += 1) {
+      const page = await doc.getPage(pageNumber);
+      const textContent = await page.getTextContent();
+
+      let pending: TextSpan | null = null;
+      for (const item of textContent.items as any[]) {
+        if (!('str' in item) || item.str.trim().length === 0) {
+          // A blank/EOL marker always ends the current run — flush whatever
+          // was pending before dropping it, or it's silently lost. (Real
+          // PDFs from real label artwork were observed emitting a blank
+          // hasEOL item ahead of EVERY line's real content, not just
+          // between paragraphs — dropping pending here without flushing
+          // first discarded almost every span in this project's own test
+          // fixtures until this fix.)
+          if (pending) spans.push(pending);
+          pending = null;
+          continue;
+        }
+
+        const [a, b, , , x, y] = item.transform;
+        const fontSize = Math.hypot(a, b);
+        const rotation = Math.atan2(b, a);
+        const current: TextSpan = {
+          page: pageNumber,
+          text: item.str,
+          x,
+          y,
+          width: item.width ?? 0,
+          height: fontSize,
+          fontSize,
+          rotation,
+          fontName: item.fontName,
+        };
+
+        if (
+          pending &&
+          pending.fontName === current.fontName &&
+          Math.abs(pending.fontSize - current.fontSize) < 0.01 &&
+          Math.abs(pending.y - current.y) < 0.01 &&
+          current.x - (pending.x + pending.width) <= GLYPH_MERGE_GAP_RATIO * current.fontSize
+        ) {
+          pending.text += current.text;
+          pending.width = current.x + current.width - pending.x;
+        } else {
+          if (pending) spans.push(pending);
+          pending = current;
+        }
+
+        if (item.hasEOL) {
+          spans.push(pending);
+          pending = null;
+        }
+      }
+      if (pending) spans.push(pending);
+    }
+
+    return spans;
+  } catch (error) {
+    console.error('[pdf.service] Failed to read PDF text spans:', error instanceof Error ? error.message : error);
+    return [];
+  }
+}
+
 // Below this fraction of the larger of two consecutive text items' font
 // heights, a vertical gap is ordinary same-line baseline/kerning jitter;
 // above it, the items are on genuinely different visual rows even though
