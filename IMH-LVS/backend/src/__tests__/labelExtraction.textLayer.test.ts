@@ -48,25 +48,14 @@ function buildSyntheticFssaiPdf(): Buffer {
   return pdfBuffer;
 }
 
-test('she-arise-gummies.pdf: function resolves with valid result', async () => {
+test('she-arise-gummies.pdf: returns a non-blank brand equal to the biggest span text', async () => {
   const result = await extractLabelFromTextLayerOnly(load('she-arise-gummies.pdf'));
-  assert.ok(result);
-  assert.ok(typeof result === 'object');
-  assert.ok('brand' in result);
-  assert.ok('productName' in result);
-  assert.ok('fssaiNumber' in result);
-  // Note: she-arise-gummies.pdf is a die-line proof with the design repeated
-  // multiple times at different sizes. The geometry extraction includes all
-  // instances in reading order, which may result in repeated text that the
-  // garbage filter blanks. If productName is extracted correctly, the geometry
-  // path is working despite the brand being blanked by garbage detection.
-});
-
-test('she-arise-gummies.pdf: fssai number is extracted correctly', async () => {
-  const result = await extractLabelFromTextLayerOnly(load('she-arise-gummies.pdf'));
-  // The FSSAI number should survive the geometry extraction unchanged
-  assert.ok(result.fssaiNumber, 'fssaiNumber should be extracted');
-  assert.match(result.fssaiNumber, /\d{14}/, 'fssaiNumber should be 14 digits');
+  // From pdf.service.textSpans.test.ts: the single biggest span is 'She-Arise'
+  // The die-line proof has the brand repeated, so the regex extractor returns
+  // "She-Arise She-Arise". With the amended brief, display-text fill now treats
+  // garbage-looking values as blank and replaces them with the biggest non-garbage
+  // display line, which is the correct single "She-Arise".
+  assert.equal(result.brand.toLowerCase(), 'she-arise', `Expected 'She-Arise', got '${result.brand}'`);
 });
 
 test('chyawanprash-gummies.pdf: function resolves with valid result', async () => {

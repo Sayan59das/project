@@ -251,6 +251,67 @@ function fillBlanks(fields: ExtractedLabelFields, patch: Partial<ExtractedLabelF
   return next;
 }
 
+// Extract fields from a PDF's text layer using geometry-based text processing.
+// This helper is shared between extractFieldsFromPdf and extractLabelFromTextLayerOnly
+// to avoid duplication of the text-layer extraction pipeline.
+async function extractFieldsFromTextLayer(
+  pdfBuffer: Buffer,
+  textLayerText: string,
+  knownFlavours: readonly string[]
+): Promise<{ orderedText: string; fields: ExtractedLabelFields }> {
+  let orderedText = textLayerText;
+  let fields = extractLabelFields(textLayerText, { knownFlavours });
+
+  try {
+    const spans = await extractTextSpans(pdfBuffer);
+    if (spans.length > 0) {
+      // Use geometry-based text extraction for better field recovery. The reading-order
+      // text is primary because it respects the document's visual layout; the flattened
+      // text layer fills what it missed, as a fallback.
+      const panels = segmentPanels(spans);
+      const lines = panels.flatMap((p) => p.lines);
+      orderedText = toReadingOrderText(spans);
+
+      debugLog(`Reading-order text (${orderedText.length} chars):\n${orderedText}`);
+
+      // Extract from reading-order text first, then use flattened text to fill blanks.
+      const orderedFields = extractLabelFields(orderedText, { knownFlavours });
+      fields = fillBlanks(orderedFields, extractLabelFields(textLayerText, { knownFlavours }));
+
+      // Fill brand and productName from display text (filtered to exclude garbage)
+      // when they are blank OR look like OCR garbage (e.g., repeated text on a die-line proof).
+      if (lines.length > 0) {
+        const display = rankDisplayLines(lines).filter((l) => !looksLikeOcrGarbage(l.text));
+
+        // Fill brand if blank or garbage
+        const isBrandBlank = !fields.brand || looksLikeOcrGarbage(fields.brand);
+        if (isBrandBlank && display.length > 0) {
+          fields.brand = display[0].text;
+          debugLog(`brand filled from display text: "${display[0].text}"`);
+        }
+
+        // Fill productName if blank or garbage
+        const isProductNameBlank = !fields.productName || looksLikeOcrGarbage(fields.productName);
+        if (isProductNameBlank && display.length > 0) {
+          // Find the first display line that differs from brand (case-insensitive)
+          // and is not a generic form word
+          const productLine = display.find(
+            (line) => line.text.toLowerCase() !== fields.brand.toLowerCase() && !isGenericProductFormWord(line.text)
+          );
+          if (productLine) {
+            fields.productName = productLine.text;
+            debugLog(`productName filled from display text: "${productLine.text}"`);
+          }
+        }
+      }
+    }
+  } catch (error) {
+    debugLog(`Failed to extract text spans: ${error instanceof Error ? error.message : error}. Continuing with flattened text.`);
+  }
+
+  return { orderedText, fields };
+}
+
 // Runs the primary OCR pass over one image (a rasterized PDF page, or the
 // uploaded image itself), then escalates — only as needed — with a second
 // preprocessing pass for brand/product name and a targeted region re-OCR
@@ -355,45 +416,9 @@ async function extractFieldsFromPdf(pdfBuffer: Buffer, knownFlavours: readonly s
   let textLayerFields = textLayerUsable ? extractLabelFields(textLayerText, { knownFlavours }) : null;
 
   if (textLayerUsable) {
-    try {
-      const spans = await extractTextSpans(pdfBuffer);
-      if (spans.length > 0) {
-        // Use geometry-based text extraction for better field recovery. The reading-order
-        // text is primary because it respects the document's visual layout; the flattened
-        // text layer fills what it missed, as a fallback.
-        const panels = segmentPanels(spans);
-        const lines = panels.flatMap((p) => p.lines);
-        orderedText = toReadingOrderText(spans);
-
-        debugLog(`Reading-order text (${orderedText.length} chars):\n${orderedText}`);
-
-        // Extract from reading-order text first, then use flattened text to fill blanks.
-        const orderedFields = extractLabelFields(orderedText, { knownFlavours });
-        textLayerFields = fillBlanks(orderedFields, extractLabelFields(textLayerText, { knownFlavours }));
-
-        // Fill brand and productName from display text if still blank
-        if (lines.length > 0) {
-          const displayLines = rankDisplayLines(lines);
-          if (displayLines.length > 0 && !textLayerFields.brand) {
-            textLayerFields.brand = displayLines[0].text;
-            debugLog(`brand filled from display text: "${displayLines[0].text}"`);
-          }
-          if (!textLayerFields.productName && displayLines.length > 0) {
-            // Find the first display line that differs from brand and is not a generic form word
-            const productLine = displayLines.find((line) =>
-              line.text.toLowerCase() !== textLayerFields!.brand.toLowerCase() &&
-              !isGenericProductFormWord(line.text)
-            );
-            if (productLine) {
-              textLayerFields.productName = productLine.text;
-              debugLog(`productName filled from display text: "${productLine.text}"`);
-            }
-          }
-        }
-      }
-    } catch (error) {
-      debugLog(`Failed to extract text spans: ${error instanceof Error ? error.message : error}. Continuing with flattened text.`);
-    }
+    const result = await extractFieldsFromTextLayer(pdfBuffer, textLayerText, knownFlavours);
+    orderedText = result.orderedText;
+    textLayerFields = result.fields;
   }
 
   if (textLayerFields && isComplete(textLayerFields)) {
@@ -514,45 +539,9 @@ export async function extractLabelFromTextLayerOnly(
     let fields: ExtractedLabelFields;
 
     if (textLayerUsable) {
-      try {
-        const spans = await extractTextSpans(pdfBuffer);
-        if (spans.length > 0) {
-          const panels = segmentPanels(spans);
-          const lines = panels.flatMap((p) => p.lines);
-          text = toReadingOrderText(spans);
-
-          debugLog(`Reading-order text (${text.length} chars):\n${text}`);
-
-          // Extract using reading-order text (primary), fill blanks from flattened text (fallback)
-          const orderedFields = extractLabelFields(text, { knownFlavours });
-          fields = fillBlanks(orderedFields, extractLabelFields(textLayerText, { knownFlavours }));
-
-          // Fill brand/productName from display text if still blank
-          if (lines.length > 0) {
-            const displayLines = rankDisplayLines(lines);
-            if (displayLines.length > 0 && !fields.brand) {
-              fields.brand = displayLines[0].text;
-              debugLog(`brand filled from display text: "${displayLines[0].text}"`);
-            }
-            if (!fields.productName && displayLines.length > 0) {
-              const productLine = displayLines.find((line) =>
-                line.text.toLowerCase() !== fields!.brand.toLowerCase() &&
-                !isGenericProductFormWord(line.text)
-              );
-              if (productLine) {
-                fields.productName = productLine.text;
-                debugLog(`productName filled from display text: "${productLine.text}"`);
-              }
-            }
-          }
-        } else {
-          // No spans extracted; fall back to flattened text
-          fields = extractLabelFields(textLayerText, { knownFlavours });
-        }
-      } catch (error) {
-        debugLog(`Failed to extract text spans: ${error instanceof Error ? error.message : error}. Using flattened text.`);
-        fields = extractLabelFields(textLayerText, { knownFlavours });
-      }
+      const result = await extractFieldsFromTextLayer(pdfBuffer, textLayerText, knownFlavours);
+      text = result.orderedText;
+      fields = result.fields;
     } else {
       // No usable text layer; return blank fields
       fields = extractLabelFields('', { knownFlavours });
