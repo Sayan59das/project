@@ -13,7 +13,7 @@
 //     flattened text order; verifies it survives the new path unchanged
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, writeFileSync } from 'fs';
+import { readFileSync } from 'fs';
 import path from 'path';
 import { extractLabelFromTextLayerOnly } from '../services/labelExtraction.service';
 

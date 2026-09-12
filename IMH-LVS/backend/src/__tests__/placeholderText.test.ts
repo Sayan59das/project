@@ -119,3 +119,25 @@ test('keeps real names, including short ones', () => {
   assert.equal(looksLikeOcrGarbage('UC'), false);
   assert.equal(looksLikeOcrGarbage('B12'), false);
 });
+
+// Nutrition table is JSON-stringified structured data that should never be subject
+// to placeholder detection. The WHOLLY_PARENTHETICAL regex matches JSON like
+// {"Energy":"12 kcal"} because it contains no inner )]} characters, making it look
+// like a (Brand Name) placeholder. The nutritionTable field is exempted to preserve
+// geometry-derived tables through post-processing.
+test('exempts nutritionTable from placeholder scrubbing', () => {
+  const { fields, blanked } = scrubPlaceholders({
+    nutritionTable: '{"Energy":"12 kcal","Protein":"0.5 g"}',
+    brand: '(Brand Name)',
+    marketingCompany: 'Real Company Ltd'
+  });
+
+  // nutritionTable should be preserved despite looking like a parenthetical placeholder
+  assert.equal(fields.nutritionTable, '{"Energy":"12 kcal","Protein":"0.5 g"}');
+  // brand should be blanked as a true placeholder
+  assert.equal(fields.brand, '');
+  // marketingCompany should be preserved as real
+  assert.equal(fields.marketingCompany, 'Real Company Ltd');
+  // Only brand was blanked
+  assert.deepEqual(blanked, ['brand']);
+});

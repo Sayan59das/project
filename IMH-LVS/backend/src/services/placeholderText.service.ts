@@ -197,9 +197,11 @@ export function scrubPlaceholders<T extends Record<string, string>>(
   const cleaned = { ...fields };
 
   for (const [key, value] of Object.entries(fields)) {
-    // Skip placeholder scrubbing for nutritionTable: it's structured JSON data (from Task 5),
-    // not a simple field name, and should not be subject to placeholder detection which is
-    // meant for fields like brand, productName, etc. that could be template text.
+    // Skip placeholder scrubbing for nutritionTable: it's structured JSON data that should
+    // never be subject to placeholder detection. The WHOLLY_PARENTHETICAL regex
+    // (/^\s*[([{][^)\]}]*[)\]}]\s*$/) matches JSON objects like {"Energy":"12 kcal","Protein":"0.5 g"}
+    // because they contain no inner )]} characters, making them look like (Brand Name) placeholders.
+    // Exempting this field lets geometry-derived nutrition tables survive post-processing.
     if (key === 'nutritionTable') {
       continue;
     }
