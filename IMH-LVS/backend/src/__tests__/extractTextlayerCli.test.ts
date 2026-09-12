@@ -135,6 +135,44 @@ test('corrupt PDF produces a record with null scalars and empty arrays', async (
   assert.equal(record.nutrition_table, null);
 });
 
+test('non-existent PDF path produces a null record with source_file set', async () => {
+  const pdfPath = path.join(__dirname, 'fixtures', 'does-not-exist.pdf');
+  const { stdout, exitCode } = await runCli([pdfPath]);
+
+  assert.equal(exitCode, 0, 'process should still exit 0 for non-existent PDF');
+
+  const records = JSON.parse(stdout);
+  assert(Array.isArray(records), 'stdout should contain a JSON array');
+  assert.equal(records.length, 1, 'should have one record for the input PDF');
+
+  const record = records[0];
+
+  // Verify source_file is set (basename).
+  assert.equal(record.source_file, 'does-not-exist.pdf');
+
+  // Every scalar should be null.
+  assert.equal(record.brand_name, null);
+  assert.equal(record.product_name, null);
+  assert.equal(record.flavour, null);
+  assert.equal(record.fssai_number, null);
+  assert.equal(record.marketing_company, null);
+  assert.equal(record.address, null);
+  assert.equal(record.customer_care_number, null);
+  assert.equal(record.customer_care_email, null);
+  assert.equal(record.package_size, null);
+  assert.equal(record.manufacturing_company, null);
+  assert.equal(record.colour_theme, null);
+  assert.equal(record.logo, null);
+  assert.equal(record.layout, null);
+
+  // Arrays should be empty.
+  assert.deepEqual(record.claims, []);
+  assert.deepEqual(record.ingredients, []);
+
+  // nutrition_table should be null.
+  assert.equal(record.nutrition_table, null);
+});
+
 test('CLI with no arguments exits with code 2 (usage error)', async () => {
   const { exitCode } = await runCli([]);
 

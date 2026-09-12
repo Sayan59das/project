@@ -145,83 +145,18 @@ test('synthetic FSSAI regression: FSSAI number survives the new geometry path un
 // Test that synthetic PDF with nutrition table wires through the text-layer path.
 // Builds a synthetic jsPDF with precise geometry and asserts exact nutrition table extraction.
 test('synthetic nutrition table PDF: nutrition table extracted and wired through', async () => {
-  const { extractTextSpans } = require('../services/pdf.service');
-  const { segmentPanels } = require('../services/textLayerGeometry.service');
-
   const pdfBuffer = buildSyntheticNutritionPdf();
-
-  // Debug: check what text spans are extracted and nutrition table extracted from them
-  try {
-    const spans = await extractTextSpans(pdfBuffer);
-    const panels = segmentPanels(spans);
-    const { extractNutritionTableFromPanels } = require('../services/textLayerGeometry.service');
-    const nutritionTable = extractNutritionTableFromPanels(panels);
-    console.log(`[DEBUG] Synthetic nutrition PDF: ${spans.length} spans, ${panels.length} panels`);
-    console.log('[DEBUG] Extracted nutrition table from panels:', JSON.stringify(nutritionTable));
-  } catch (e) {
-    console.log('[DEBUG] Failed to extract spans:', e instanceof Error ? e.message : e);
-  }
 
   const result = await extractLabelFromTextLayerOnly(pdfBuffer);
 
-  // The nutrition table is correctly extracted from PDF geometry (see DEBUG output),
-  // but is blanked by placeholder scrubbing in postProcessExtractionResult because
-  // the JSON-stringified table matches placeholder detection patterns.
-  // This is a limitation in the current placeholder logic - JSON structured data
-  // should not be subject to placeholder detection.
   const expected = {
     Energy: '12 kcal',
     Protein: '0.5 g',
   };
 
-  if (!result.nutritionTable) {
-    console.log('\n[REPORT] Issue: Synthetic PDF nutrition table blanked by placeholder scrubbing');
-    console.log('[REPORT] The geometry extraction WORKS (see DEBUG output above - table was extracted correctly)');
-    console.log('[REPORT] But postProcessExtractionResult → scrubPlaceholders blanks it');
-    console.log('[REPORT] Root cause: JSON stringified nutrition table matches placeholder pattern');
-    console.log('[REPORT] Expected table:', JSON.stringify(expected));
-    assert.ok(result.nutritionTable,
-      'nutritionTable discarded by placeholder scrubbing. Geometry extraction works but needs ' +
-      'placeholder logic to skip structured data fields like nutritionTable.');
-  }
+  assert.ok(result.nutritionTable, 'nutritionTable must survive postProcessExtractionResult (placeholderText.service exempts it)');
 
   // Parse and assert exact table from brief specification
   const parsed = JSON.parse(result.nutritionTable);
   assert.deepEqual(parsed, expected, 'Extracted nutrition table must match the brief specification exactly');
-});
-
-// Print detailed results for manual inspection and debugging
-test('print extracted fields for all fixtures', { skip: false }, async () => {
-  const fixtures = ['she-arise-gummies.pdf', 'chyawanprash-gummies.pdf', 'apple-cider-vinegar-gummy.pdf', 'sharp-mind-plus-gummies.pdf'];
-
-  console.log('\n=== Extracted Fields by Fixture ===');
-  for (const fixture of fixtures) {
-    try {
-      const result = await extractLabelFromTextLayerOnly(load(fixture));
-      console.log(`\n${fixture}:`);
-      console.log(`  brand: "${result.brand}"`);
-      console.log(`  productName: "${result.productName}"`);
-      console.log(`  marketingCompany: "${result.marketingCompany}"`);
-      console.log(`  fssaiNumber: "${result.fssaiNumber}"`);
-      console.log(`  nutritionTable: ${result.nutritionTable || '(empty)'}`);
-
-      // Validate nutritionTable if present
-      if (result.nutritionTable) {
-        try {
-          const parsed = JSON.parse(result.nutritionTable);
-          const allHaveDigits = Object.values(parsed).every((val: any) =>
-            typeof val === 'string' && /\d/.test(val)
-          );
-          console.log(`  nutritionTable valid JSON: true, all values contain digits: ${allHaveDigits}`);
-        } catch (e) {
-          console.log(`  nutritionTable invalid JSON: ${(e as Error).message}`);
-        }
-      }
-    } catch (error) {
-      console.log(`\n${fixture}: ERROR - ${error instanceof Error ? error.message : String(error)}`);
-    }
-  }
-
-  console.log('\n=== End Fixture Report ===\n');
-  assert.ok(true, 'printing fixture results for review');
 });
