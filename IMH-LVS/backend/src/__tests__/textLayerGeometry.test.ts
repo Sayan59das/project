@@ -9,6 +9,7 @@ import {
   rankDisplayLines,
   segmentPanels,
   toReadingOrderText,
+  extractNutritionTableFromPanels,
   type TextLine,
 } from '../services/textLayerGeometry.service';
 import { extractTextSpans } from '../services/pdf.service';
@@ -260,4 +261,151 @@ test('toReadingOrderText: real fixture she-arise-gummies.pdf', async () => {
   const displayLines = rankDisplayLines(lines);
   assert.ok(displayLines.length > 0);
   assert.ok(displayLines[0].text.includes('She-Arise'));
+});
+
+test('extractNutritionTableFromPanels: header + three two-cell rows', () => {
+  // fontSize 8, y descending by 12 per row; header span width bridges name and value columns
+  const allSpans = [
+    // Header at y=200 with wide width to bridge columns
+    span({ text: 'Nutritional Information', x: 0, y: 200, width: 300, fontSize: 8 }),
+    // Row 1: Energy | 12 kcal
+    span({ text: 'Energy', x: 0, y: 188, width: 50, fontSize: 8 }),
+    span({ text: '12 kcal', x: 200, y: 188, width: 50, fontSize: 8 }),
+    // Row 2: Protein | 0.5 g
+    span({ text: 'Protein', x: 0, y: 176, width: 50, fontSize: 8 }),
+    span({ text: '0.5 g', x: 200, y: 176, width: 50, fontSize: 8 }),
+    // Row 3: Vitamin C | 40 mg (66%)
+    span({ text: 'Vitamin C', x: 0, y: 164, width: 60, fontSize: 8 }),
+    span({ text: '40 mg (66%)', x: 200, y: 164, width: 70, fontSize: 8 }),
+  ];
+  const panels = segmentPanels(allSpans);
+  const result = extractNutritionTableFromPanels(panels);
+
+  assert.deepEqual(result, {
+    Energy: '12 kcal',
+    Protein: '0.5 g',
+    'Vitamin C': '40 mg (66%)',
+  });
+});
+
+test('extractNutritionTableFromPanels: stop at Ingredients', () => {
+  // Header + 2 rows, then "Ingredients:" stops the table
+  const allSpans = [
+    span({ text: 'Nutrition Facts', x: 0, y: 200, width: 300, fontSize: 8 }),
+    span({ text: 'Energy', x: 0, y: 188, width: 50, fontSize: 8 }),
+    span({ text: '12 kcal', x: 200, y: 188, width: 50, fontSize: 8 }),
+    span({ text: 'Protein', x: 0, y: 176, width: 50, fontSize: 8 }),
+    span({ text: '0.5 g', x: 200, y: 176, width: 50, fontSize: 8 }),
+    // This line stops the table
+    span({ text: 'Ingredients: sugar, water', x: 0, y: 164, width: 200, fontSize: 8 }),
+  ];
+  const panels = segmentPanels(allSpans);
+  const result = extractNutritionTableFromPanels(panels);
+
+  assert.deepEqual(result, {
+    Energy: '12 kcal',
+    Protein: '0.5 g',
+  });
+});
+
+test('extractNutritionTableFromPanels: no header returns empty object', () => {
+  const allSpans = [
+    span({ text: 'Energy', x: 0, y: 188, width: 50, fontSize: 8 }),
+    span({ text: '12 kcal', x: 200, y: 188, width: 50, fontSize: 8 }),
+  ];
+  const panels = segmentPanels(allSpans);
+  const result = extractNutritionTableFromPanels(panels);
+
+  assert.deepEqual(result, {});
+});
+
+test('extractNutritionTableFromPanels: one-cell rows with regex extraction', () => {
+  const allSpans = [
+    span({ text: 'Nutrition Information', x: 0, y: 200, width: 300, fontSize: 8 }),
+    // One-cell row: "Vitamin D3 400 IU"
+    span({ text: 'Vitamin D3 400 IU', x: 0, y: 188, width: 120, fontSize: 8 }),
+    // One-cell row with no digit: "Per serving %RDA"
+    span({ text: 'Per serving %RDA', x: 0, y: 176, width: 120, fontSize: 8 }),
+  ];
+  const panels = segmentPanels(allSpans);
+  const result = extractNutritionTableFromPanels(panels);
+
+  assert.deepEqual(result, {
+    'Vitamin D3': '400 IU',
+  });
+});
+
+test('extractNutritionTableFromPanels: rows in different panel not included', () => {
+  // Header in left panel (x 0-300), rows in left panel, then a row in right panel (x 400+)
+  const allSpans = [
+    // Header at x=0 width 300 (left panel only)
+    span({ text: 'Nutrition Facts', x: 0, y: 200, width: 300, fontSize: 8 }),
+    // Row in left panel
+    span({ text: 'Energy', x: 0, y: 188, width: 50, fontSize: 8 }),
+    span({ text: '12 kcal', x: 200, y: 188, width: 50, fontSize: 8 }),
+    // Row in right panel (x 400+) - should NOT be included
+    span({ text: 'Protein', x: 400, y: 188, width: 50, fontSize: 8 }),
+    span({ text: '0.5 g', x: 600, y: 188, width: 50, fontSize: 8 }),
+  ];
+  const panels = segmentPanels(allSpans);
+  const result = extractNutritionTableFromPanels(panels);
+
+  // Should only include the row from the same panel as the header
+  assert.deepEqual(result, {
+    Energy: '12 kcal',
+  });
+});
+
+test('extractNutritionTableFromPanels: repeated name keeps first value', () => {
+  const allSpans = [
+    span({ text: 'Nutrition Information', x: 0, y: 200, width: 300, fontSize: 8 }),
+    span({ text: 'Energy', x: 0, y: 188, width: 50, fontSize: 8 }),
+    span({ text: '12 kcal', x: 200, y: 188, width: 50, fontSize: 8 }),
+    // Duplicate name
+    span({ text: 'Energy', x: 0, y: 176, width: 50, fontSize: 8 }),
+    span({ text: '10 kcal', x: 200, y: 176, width: 50, fontSize: 8 }),
+  ];
+  const panels = segmentPanels(allSpans);
+  const result = extractNutritionTableFromPanels(panels);
+
+  assert.deepEqual(result, {
+    Energy: '12 kcal', // First value is kept
+  });
+});
+
+test('extractNutritionTableFromPanels: real fixture she-arise-gummies.pdf', async () => {
+  const spans = await extractTextSpans(load('she-arise-gummies.pdf'));
+  const panels = segmentPanels(spans);
+  const result = extractNutritionTableFromPanels(panels);
+
+  assert.equal(typeof result, 'object');
+  // Every value should contain a digit
+  for (const [name, value] of Object.entries(result)) {
+    assert.ok(/\d/.test(value), `Value for "${name}" ("${value}") should contain a digit`);
+  }
+  console.log('she-arise-gummies.pdf nutrition table:', JSON.stringify(result, null, 2));
+});
+
+test('extractNutritionTableFromPanels: real fixture chyawanprash-gummies.pdf', async () => {
+  const spans = await extractTextSpans(load('chyawanprash-gummies.pdf'));
+  const panels = segmentPanels(spans);
+  const result = extractNutritionTableFromPanels(panels);
+
+  assert.equal(typeof result, 'object');
+  for (const [name, value] of Object.entries(result)) {
+    assert.ok(/\d/.test(value), `Value for "${name}" ("${value}") should contain a digit`);
+  }
+  console.log('chyawanprash-gummies.pdf nutrition table:', JSON.stringify(result, null, 2));
+});
+
+test('extractNutritionTableFromPanels: real fixture IMH-LVS/Dataset_Example/Multivitamin IRN56-3.pdf', async () => {
+  const spans = await extractTextSpans(load('../../../../Dataset_Example/Multivitamin IRN56-3.pdf'));
+  const panels = segmentPanels(spans);
+  const result = extractNutritionTableFromPanels(panels);
+
+  assert.equal(typeof result, 'object');
+  for (const [name, value] of Object.entries(result)) {
+    assert.ok(/\d/.test(value), `Value for "${name}" ("${value}") should contain a digit`);
+  }
+  console.log('Multivitamin IRN56-3.pdf nutrition table:', JSON.stringify(result, null, 2));
 });

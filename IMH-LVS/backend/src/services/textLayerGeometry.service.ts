@@ -325,3 +325,91 @@ export function toReadingOrderText(spans: readonly TextSpan[]): string {
 
   return panelTexts.join('\n\n');
 }
+
+// Extracts nutrient name -> printed value from the "Nutrition(al) Information" block of one label.
+// Walks panels in order and each panel's lines in order to find the header line (first line matching
+// the nutrition header regex). Candidate rows are lines following the header within the same panel,
+// stopping at the first line matching a section-break keyword or after 40 rows. For each row, cells
+// are split via splitLineIntoCells; a 2+ cell row uses cells[0] as name and rest as value; a 1-cell
+// row is parsed via regex to extract name and value. Rows with no digit in value or empty name are
+// skipped. Names are stored trimmed as printed; repeated names keep their first value.
+export function extractNutritionTableFromPanels(panels: readonly Panel[]): Record<string, string> {
+  // Header regex: matches "Nutrition(al) Information/Facts/Values/Table" or "Nutritional Info"
+  const headerRegex = /\bnutrition(al)?\s+(information|facts|values?|table)\b/i;
+  const nutritionalInfoRegex = /\bnutritional\s+info\b/i;
+
+  // Stop at section-break keywords
+  const stopRegex = /^(ingredients?|allergen|allergy|storage|directions?|dosage|usage|how to use|warning|caution|disclaimer|manufactured|marketed|mfd|mfg|batch|exp|best before)\b/i;
+
+  // Regex for extracting name and value from a single cell. Allows names to end with letters, digits (for vitamins like D3, B12), or closing parens.
+  const singleCellRegex = /^(.+?[A-Za-z0-9\)])\s+(\d[\d.,]*\s*(?:%|mg|mcg|µg|g|kcal|kj|iu|ml|kJ)?.*)$/i;
+
+  let headerPanelIndex = -1;
+  let headerLineIndex = -1;
+
+  // Find the header line
+  for (let panelIdx = 0; panelIdx < panels.length; panelIdx++) {
+    const panel = panels[panelIdx];
+    for (let lineIdx = 0; lineIdx < panel.lines.length; lineIdx++) {
+      const line = panel.lines[lineIdx];
+      if (headerRegex.test(line.text) || nutritionalInfoRegex.test(line.text)) {
+        headerPanelIndex = panelIdx;
+        headerLineIndex = lineIdx;
+        break;
+      }
+    }
+    if (headerPanelIndex !== -1) break;
+  }
+
+  // No header found
+  if (headerPanelIndex === -1) {
+    return {};
+  }
+
+  const result: Record<string, string> = {};
+  const headerPanel = panels[headerPanelIndex];
+
+  // Collect candidate rows from the same panel, starting after the header
+  let rowCount = 0;
+  for (let lineIdx = headerLineIndex + 1; lineIdx < headerPanel.lines.length; lineIdx++) {
+    if (rowCount >= 40) break;
+
+    const line = headerPanel.lines[lineIdx];
+
+    // Check if this line is a section break
+    if (stopRegex.test(line.text)) {
+      break;
+    }
+
+    // Process the row
+    const cells = splitLineIntoCells(line);
+
+    let name: string | null = null;
+    let value: string | null = null;
+
+    if (cells.length >= 2) {
+      // Multi-cell row: name = cells[0], value = rest joined with space
+      name = cells[0].trim();
+      value = cells.slice(1).join(' ');
+    } else if (cells.length === 1) {
+      // Single-cell row: try regex extraction
+      const match = singleCellRegex.exec(cells[0]);
+      if (match) {
+        name = match[1].trim();
+        value = match[2];
+      }
+    }
+
+    // Skip if value has no digit or name is empty
+    if (name && value && /\d/.test(value)) {
+      // Store only if name not already present (keep first value)
+      if (!(name in result)) {
+        result[name] = value;
+      }
+    }
+
+    rowCount++;
+  }
+
+  return result;
+}
