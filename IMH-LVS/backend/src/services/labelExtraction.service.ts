@@ -254,10 +254,26 @@ function fillBlanks(fields: ExtractedLabelFields, patch: Partial<ExtractedLabelF
 // Extract fields from a PDF's text layer using geometry-based text processing.
 // This helper is shared between extractFieldsFromPdf and extractLabelFromTextLayerOnly
 // to avoid duplication of the text-layer extraction pipeline.
-// Returns reading-order text (respects layout), extracted fields from it filled with
-// flattened text fallback, and nutrition table from geometry structure (Task 5).
-// Does NOT fill brand/productName from display text; those blanks must be left for
-// OCR's fill-blanks-only approach to recover small-text marks like brand logos.
+//
+// WHY flattened text is primary, not the reading-order text: the flattened text
+// (pdf.js's own item order via extractPdfText) is the tested baseline every fixture
+// in labels.extract.test.ts was written against. The reading-order text from
+// toReadingOrderText is geometry-aware and gets some things the flattened text
+// can't (multi-column layouts read in the wrong order in the flattened text), but
+// it also joins same-baseline cells that carry different semantic roles — e.g. on
+// the Sharp Mind Plus label, the title "Sharp Mind Plus" and the description text
+// "An Ayurvedic..." share a baseline and land on one reading-order line, so the
+// regex extractor returns the fused "Sharp Mind Plus Gummies An Ayurvedic" instead
+// of the correct "Sharp Mind Plus" the flattened text gives directly. So the
+// flattened pass runs first and the reading-order pass only fills what it left
+// blank, via fillBlanks — additive, never overriding a value the flattened text
+// already found. This should flip once a broader (60-label) scoreboard shows the
+// reading-order text winning more often than it costs; until then, treat it as a
+// second opinion, not the primary source.
+//
+// Returns reading-order text (respects layout, used downstream for claims/
+// ingredients extraction), extracted fields (flattened text primary, reading-order
+// text fills blanks), and nutrition table from geometry structure (Task 5).
 async function extractFieldsFromTextLayer(
   pdfBuffer: Buffer,
   textLayerText: string,
@@ -270,32 +286,36 @@ async function extractFieldsFromTextLayer(
   try {
     const spans = await extractTextSpans(pdfBuffer);
     if (spans.length > 0) {
-      // Use geometry-based text extraction for better field recovery. The reading-order
-      // text is primary because it respects the document's visual layout; the flattened
-      // text layer fills what it missed, as a fallback.
       const panels = segmentPanels(spans);
       orderedText = toReadingOrderText(spans);
 
       debugLog(`Reading-order text (${orderedText.length} chars):\n${orderedText}`);
 
-      // Extract from reading-order text first, then use flattened text to fill blanks.
+      // Flattened text is primary (see WHY comment above); reading-order text is
+      // the patch that fills whatever the flattened pass left blank.
+      const flattenedFields = extractLabelFields(textLayerText, { knownFlavours });
       const orderedFields = extractLabelFields(orderedText, { knownFlavours });
 
-      // Blank brand/productName if they look like OCR garbage before fillBlanks, so the
-      // flattened text (and later OCR) can fill in the correct values. This prevents
-      // garbage-looking title from the reading-order text (e.g., repeated text from a
-      // die-line proof) from blocking the flattened text or OCR's title-region recovery
-      // of small-text brand marks. Post-processing will blank garbage anyway, but only
-      // after OCR has already been skipped, so we blank it here first.
+      // Blank brand/productName on EITHER pass if they look like OCR garbage
+      // before fillBlanks — symmetric treatment, so garbage from one pass never
+      // blocks a genuine value from the other, and garbage never survives into
+      // the merged result even when both passes agree on it. Post-processing
+      // would blank it anyway, but only after OCR has already run (or been
+      // skipped for being "complete"), so it's blanked here first.
+      const cleanedFlattenedFields = { ...flattenedFields };
       const cleanedOrderedFields = { ...orderedFields };
       for (const field of ['brand', 'productName'] as const) {
+        if (cleanedFlattenedFields[field] && looksLikeOcrGarbage(cleanedFlattenedFields[field])) {
+          debugLog(`${field} looks like garbage in flattened text: "${cleanedFlattenedFields[field]}" — blanking before fillBlanks`);
+          cleanedFlattenedFields[field] = '';
+        }
         if (cleanedOrderedFields[field] && looksLikeOcrGarbage(cleanedOrderedFields[field])) {
           debugLog(`${field} looks like garbage in ordered text: "${cleanedOrderedFields[field]}" — blanking before fillBlanks`);
           cleanedOrderedFields[field] = '';
         }
       }
 
-      fields = fillBlanks(cleanedOrderedFields, extractLabelFields(textLayerText, { knownFlavours }));
+      fields = fillBlanks(cleanedFlattenedFields, cleanedOrderedFields);
 
       // Extract nutrition table from the geometry structure (Task 5)
       const extractedTable = extractNutritionTableFromPanels(panels);
