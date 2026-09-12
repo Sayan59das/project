@@ -53,7 +53,7 @@ import {
   extractIngredients,
   extractNutritionTableFormat
 } from './labelSemanticExtractor.service';
-import { segmentPanels, rankDisplayLines, toReadingOrderText, extractNutritionTableFromPanels } from './textLayerGeometry.service';
+import { segmentPanels, toReadingOrderText, extractNutritionTableFromPanels } from './textLayerGeometry.service';
 
 setLabelFieldExtractorDebug(env.labelExtractionDebug);
 
@@ -254,6 +254,10 @@ function fillBlanks(fields: ExtractedLabelFields, patch: Partial<ExtractedLabelF
 // Extract fields from a PDF's text layer using geometry-based text processing.
 // This helper is shared between extractFieldsFromPdf and extractLabelFromTextLayerOnly
 // to avoid duplication of the text-layer extraction pipeline.
+// Returns reading-order text (respects layout), extracted fields from it filled with
+// flattened text fallback, and nutrition table from geometry structure (Task 5).
+// Does NOT fill brand/productName from display text; those blanks must be left for
+// OCR's fill-blanks-only approach to recover small-text marks like brand logos.
 async function extractFieldsFromTextLayer(
   pdfBuffer: Buffer,
   textLayerText: string,
@@ -270,7 +274,6 @@ async function extractFieldsFromTextLayer(
       // text is primary because it respects the document's visual layout; the flattened
       // text layer fills what it missed, as a fallback.
       const panels = segmentPanels(spans);
-      const lines = panels.flatMap((p) => p.lines);
       orderedText = toReadingOrderText(spans);
 
       debugLog(`Reading-order text (${orderedText.length} chars):\n${orderedText}`);
@@ -283,33 +286,6 @@ async function extractFieldsFromTextLayer(
       const extractedTable = extractNutritionTableFromPanels(panels);
       if (Object.keys(extractedTable).length > 0) {
         nutritionTable = extractedTable;
-      }
-
-      // Fill brand and productName from display text (filtered to exclude garbage)
-      // when they are blank OR look like OCR garbage (e.g., repeated text on a die-line proof).
-      if (lines.length > 0) {
-        const display = rankDisplayLines(lines).filter((l) => !looksLikeOcrGarbage(l.text));
-
-        // Fill brand if blank or garbage
-        const isBrandBlank = !fields.brand || looksLikeOcrGarbage(fields.brand);
-        if (isBrandBlank && display.length > 0) {
-          fields.brand = display[0].text;
-          debugLog(`brand filled from display text: "${display[0].text}"`);
-        }
-
-        // Fill productName if blank or garbage
-        const isProductNameBlank = !fields.productName || looksLikeOcrGarbage(fields.productName);
-        if (isProductNameBlank && display.length > 0) {
-          // Find the first display line that differs from brand (case-insensitive)
-          // and is not a generic form word
-          const productLine = display.find(
-            (line) => line.text.toLowerCase() !== fields.brand.toLowerCase() && !isGenericProductFormWord(line.text)
-          );
-          if (productLine) {
-            fields.productName = productLine.text;
-            debugLog(`productName filled from display text: "${productLine.text}"`);
-          }
-        }
       }
     }
   } catch (error) {
@@ -448,7 +424,12 @@ async function extractFieldsFromPdf(pdfBuffer: Buffer, knownFlavours: readonly s
     return { fields: textLayerFields ?? extractLabelFields('', { knownFlavours }), text: orderedText, pageImages: [], nutritionTable };
   }
 
-  let combinedText = orderedText;
+  // Use flattened text (not reading-order text) as priorText for OCR. The reading-order
+  // text respects the visual layout better for field extraction, but OCR's title-region
+  // recovery and other targeted passes work better with the flattened text's simpler
+  // structure. The returned combinedText will be used for semantic extraction (claims,
+  // ingredients, etc.), so we swap back to reading-order text for better structure.
+  let combinedText = textLayerText;
   let fields = textLayerFields ?? extractLabelFields('', { knownFlavours });
   for (const pageImage of pageImages) {
     if (isComplete(fields)) break;
@@ -458,7 +439,12 @@ async function extractFieldsFromPdf(pdfBuffer: Buffer, knownFlavours: readonly s
   }
   debugLog(`Combined text after OCR (${combinedText.length} chars):\n${combinedText}`);
 
-  return { fields, text: combinedText, pageImages, nutritionTable };
+  // For semantic extraction (claims, ingredients), use reading-order text from the geometry
+  // as the primary source, falling back to OCR-augmented text. This respects the visual
+  // layout while still getting the OCR improvements for missing fields.
+  const finalText = [orderedText, combinedText].filter((t) => t.trim().length > 0).join('\n');
+
+  return { fields, text: finalText, pageImages, nutritionTable };
 }
 
 async function extractFieldsFromImage(imageBuffer: Buffer, knownFlavours: readonly string[]): Promise<FieldPass> {

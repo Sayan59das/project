@@ -85,14 +85,15 @@ function buildSyntheticNutritionPdf(): Buffer {
   return Buffer.from(d.output('arraybuffer'));
 }
 
-test('she-arise-gummies.pdf: returns a non-blank brand equal to the biggest span text', async () => {
+test('she-arise-gummies.pdf: brand is blank (real brand is a small mark, OCR recovers it)', async () => {
   const result = await extractLabelFromTextLayerOnly(load('she-arise-gummies.pdf'));
-  // From pdf.service.textSpans.test.ts: the single biggest span is 'She-Arise'
-  // The die-line proof has the brand repeated, so the regex extractor returns
-  // "She-Arise She-Arise". With the amended brief, display-text fill now treats
-  // garbage-looking values as blank and replaces them with the biggest non-garbage
-  // display line, which is the correct single "She-Arise".
-  assert.equal(result.brand.toLowerCase(), 'she-arise', `Expected 'She-Arise', got '${result.brand}'`);
+  // The die-line proof has the product name repeated ("She-Arise She-Arise"), which the
+  // regex extractor returns. Because it looks like garbage, it's blanked by post-processing.
+  // The REAL brand ('Nutrinol') is a small mark in the text layer that is too faint for
+  // the regex extractor to find confidently. The text-layer-only path must leave brand
+  // blank so that OCR's fill-blanks-only approach can use the title-region recovery pass
+  // (which finds the small mark) without being blocked by a pre-filled value.
+  assert.equal(result.brand, '', 'brand must be blank (OCR fills small-text marks with fill-blanks-only)');
 });
 
 test('chyawanprash-gummies.pdf: function resolves with valid result', async () => {
