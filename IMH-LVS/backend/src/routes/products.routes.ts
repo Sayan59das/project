@@ -56,12 +56,17 @@ router.get(
 router.get(
   '/possible-duplicate',
   asyncHandler(async (req, res) => {
-    const { productName, brandName, marketingCompany } = req.query;
+    const { productName, brandName, marketingCompany, fssaiNumber } = req.query;
     if (typeof productName !== 'string' || typeof brandName !== 'string' || typeof marketingCompany !== 'string') {
       sendData(res, null);
       return;
     }
-    const match = await findPossibleDuplicate({ productName, brandName, marketingCompany });
+    const match = await findPossibleDuplicate({
+      productName,
+      brandName,
+      marketingCompany,
+      fssaiNumber: typeof fssaiNumber === 'string' ? fssaiNumber : undefined
+    });
     sendData(res, match ?? null);
   })
 );

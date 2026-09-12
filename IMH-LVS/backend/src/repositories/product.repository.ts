@@ -125,15 +125,24 @@ export async function getProductById(id: string, db: Queryable = getPool()): Pro
 // migration 001) is built on, so this stays sargable. Only the incoming
 // search values are trimmed; createProduct below stores input verbatim
 // (like the frontend did), so stored names have no padding to strip.
+// Product name and brand must match. The marketing company must match too,
+// UNLESS the label's FSSAI licence number matches the product's — a licence
+// is issued to the food business operator, so it identifies the company
+// (which OCR garbles far more often than a 14-digit number) and can stand in
+// for the company string. It never stands in for the name: one licence sits
+// on every product a company markets, so matching on it alone would file a
+// brand-new product as a new version of an unrelated sibling.
 export async function findPossibleDuplicate(
-  input: Pick<ProductInput, 'productName' | 'brandName' | 'marketingCompany'>,
+  input: Pick<ProductInput, 'productName' | 'brandName' | 'marketingCompany'> & { fssaiNumber?: string },
   db: Queryable = getPool()
 ): Promise<Product | undefined> {
+  const fssaiNumber = input.fssaiNumber?.trim() || null;
   const { rows } = await db.query<ProductRow>(
     `SELECT ${PRODUCT_COLUMNS} FROM products
-     WHERE lower(product_name) = lower($1) AND lower(brand_name) = lower($2) AND lower(marketing_company) = lower($3)
+     WHERE lower(product_name) = lower($1) AND lower(brand_name) = lower($2)
+       AND (lower(marketing_company) = lower($3) OR ($4::text IS NOT NULL AND fssai_number = $4))
      LIMIT 1`,
-    [input.productName.trim(), input.brandName.trim(), input.marketingCompany.trim()]
+    [input.productName.trim(), input.brandName.trim(), input.marketingCompany.trim(), fssaiNumber]
   );
   return rows[0] ? mapProduct(rows[0]) : undefined;
 }
