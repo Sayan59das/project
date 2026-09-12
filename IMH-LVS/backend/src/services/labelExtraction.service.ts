@@ -38,7 +38,7 @@
 import fs from 'fs';
 import { env } from '../config/env';
 import { FIXED_MANUFACTURING_COMPANY } from '../config/constants';
-import { extractPdfText, hasUsablePdfText, rasterizePdfPages } from './pdf.service';
+import { extractPdfText, extractTextSpans, hasUsablePdfText, rasterizePdfPages } from './pdf.service';
 import { preprocessForOcr, preprocessForOcrAlt } from './imagePreprocessing.service';
 import { recognizePageWithWords } from './tesseract.service';
 import { extractMarketingCompanyAndAddressFromRegion } from './regionOcr.service';
@@ -53,6 +53,7 @@ import {
   extractIngredients,
   extractNutritionTableFormat
 } from './labelSemanticExtractor.service';
+import { segmentPanels, toReadingOrderText, extractNutritionTableFromPanels } from './textLayerGeometry.service';
 
 setLabelFieldExtractorDebug(env.labelExtractionDebug);
 
@@ -166,11 +167,16 @@ type ExtendedFields = {
  * on the host, a PDF that produced no pages. Colour is then absent rather than
  * guessed, which is the same answer the schema wants for anything unread, and
  * the three text-derived fields are unaffected.
+ *
+ * `nutritionTable` is the structured nutrition data parsed from the PDF's geometry.
+ * It is filled by Task 5 from the text layer's structured layout; here we only
+ * pass it through to the result.
  */
 async function extractExtendedFields(
   text: string,
   pageImage: Buffer | undefined,
-  knownClaims: readonly string[]
+  knownClaims: readonly string[],
+  nutritionTable?: Record<string, string>
 ): Promise<ExtendedFields> {
   const claims = extractClaims(text, knownClaims);
 
@@ -195,9 +201,10 @@ async function extractExtendedFields(
       claims: claims.claims,
       ingredients: extractIngredients(text),
       nutritionTableFormat: extractNutritionTableFormat(text),
-      // Never read from OCR text — see LabelExtractionResult's own comment
-      // on nutritionTable; only the AI backend fallback ever fills this in.
-      nutritionTable: ''
+      // nutritionTable is filled from the PDF's geometry structure (Task 5) or
+      // the AI backend's vision-model fallback. This function only stringifies
+      // what was already extracted; never invents a value.
+      nutritionTable: nutritionTable && Object.keys(nutritionTable).length ? JSON.stringify(nutritionTable) : ''
     },
     unknownClaims: claims.unmatched
   };
@@ -242,6 +249,85 @@ function fillBlanks(fields: ExtractedLabelFields, patch: Partial<ExtractedLabelF
     if (!next[key] || isOverridableProductName) next[key] = value;
   }
   return next;
+}
+
+// Extract fields from a PDF's text layer using geometry-based text processing.
+// This helper is shared between extractFieldsFromPdf and extractLabelFromTextLayerOnly
+// to avoid duplication of the text-layer extraction pipeline.
+//
+// WHY flattened text is primary, not the reading-order text: the flattened text
+// (pdf.js's own item order via extractPdfText) is the tested baseline every fixture
+// in labels.extract.test.ts was written against. The reading-order text from
+// toReadingOrderText is geometry-aware and gets some things the flattened text
+// can't (multi-column layouts read in the wrong order in the flattened text), but
+// it also joins same-baseline cells that carry different semantic roles — e.g. on
+// the Sharp Mind Plus label, the title "Sharp Mind Plus" and the description text
+// "An Ayurvedic..." share a baseline and land on one reading-order line, so the
+// regex extractor returns the fused "Sharp Mind Plus Gummies An Ayurvedic" instead
+// of the correct "Sharp Mind Plus" the flattened text gives directly. So the
+// flattened pass runs first and the reading-order pass only fills what it left
+// blank, via fillBlanks — additive, never overriding a value the flattened text
+// already found. This should flip once a broader (60-label) scoreboard shows the
+// reading-order text winning more often than it costs; until then, treat it as a
+// second opinion, not the primary source.
+//
+// Returns reading-order text (respects layout, used downstream for claims/
+// ingredients extraction), extracted fields (flattened text primary, reading-order
+// text fills blanks), and nutrition table from geometry structure (Task 5).
+async function extractFieldsFromTextLayer(
+  pdfBuffer: Buffer,
+  textLayerText: string,
+  knownFlavours: readonly string[]
+): Promise<{ orderedText: string; fields: ExtractedLabelFields; nutritionTable?: Record<string, string> }> {
+  let orderedText = textLayerText;
+  let fields = extractLabelFields(textLayerText, { knownFlavours });
+  let nutritionTable: Record<string, string> | undefined;
+
+  try {
+    const spans = await extractTextSpans(pdfBuffer);
+    if (spans.length > 0) {
+      const panels = segmentPanels(spans);
+      orderedText = toReadingOrderText(spans);
+
+      debugLog(`Reading-order text (${orderedText.length} chars):\n${orderedText}`);
+
+      // Flattened text is primary (see WHY comment above); reading-order text is
+      // the patch that fills whatever the flattened pass left blank.
+      const flattenedFields = extractLabelFields(textLayerText, { knownFlavours });
+      const orderedFields = extractLabelFields(orderedText, { knownFlavours });
+
+      // Blank brand/productName on EITHER pass if they look like OCR garbage
+      // before fillBlanks — symmetric treatment, so garbage from one pass never
+      // blocks a genuine value from the other, and garbage never survives into
+      // the merged result even when both passes agree on it. Post-processing
+      // would blank it anyway, but only after OCR has already run (or been
+      // skipped for being "complete"), so it's blanked here first.
+      const cleanedFlattenedFields = { ...flattenedFields };
+      const cleanedOrderedFields = { ...orderedFields };
+      for (const field of ['brand', 'productName'] as const) {
+        if (cleanedFlattenedFields[field] && looksLikeOcrGarbage(cleanedFlattenedFields[field])) {
+          debugLog(`${field} looks like garbage in flattened text: "${cleanedFlattenedFields[field]}" — blanking before fillBlanks`);
+          cleanedFlattenedFields[field] = '';
+        }
+        if (cleanedOrderedFields[field] && looksLikeOcrGarbage(cleanedOrderedFields[field])) {
+          debugLog(`${field} looks like garbage in ordered text: "${cleanedOrderedFields[field]}" — blanking before fillBlanks`);
+          cleanedOrderedFields[field] = '';
+        }
+      }
+
+      fields = fillBlanks(cleanedFlattenedFields, cleanedOrderedFields);
+
+      // Extract nutrition table from the geometry structure (Task 5)
+      const extractedTable = extractNutritionTableFromPanels(panels);
+      if (Object.keys(extractedTable).length > 0) {
+        nutritionTable = extractedTable;
+      }
+    }
+  } catch (error) {
+    debugLog(`Failed to extract text spans: ${error instanceof Error ? error.message : error}. Continuing with flattened text.`);
+  }
+
+  return { orderedText, fields, nutritionTable };
 }
 
 // Runs the primary OCR pass over one image (a rasterized PDF page, or the
@@ -333,6 +419,8 @@ type FieldPass = {
   text: string;
   /** Pages this pass happened to rasterize. Empty on the text-layer fast path. */
   pageImages: Buffer[];
+  /** Nutrition table parsed from the PDF's geometry structure. Undefined until Task 5 fills it. */
+  nutritionTable?: Record<string, string>;
 };
 
 async function extractFieldsFromPdf(pdfBuffer: Buffer, knownFlavours: readonly string[]): Promise<FieldPass> {
@@ -340,12 +428,23 @@ async function extractFieldsFromPdf(pdfBuffer: Buffer, knownFlavours: readonly s
   debugLog(`PDF text layer (${textLayerText.length} chars):\n${textLayerText}`);
 
   const textLayerUsable = hasUsablePdfText(textLayerText);
-  const textLayerFields = textLayerUsable ? extractLabelFields(textLayerText, { knownFlavours }) : null;
+
+  // Attempt to extract structured text spans and use reading-order text when available
+  let orderedText = textLayerText;
+  let textLayerFields = textLayerUsable ? extractLabelFields(textLayerText, { knownFlavours }) : null;
+  let nutritionTable: Record<string, string> | undefined;
+
+  if (textLayerUsable) {
+    const result = await extractFieldsFromTextLayer(pdfBuffer, textLayerText, knownFlavours);
+    orderedText = result.orderedText;
+    textLayerFields = result.fields;
+    nutritionTable = result.nutritionTable;
+  }
 
   if (textLayerFields && isComplete(textLayerFields)) {
     // Fast path: nothing was rasterized, so pageImages is empty and the caller
     // rasterizes a single page itself if it still wants colour.
-    return { fields: textLayerFields, text: textLayerText, pageImages: [] };
+    return { fields: textLayerFields, text: orderedText, pageImages: [], nutritionTable };
   }
 
   if (!textLayerUsable) {
@@ -357,9 +456,14 @@ async function extractFieldsFromPdf(pdfBuffer: Buffer, knownFlavours: readonly s
   const pageImages = await rasterizePdfPages(pdfBuffer);
   if (pageImages.length === 0) {
     console.warn('[labelExtraction] No pages could be rasterized for OCR — using text-layer result as-is.');
-    return { fields: textLayerFields ?? extractLabelFields('', { knownFlavours }), text: textLayerText, pageImages: [] };
+    return { fields: textLayerFields ?? extractLabelFields('', { knownFlavours }), text: orderedText, pageImages: [], nutritionTable };
   }
 
+  // Use flattened text (not reading-order text) as priorText for OCR. The reading-order
+  // text respects the visual layout better for field extraction, but OCR's title-region
+  // recovery and other targeted passes work better with the flattened text's simpler
+  // structure. The returned combinedText will be used for semantic extraction (claims,
+  // ingredients, etc.), so we swap back to reading-order text for better structure.
   let combinedText = textLayerText;
   let fields = textLayerFields ?? extractLabelFields('', { knownFlavours });
   for (const pageImage of pageImages) {
@@ -370,7 +474,12 @@ async function extractFieldsFromPdf(pdfBuffer: Buffer, knownFlavours: readonly s
   }
   debugLog(`Combined text after OCR (${combinedText.length} chars):\n${combinedText}`);
 
-  return { fields, text: combinedText, pageImages };
+  // For semantic extraction (claims, ingredients), use reading-order text from the geometry
+  // as the primary source, falling back to OCR-augmented text. This respects the visual
+  // layout while still getting the OCR improvements for missing fields.
+  const finalText = [orderedText, combinedText].filter((t) => t.trim().length > 0).join('\n');
+
+  return { fields, text: finalText, pageImages, nutritionTable };
 }
 
 async function extractFieldsFromImage(imageBuffer: Buffer, knownFlavours: readonly string[]): Promise<FieldPass> {
@@ -378,6 +487,117 @@ async function extractFieldsFromImage(imageBuffer: Buffer, knownFlavours: readon
   debugLog(`OCR text (${text.length} chars):\n${text}`);
   // The upload IS the page image, so colour reads straight off it.
   return { fields, text, pageImages: [imageBuffer] };
+}
+
+// Shared post-processing for extraction results: placeholder scrubbing, garbage
+// detection, AI fallback, and field validation. Extracted into a helper so both
+// extractLabelReportFromFile and extractLabelFromTextLayerOnly share the same
+// pipeline without duplication.
+async function postProcessExtractionResult(
+  result: LabelExtractionResult,
+  fileBuffer: Buffer,
+  mimeType: string,
+  isPdf: boolean
+): Promise<{ result: LabelExtractionResult; discardedFields: string[] }> {
+  // Placeholder scrubbing is first, over the raw result, so it applies uniformly
+  // across all sources.
+  const { fields: scrubbed, blanked } = scrubPlaceholders(result);
+
+  // Only the two name-shaped fields are judged for OCR debris. An address or
+  // an ingredients list legitimately contains runs of short tokens, so the
+  // same rule there would delete real content.
+  for (const field of ['brand', 'productName'] as const) {
+    if (scrubbed[field] !== '' && looksLikeOcrGarbage(scrubbed[field])) {
+      console.warn(
+        `[labelExtraction] Discarded "${scrubbed[field]}" for ${field} — reads as OCR debris from ` +
+          'stylised display type rather than a name.'
+      );
+      scrubbed[field] = '';
+      blanked.push(field);
+    }
+  }
+  if (blanked.length > 0) {
+    console.warn(
+      `[labelExtraction] Discarded artwork-template placeholder text for: ${blanked.join(', ')}. ` +
+        'This file may be a blank template rather than a finished label.'
+    );
+  }
+
+  // The vision model runs last, over the finished result, so it fills what is
+  // still blank after every other path has had its turn, including the fields
+  // the check above just blanked. Running it earlier would have it fill a field
+  // that placeholder text was about to be removed from, and then scrub the
+  // model's answer along with the placeholder.
+  //
+  // A no-op unless AI_EXTRACTION_URL is set, and never throws — see
+  // aiExtraction.service.ts.
+  const ai = await applyAiFallback(scrubbed, { buffer: fileBuffer, mimeType, isPdf });
+  if (ai.filled.length > 0) {
+    console.warn(
+      `[labelExtraction] Filled from the vision model rather than the label's own text: ${ai.filled.join(', ')}. ` +
+        'These values were inferred, not read.'
+    );
+  }
+
+  return { result: ai.result, discardedFields: blanked };
+}
+
+/**
+ * Extract label fields using ONLY the PDF's text layer geometry, without any
+ * rasterization or OCR fallback. Used by Task 4's CLI to test the geometry-based
+ * extraction path in isolation and verify it improves field recovery without
+ * depending on external tools like poppler.
+ *
+ * Returns all-blank fields for PDFs with no usable text layer rather than
+ * throwing, consistent with the overall extraction philosophy: absent data
+ * beats a thrown error.
+ */
+export async function extractLabelFromTextLayerOnly(
+  pdfBuffer: Buffer,
+  knownFlavours: readonly string[] = [],
+  knownClaims: readonly string[] = []
+): Promise<LabelExtractionResult> {
+  try {
+    const { text: textLayerText } = await extractPdfText(pdfBuffer);
+    debugLog(`PDF text layer (${textLayerText.length} chars):\n${textLayerText}`);
+
+    const textLayerUsable = hasUsablePdfText(textLayerText);
+
+    // Try the geometry-based extraction path; fall back to the flattened text
+    // if spans are not available.
+    let text = textLayerText;
+    let fields: ExtractedLabelFields;
+    let nutritionTable: Record<string, string> | undefined;
+
+    if (textLayerUsable) {
+      const result = await extractFieldsFromTextLayer(pdfBuffer, textLayerText, knownFlavours);
+      text = result.orderedText;
+      fields = result.fields;
+      nutritionTable = result.nutritionTable;
+    } else {
+      // No usable text layer; return blank fields
+      fields = extractLabelFields('', { knownFlavours });
+    }
+
+    debugLog(`Parsed fields: ${JSON.stringify(fields)}`);
+
+    // Extract extended fields without a page image (text layer only, no colour)
+    const extended = await extractExtendedFields(text, undefined, knownClaims, nutritionTable);
+    const result = toResult(fields, extended);
+
+    // Post-process the result: placeholder scrubbing, garbage detection, AI fallback
+    const { result: postProcessed } = await postProcessExtractionResult(
+      result,
+      pdfBuffer,
+      'application/pdf',
+      true
+    );
+
+    return postProcessed;
+  } catch (error) {
+    console.error('[labelExtraction] Unexpected error in text-layer-only extraction:', error instanceof Error ? error.message : error);
+    return buildPlaceholderExtraction();
+  }
 }
 
 // The real integration point: reads the uploaded label, runs it through the
@@ -448,51 +668,18 @@ export async function extractLabelReportFromFile(
       }
     }
 
-    const extended = await extractExtendedFields(pass.text, pageImage, knownClaims);
+    const extended = await extractExtendedFields(pass.text, pageImage, knownClaims, pass.nutritionTable);
+    const result = toResult(pass.fields, extended);
 
-    // Placeholder scrubbing is last, over the assembled result, so it applies
-    // to every field from every path — text layer, OCR, and the four extra
-    // parameters — rather than being repeated at each source.
-    const { fields: scrubbed, blanked } = scrubPlaceholders(toResult(pass.fields, extended));
+    // Post-process the result: placeholder scrubbing, garbage detection, AI fallback
+    const { result: postProcessed, discardedFields } = await postProcessExtractionResult(
+      result,
+      fileBuffer,
+      mimeType,
+      isPdf
+    );
 
-    // Only the two name-shaped fields are judged for OCR debris. An address or
-    // an ingredients list legitimately contains runs of short tokens, so the
-    // same rule there would delete real content.
-    for (const field of ['brand', 'productName'] as const) {
-      if (scrubbed[field] !== '' && looksLikeOcrGarbage(scrubbed[field])) {
-        console.warn(
-          `[labelExtraction] Discarded "${scrubbed[field]}" for ${field} — reads as OCR debris from ` +
-            'stylised display type rather than a name.'
-        );
-        scrubbed[field] = '';
-        blanked.push(field);
-      }
-    }
-    if (blanked.length > 0) {
-      console.warn(
-        `[labelExtraction] Discarded artwork-template placeholder text for: ${blanked.join(', ')}. ` +
-          'This file may be a blank template rather than a finished label.'
-      );
-    }
-
-    // The vision model runs LAST, over the finished result, for the same
-    // reason placeholder scrubbing does: it fills what is still blank after
-    // every other path has had its turn, including the fields the two checks
-    // above just blanked. Running it earlier would have it fill a field that
-    // placeholder text was about to be removed from, and then scrub the
-    // model's answer along with the placeholder.
-    //
-    // A no-op unless AI_EXTRACTION_URL is set, and never throws — see
-    // aiExtraction.service.ts.
-    const ai = await applyAiFallback(scrubbed, { buffer: fileBuffer, mimeType, isPdf });
-    if (ai.filled.length > 0) {
-      console.warn(
-        `[labelExtraction] Filled from the vision model rather than the label's own text: ${ai.filled.join(', ')}. ` +
-          'These values were inferred, not read.'
-      );
-    }
-
-    return { result: ai.result, unknownClaims: extended.unknownClaims, discardedFields: blanked };
+    return { result: postProcessed, unknownClaims: extended.unknownClaims, discardedFields };
   } catch (error) {
     console.error('[labelExtraction] Unexpected error during label extraction:', error instanceof Error ? error.message : error);
     return { result: buildPlaceholderExtraction(), unknownClaims: [], discardedFields: [] };
