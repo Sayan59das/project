@@ -387,7 +387,6 @@ test('extractNutritionTableFromPanels: real fixture she-arise-gummies.pdf', asyn
   for (const [name, value] of Object.entries(result)) {
     assert.ok(/\d/.test(value), `Value for "${name}" ("${value}") should contain a digit`);
   }
-  console.log('she-arise-gummies.pdf nutrition table:', JSON.stringify(result, null, 2));
 });
 
 test('extractNutritionTableFromPanels: real fixture chyawanprash-gummies.pdf', async () => {
@@ -399,7 +398,6 @@ test('extractNutritionTableFromPanels: real fixture chyawanprash-gummies.pdf', a
   for (const [name, value] of Object.entries(result)) {
     assert.ok(/\d/.test(value), `Value for "${name}" ("${value}") should contain a digit`);
   }
-  console.log('chyawanprash-gummies.pdf nutrition table:', JSON.stringify(result, null, 2));
 });
 
 test('extractNutritionTableFromPanels: real fixture IMH-LVS/Dataset_Example/Multivitamin IRN56-3.pdf', async () => {
@@ -411,7 +409,6 @@ test('extractNutritionTableFromPanels: real fixture IMH-LVS/Dataset_Example/Mult
   for (const [name, value] of Object.entries(result)) {
     assert.ok(/\d/.test(value), `Value for "${name}" ("${value}") should contain a digit`);
   }
-  console.log('Multivitamin IRN56-3.pdf nutrition table:', JSON.stringify(result, null, 2));
 });
 
 test('extractNutritionTableFromPanels: value cleanup strips trailing %-column tokens', () => {
