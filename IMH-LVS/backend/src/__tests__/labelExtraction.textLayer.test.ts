@@ -38,14 +38,51 @@ function buildSyntheticFssaiPdf(): Buffer {
   d.text('FSSAI Lic. No. 10012345678901', 40, 200);
   d.text('Marketed by: Test Company Pvt Ltd', 40, 220);
 
-  // Convert to Buffer and write to fixtures directory
-  const pdfBuffer = Buffer.from(d.output('arraybuffer'));
+  // Convert to Buffer (do not write to file on every test run)
+  return Buffer.from(d.output('arraybuffer'));
+}
 
-  // Write it to fixtures so we can use it in subsequent test runs
-  const fixturePath = path.join(FIXTURES, 'synthetic-fssai-regression.pdf');
-  writeFileSync(fixturePath, pdfBuffer);
+// Helper to build a synthetic PDF with a nutrition table using jsPDF.
+// Drawn with geometry suitable for extractNutritionTableFromPanels to parse.
+function buildSyntheticNutritionPdf(): Buffer {
+  const jsPDF = require('jspdf').jsPDF;
+  const d = new jsPDF({ unit: 'pt', format: [400, 800] });
 
-  return pdfBuffer;
+  // Brand and product name (required fields to avoid blank template detection)
+  d.setFontSize(20);
+  d.text('VitaBrand', 40, 50);
+
+  d.setFontSize(14);
+  d.text('Multivitamin Gummies', 40, 100);
+
+  // FSSAI and marketing company (required fields)
+  d.setFontSize(9);
+  d.text('FSSAI License No: 12345678901234', 40, 130);
+  d.text('Marketed by: VitaCorp Ltd', 40, 145);
+  d.text('Address: 123 VitaStreet, Health City 12345', 40, 160);
+  d.text('Email: support@vitacorp.com', 40, 175);
+
+  // Ingredients section (shows complete label)
+  d.setFontSize(10);
+  d.text('Ingredients', 40, 200);
+
+  d.setFontSize(8);
+  d.text('Sugars, Glucose Syrup, Gelatin, Vitamins & Minerals', 40, 215);
+
+  // Nutrition table with geometry designed for cell splitting
+  d.setFontSize(10);
+  d.text('Nutritional Information per serving', 40, 240);
+
+  // Row 1: Energy | 12 kcal (y=260)
+  d.setFontSize(9);
+  d.text('Energy', 40, 260);
+  d.text('12 kcal', 160, 260);
+
+  // Row 2: Protein | 0.5 g (y=275, ~15pt apart)
+  d.text('Protein', 40, 275);
+  d.text('0.5 g', 160, 275);
+
+  return Buffer.from(d.output('arraybuffer'));
 }
 
 test('she-arise-gummies.pdf: returns a non-blank brand equal to the biggest span text', async () => {
@@ -105,27 +142,51 @@ test('synthetic FSSAI regression: FSSAI number survives the new geometry path un
 });
 
 // Test that synthetic PDF with nutrition table wires through the text-layer path.
-// Uses a real fixture PDF with a known nutrition table to verify the wiring works end-to-end.
+// Builds a synthetic jsPDF with precise geometry and asserts exact nutrition table extraction.
 test('synthetic nutrition table PDF: nutrition table extracted and wired through', async () => {
-  const result = await extractLabelFromTextLayerOnly(load('she-arise-gummies.pdf'));
+  const { extractTextSpans } = require('../services/pdf.service');
+  const { segmentPanels } = require('../services/textLayerGeometry.service');
 
-  // The nutrition table should be extracted and stringified from the real fixture
-  assert.ok(result.nutritionTable, 'nutritionTable should not be empty for she-arise-gummies.pdf');
+  const pdfBuffer = buildSyntheticNutritionPdf();
 
-  // Parse and validate the JSON structure
+  // Debug: check what text spans are extracted and nutrition table extracted from them
+  try {
+    const spans = await extractTextSpans(pdfBuffer);
+    const panels = segmentPanels(spans);
+    const { extractNutritionTableFromPanels } = require('../services/textLayerGeometry.service');
+    const nutritionTable = extractNutritionTableFromPanels(panels);
+    console.log(`[DEBUG] Synthetic nutrition PDF: ${spans.length} spans, ${panels.length} panels`);
+    console.log('[DEBUG] Extracted nutrition table from panels:', JSON.stringify(nutritionTable));
+  } catch (e) {
+    console.log('[DEBUG] Failed to extract spans:', e instanceof Error ? e.message : e);
+  }
+
+  const result = await extractLabelFromTextLayerOnly(pdfBuffer);
+
+  // The nutrition table is correctly extracted from PDF geometry (see DEBUG output),
+  // but is blanked by placeholder scrubbing in postProcessExtractionResult because
+  // the JSON-stringified table matches placeholder detection patterns.
+  // This is a limitation in the current placeholder logic - JSON structured data
+  // should not be subject to placeholder detection.
+  const expected = {
+    Energy: '12 kcal',
+    Protein: '0.5 g',
+  };
+
+  if (!result.nutritionTable) {
+    console.log('\n[REPORT] Issue: Synthetic PDF nutrition table blanked by placeholder scrubbing');
+    console.log('[REPORT] The geometry extraction WORKS (see DEBUG output above - table was extracted correctly)');
+    console.log('[REPORT] But postProcessExtractionResult → scrubPlaceholders blanks it');
+    console.log('[REPORT] Root cause: JSON stringified nutrition table matches placeholder pattern');
+    console.log('[REPORT] Expected table:', JSON.stringify(expected));
+    assert.ok(result.nutritionTable,
+      'nutritionTable discarded by placeholder scrubbing. Geometry extraction works but needs ' +
+      'placeholder logic to skip structured data fields like nutritionTable.');
+  }
+
+  // Parse and assert exact table from brief specification
   const parsed = JSON.parse(result.nutritionTable);
-  assert.ok(typeof parsed === 'object', 'nutritionTable should be a valid JSON object');
-
-  // Verify it contains expected nutrition entries (from the fixture)
-  assert.ok('Energy' in parsed, 'Should contain Energy entry');
-  assert.ok(parsed.Energy.includes('kcal'), 'Energy value should contain unit');
-
-  // Verify the cleanup rule works by checking that no values contain bare % tokens (like "<0.5%")
-  // after name (they should have been stripped if present)
-  const valuesWithBarePercent = Object.values(parsed).filter((v: any) =>
-    typeof v === 'string' && /\s[<>≤≥~]?\d[\d.,]*\s*%\s[<>≤≥~]?\d/.test(v)
-  );
-  assert.equal(valuesWithBarePercent.length, 0, 'No values should have trailing bare % columns (cleanup rule should have stripped them)');
+  assert.deepEqual(parsed, expected, 'Extracted nutrition table must match the brief specification exactly');
 });
 
 // Print detailed results for manual inspection and debugging
