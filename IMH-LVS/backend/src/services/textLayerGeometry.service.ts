@@ -330,9 +330,12 @@ export function toReadingOrderText(spans: readonly TextSpan[]): string {
 // Walks panels in order and each panel's lines in order to find the header line (first line matching
 // the nutrition header regex). Candidate rows are lines following the header within the same panel,
 // stopping at the first line matching a section-break keyword or after 40 rows. For each row, cells
-// are split via splitLineIntoCells; a 2+ cell row uses cells[0] as name and rest as value; a 1-cell
-// row is parsed via regex to extract name and value. Rows with no digit in value or empty name are
-// skipped. Names are stored trimmed as printed; repeated names keep their first value.
+// are split via splitLineIntoCells; a 2+ cell row uses cells[0] as name and cells[1] as value only
+// (cells[2+] are %RDA/%DV columns, a different fact from the printed amount). A 1-cell row is parsed
+// via regex to extract name and value. Rows where the value does not START with an optional comparison
+// operator (<, >, ≤, ≥, ~) followed by whitespace and a digit are skipped; so "in Adults (18 years
+// & above)" is skipped but "<0.5%" and "0 g" pass. Names are stored trimmed as printed; repeated
+// names keep their first value.
 export function extractNutritionTableFromPanels(panels: readonly Panel[]): Record<string, string> {
   // Header regex: matches "Nutrition(al) Information/Facts/Values/Table" or "Nutritional Info"
   const headerRegex = /\bnutrition(al)?\s+(information|facts|values?|table)\b/i;
@@ -343,6 +346,9 @@ export function extractNutritionTableFromPanels(panels: readonly Panel[]): Recor
 
   // Regex for extracting name and value from a single cell. Allows names to end with letters, digits (for vitamins like D3, B12), or closing parens.
   const singleCellRegex = /^(.+?[A-Za-z0-9\)])\s+(\d[\d.,]*\s*(?:%|mg|mcg|µg|g|kcal|kj|iu|ml|kJ)?.*)$/i;
+
+  // Regex to validate that a value STARTS with an optional comparison operator and then a digit
+  const valueStartsWithNumberRegex = /^[<>≤≥~]?\s*\d/;
 
   let headerPanelIndex = -1;
   let headerLineIndex = -1;
@@ -388,9 +394,9 @@ export function extractNutritionTableFromPanels(panels: readonly Panel[]): Recor
     let value: string | null = null;
 
     if (cells.length >= 2) {
-      // Multi-cell row: name = cells[0], value = rest joined with space
+      // Multi-cell row: name = cells[0], value = cells[1] ONLY (cells[2+] are %RDA/%DV columns)
       name = cells[0].trim();
-      value = cells.slice(1).join(' ');
+      value = cells[1];
     } else if (cells.length === 1) {
       // Single-cell row: try regex extraction
       const match = singleCellRegex.exec(cells[0]);
@@ -400,8 +406,8 @@ export function extractNutritionTableFromPanels(panels: readonly Panel[]): Recor
       }
     }
 
-    // Skip if value has no digit or name is empty
-    if (name && value && /\d/.test(value)) {
+    // Skip if value does not START with a number (with optional comparison operator) or name is empty
+    if (name && value && valueStartsWithNumberRegex.test(value)) {
       // Store only if name not already present (keep first value)
       if (!(name in result)) {
         result[name] = value;

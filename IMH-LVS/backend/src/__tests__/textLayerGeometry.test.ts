@@ -263,7 +263,7 @@ test('toReadingOrderText: real fixture she-arise-gummies.pdf', async () => {
   assert.ok(displayLines[0].text.includes('She-Arise'));
 });
 
-test('extractNutritionTableFromPanels: header + three two-cell rows', () => {
+test('extractNutritionTableFromPanels: header + two two-cell rows and one three-cell row', () => {
   // fontSize 8, y descending by 12 per row; header span width bridges name and value columns
   const allSpans = [
     // Header at y=200 with wide width to bridge columns
@@ -274,9 +274,10 @@ test('extractNutritionTableFromPanels: header + three two-cell rows', () => {
     // Row 2: Protein | 0.5 g
     span({ text: 'Protein', x: 0, y: 176, width: 50, fontSize: 8 }),
     span({ text: '0.5 g', x: 200, y: 176, width: 50, fontSize: 8 }),
-    // Row 3: Vitamin C | 40 mg (66%)
+    // Row 3: Vitamin C | 40 mg | 66% (three cells; %RDA column should be dropped)
     span({ text: 'Vitamin C', x: 0, y: 164, width: 60, fontSize: 8 }),
-    span({ text: '40 mg (66%)', x: 200, y: 164, width: 70, fontSize: 8 }),
+    span({ text: '40 mg', x: 200, y: 164, width: 50, fontSize: 8 }),
+    span({ text: '66%', x: 270, y: 164, width: 30, fontSize: 8 }),
   ];
   const panels = segmentPanels(allSpans);
   const result = extractNutritionTableFromPanels(panels);
@@ -284,7 +285,7 @@ test('extractNutritionTableFromPanels: header + three two-cell rows', () => {
   assert.deepEqual(result, {
     Energy: '12 kcal',
     Protein: '0.5 g',
-    'Vitamin C': '40 mg (66%)',
+    'Vitamin C': '40 mg',
   });
 });
 
@@ -319,13 +320,16 @@ test('extractNutritionTableFromPanels: no header returns empty object', () => {
   assert.deepEqual(result, {});
 });
 
-test('extractNutritionTableFromPanels: one-cell rows with regex extraction', () => {
+test('extractNutritionTableFromPanels: one-cell rows and skipped rows', () => {
   const allSpans = [
     span({ text: 'Nutrition Information', x: 0, y: 200, width: 300, fontSize: 8 }),
-    // One-cell row: "Vitamin D3 400 IU"
+    // One-cell row: "Vitamin D3 400 IU" (has digit at start, should be included)
     span({ text: 'Vitamin D3 400 IU', x: 0, y: 188, width: 120, fontSize: 8 }),
-    // One-cell row with no digit: "Per serving %RDA"
+    // One-cell row with no digit: "Per serving %RDA" (no digit, skipped)
     span({ text: 'Per serving %RDA', x: 0, y: 176, width: 120, fontSize: 8 }),
+    // Two-cell row that should be skipped: value doesn't start with a digit
+    span({ text: 'Per Serving', x: 0, y: 164, width: 70, fontSize: 8 }),
+    span({ text: 'in Adults (18 years & above)', x: 200, y: 164, width: 120, fontSize: 8 }),
   ];
   const panels = segmentPanels(allSpans);
   const result = extractNutritionTableFromPanels(panels);
