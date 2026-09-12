@@ -280,7 +280,22 @@ async function extractFieldsFromTextLayer(
 
       // Extract from reading-order text first, then use flattened text to fill blanks.
       const orderedFields = extractLabelFields(orderedText, { knownFlavours });
-      fields = fillBlanks(orderedFields, extractLabelFields(textLayerText, { knownFlavours }));
+
+      // Blank brand/productName if they look like OCR garbage before fillBlanks, so the
+      // flattened text (and later OCR) can fill in the correct values. This prevents
+      // garbage-looking title from the reading-order text (e.g., repeated text from a
+      // die-line proof) from blocking the flattened text or OCR's title-region recovery
+      // of small-text brand marks. Post-processing will blank garbage anyway, but only
+      // after OCR has already been skipped, so we blank it here first.
+      const cleanedOrderedFields = { ...orderedFields };
+      for (const field of ['brand', 'productName'] as const) {
+        if (cleanedOrderedFields[field] && looksLikeOcrGarbage(cleanedOrderedFields[field])) {
+          debugLog(`${field} looks like garbage in ordered text: "${cleanedOrderedFields[field]}" — blanking before fillBlanks`);
+          cleanedOrderedFields[field] = '';
+        }
+      }
+
+      fields = fillBlanks(cleanedOrderedFields, extractLabelFields(textLayerText, { knownFlavours }));
 
       // Extract nutrition table from the geometry structure (Task 5)
       const extractedTable = extractNutritionTableFromPanels(panels);

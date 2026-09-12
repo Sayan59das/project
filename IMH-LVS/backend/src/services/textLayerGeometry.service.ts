@@ -313,6 +313,10 @@ export function segmentPanels(spans: readonly TextSpan[]): Panel[] {
 // Converts spans to reading-order text via panels, with lines and panels separated.
 // Calls segmentPanels directly on spans to enable gutter detection at the span level,
 // then groups lines within each panel and formats output.
+// For nutrition rows and wide-gap multi-cell lines, splitLineIntoCells would emit cells
+// as separate lines, but that breaks normal multi-word fields (brand names, descriptions).
+// So this stays with the space-joined line.text approach; the garbage-blanking logic in
+// extractFieldsFromTextLayer handles the die-line-proof duplication case separately.
 export function toReadingOrderText(spans: readonly TextSpan[]): string {
   if (spans.length === 0) return '';
 
