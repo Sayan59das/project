@@ -31,9 +31,14 @@ textlayer/pipeline are wired into the CLI now but raise a clear error until
 those phases exist — see run_textlayer_mode/run_pipeline_mode below.
 
 Run from ai_backend/: `python eval/score.py --mode ai`
+
+Environment variables:
+    EVAL_LABEL_PDF_DIR      Directory containing source PDF files for textlayer mode
+                            (default: ai_backend/finetune/source_labels)
 """
 import argparse
 import json
+import os
 import subprocess
 import sys
 from collections import defaultdict
@@ -277,11 +282,60 @@ def run_ai_mode():
 
 
 def run_textlayer_mode():
-    raise NotImplementedError(
-        "textlayer mode needs backend/src/services/pdf.service.ts's extractTextSpans() "
-        "and the field-candidate logic built in Phase C of the extraction rebuild plan "
-        "(see README.md) — not built yet."
-    )
+    """Runs the text-layer-only extraction pipeline (Node CLI via
+    backend/scripts/extract-textlayer.ts) over every ground-truth label's PDF,
+    merging predictions per sourceFile the same way merge_label_pages()
+    combines ground truth, so the comparison is apples-to-apples.
+
+    PDFs are read from EVAL_LABEL_PDF_DIR, which defaults to ai_backend's
+    finetune/source_labels directory but can be overridden via the
+    EVAL_LABEL_PDF_DIR environment variable. The CLI is invoked ONCE with
+    all available PDFs and returns a JSON array of extraction results."""
+    ground_truth = load_ground_truth()
+
+    # Determine PDF directory from environment or default.
+    label_pdf_dir = Path(os.environ.get("EVAL_LABEL_PDF_DIR", AI_BACKEND_DIR / "finetune" / "source_labels"))
+
+    # Collect PDFs that exist for labels in ground truth.
+    pdf_paths = []
+    for source_file in ground_truth.keys():
+        pdf_path = label_pdf_dir / source_file
+        if pdf_path.is_file():
+            pdf_paths.append(pdf_path)
+        else:
+            print(f"  WARNING: no PDF for {source_file}, skipping", file=sys.stderr)
+
+    if not pdf_paths:
+        raise SystemExit(f"No PDFs found in {label_pdf_dir} — please check the directory exists and contains PDFs")
+
+    # Run the Node CLI subprocess to extract text layer data.
+    # Derive backend directory from ai_backend's parent.
+    backend_dir = AI_BACKEND_DIR.parent / "backend"
+    cmd = ["node", "-r", "tsx/cjs", "scripts/extract-textlayer.ts", *[str(p) for p in pdf_paths]]
+
+    try:
+        result = subprocess.run(cmd, cwd=backend_dir, capture_output=True, text=True, check=True)
+    except subprocess.CalledProcessError as e:
+        raise SystemExit(f"Text layer extraction failed: {e.stderr}")
+
+    # Parse the JSON array and build predictions by source file.
+    try:
+        records = json.loads(result.stdout)
+    except json.JSONDecodeError as e:
+        raise SystemExit(f"Failed to parse extraction output as JSON: {e}")
+
+    predictions_by_source = {}
+    for record in records:
+        # Pop source_file since it's a key, not a field in the prediction dict.
+        source_file = record.pop("source_file")
+
+        # Normalize nutrition_table to empty dict when null (so score_field sees a dict).
+        if record.get("nutrition_table") is None:
+            record["nutrition_table"] = {}
+
+        predictions_by_source[source_file] = record
+
+    return predictions_by_source, ground_truth
 
 
 def run_pipeline_mode():

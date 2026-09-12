@@ -5,14 +5,17 @@
 # Run from ai_backend/: `python -m pytest tests/test_score.py`
 import sys
 from pathlib import Path
+from unittest.mock import Mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "eval"))
 
 import json
 
+import pytest
+
 import score
-from score import aggregate, load_ground_truth, merge_label_pages, normalize, score_field, write_results_md
+from score import aggregate, load_ground_truth, merge_label_pages, normalize, score_field, write_results_md, run_textlayer_mode
 
 
 class TestNormalize:
@@ -245,3 +248,101 @@ class TestWriteResultsMd:
         text = results_path.read_text(encoding="utf-8")
         assert "X.pdf" in text
         assert "10 Gummies" in text and "30 Gummies" in text
+
+
+class TestRunTextlayerMode:
+    def test_extracts_and_returns_predictions_with_normalized_nutrition_table(self, tmp_path, monkeypatch):
+        # Mock load_ground_truth to return two labels.
+        stub_ground_truth = {
+            "A.pdf": ({"brand_name": "X"}, [("a_p1", 1)], []),
+            "B.pdf": ({"brand_name": "Y"}, [("b_p1", 1)], []),
+        }
+        monkeypatch.setattr(score, "load_ground_truth", lambda: stub_ground_truth)
+
+        # Create temp directory with empty PDF files matching ground truth sources.
+        pdf_dir = tmp_path / "pdfs"
+        pdf_dir.mkdir()
+        (pdf_dir / "A.pdf").touch()
+        (pdf_dir / "B.pdf").touch()
+
+        # Mock subprocess.run to return canned JSON with one record having null nutrition_table.
+        canned_output = json.dumps([
+            {
+                "source_file": "A.pdf",
+                "brand_name": "X",
+                "product_name": "Product A",
+                "nutrition_table": None,
+                "flavour": None,
+                "fssai_number": None,
+                "marketing_company": None,
+                "address": None,
+                "customer_care_number": None,
+                "customer_care_email": None,
+                "package_size": None,
+                "manufacturing_company": None,
+                "claims": [],
+                "ingredients": [],
+                "colour_theme": None,
+                "logo": None,
+                "layout": None,
+            },
+            {
+                "source_file": "B.pdf",
+                "brand_name": "Y",
+                "product_name": "Product B",
+                "nutrition_table": {"Calories": "100 kcal"},
+                "flavour": None,
+                "fssai_number": None,
+                "marketing_company": None,
+                "address": None,
+                "customer_care_number": None,
+                "customer_care_email": None,
+                "package_size": None,
+                "manufacturing_company": None,
+                "claims": [],
+                "ingredients": [],
+                "colour_theme": None,
+                "logo": None,
+                "layout": None,
+            }
+        ])
+
+        mock_subprocess = Mock()
+        mock_subprocess.run = Mock(return_value=Mock(stdout=canned_output, returncode=0))
+        monkeypatch.setattr(score, "subprocess", mock_subprocess)
+
+        # Set environment variable for PDF directory.
+        monkeypatch.setenv("EVAL_LABEL_PDF_DIR", str(pdf_dir))
+
+        # Call the function.
+        predictions, ground_truth = run_textlayer_mode()
+
+        # Verify predictions are keyed by source file with nutrition_table normalized.
+        assert "A.pdf" in predictions
+        assert "B.pdf" in predictions
+        assert predictions["A.pdf"]["nutrition_table"] == {}  # null was normalized to {}
+        assert predictions["B.pdf"]["nutrition_table"] == {"Calories": "100 kcal"}
+        assert predictions["A.pdf"]["brand_name"] == "X"
+        assert predictions["B.pdf"]["brand_name"] == "Y"
+
+        # Verify ground truth is returned as-is.
+        assert ground_truth == stub_ground_truth
+
+    def test_raises_system_exit_when_no_pdfs_found(self, tmp_path, monkeypatch):
+        # Mock load_ground_truth to return ground truth.
+        stub_ground_truth = {
+            "A.pdf": ({"brand_name": "X"}, [("a_p1", 1)], []),
+        }
+        monkeypatch.setattr(score, "load_ground_truth", lambda: stub_ground_truth)
+
+        # Create an empty PDF directory (no PDFs for the ground truth files).
+        pdf_dir = tmp_path / "empty_pdfs"
+        pdf_dir.mkdir()
+
+        monkeypatch.setenv("EVAL_LABEL_PDF_DIR", str(pdf_dir))
+
+        # Should raise SystemExit with a message naming the directory.
+        with pytest.raises(SystemExit) as exc_info:
+            run_textlayer_mode()
+
+        assert str(pdf_dir) in str(exc_info.value)
