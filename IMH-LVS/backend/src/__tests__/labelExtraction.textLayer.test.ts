@@ -9,8 +9,6 @@
 //   - apple-cider-vinegar-gummy.pdf: real project label
 //   - sharp-mind-plus-gummies.pdf: real project label
 //   - scanned-label.pdf: no text layer; should return blank fields, not throw
-//   - synthetic-fssai-regression.pdf: synthetic label with FSSAI number in
-//     flattened text order; verifies it survives the new path unchanged
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'fs';
