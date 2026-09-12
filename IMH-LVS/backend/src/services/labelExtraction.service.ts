@@ -53,7 +53,7 @@ import {
   extractIngredients,
   extractNutritionTableFormat
 } from './labelSemanticExtractor.service';
-import { segmentPanels, rankDisplayLines, toReadingOrderText } from './textLayerGeometry.service';
+import { segmentPanels, rankDisplayLines, toReadingOrderText, extractNutritionTableFromPanels } from './textLayerGeometry.service';
 
 setLabelFieldExtractorDebug(env.labelExtractionDebug);
 
@@ -258,9 +258,10 @@ async function extractFieldsFromTextLayer(
   pdfBuffer: Buffer,
   textLayerText: string,
   knownFlavours: readonly string[]
-): Promise<{ orderedText: string; fields: ExtractedLabelFields }> {
+): Promise<{ orderedText: string; fields: ExtractedLabelFields; nutritionTable?: Record<string, string> }> {
   let orderedText = textLayerText;
   let fields = extractLabelFields(textLayerText, { knownFlavours });
+  let nutritionTable: Record<string, string> | undefined;
 
   try {
     const spans = await extractTextSpans(pdfBuffer);
@@ -277,6 +278,12 @@ async function extractFieldsFromTextLayer(
       // Extract from reading-order text first, then use flattened text to fill blanks.
       const orderedFields = extractLabelFields(orderedText, { knownFlavours });
       fields = fillBlanks(orderedFields, extractLabelFields(textLayerText, { knownFlavours }));
+
+      // Extract nutrition table from the geometry structure (Task 5)
+      const extractedTable = extractNutritionTableFromPanels(panels);
+      if (Object.keys(extractedTable).length > 0) {
+        nutritionTable = extractedTable;
+      }
 
       // Fill brand and productName from display text (filtered to exclude garbage)
       // when they are blank OR look like OCR garbage (e.g., repeated text on a die-line proof).
@@ -309,7 +316,7 @@ async function extractFieldsFromTextLayer(
     debugLog(`Failed to extract text spans: ${error instanceof Error ? error.message : error}. Continuing with flattened text.`);
   }
 
-  return { orderedText, fields };
+  return { orderedText, fields, nutritionTable };
 }
 
 // Runs the primary OCR pass over one image (a rasterized PDF page, or the
@@ -414,17 +421,19 @@ async function extractFieldsFromPdf(pdfBuffer: Buffer, knownFlavours: readonly s
   // Attempt to extract structured text spans and use reading-order text when available
   let orderedText = textLayerText;
   let textLayerFields = textLayerUsable ? extractLabelFields(textLayerText, { knownFlavours }) : null;
+  let nutritionTable: Record<string, string> | undefined;
 
   if (textLayerUsable) {
     const result = await extractFieldsFromTextLayer(pdfBuffer, textLayerText, knownFlavours);
     orderedText = result.orderedText;
     textLayerFields = result.fields;
+    nutritionTable = result.nutritionTable;
   }
 
   if (textLayerFields && isComplete(textLayerFields)) {
     // Fast path: nothing was rasterized, so pageImages is empty and the caller
     // rasterizes a single page itself if it still wants colour.
-    return { fields: textLayerFields, text: orderedText, pageImages: [] };
+    return { fields: textLayerFields, text: orderedText, pageImages: [], nutritionTable };
   }
 
   if (!textLayerUsable) {
@@ -436,7 +445,7 @@ async function extractFieldsFromPdf(pdfBuffer: Buffer, knownFlavours: readonly s
   const pageImages = await rasterizePdfPages(pdfBuffer);
   if (pageImages.length === 0) {
     console.warn('[labelExtraction] No pages could be rasterized for OCR — using text-layer result as-is.');
-    return { fields: textLayerFields ?? extractLabelFields('', { knownFlavours }), text: orderedText, pageImages: [] };
+    return { fields: textLayerFields ?? extractLabelFields('', { knownFlavours }), text: orderedText, pageImages: [], nutritionTable };
   }
 
   let combinedText = orderedText;
@@ -449,7 +458,7 @@ async function extractFieldsFromPdf(pdfBuffer: Buffer, knownFlavours: readonly s
   }
   debugLog(`Combined text after OCR (${combinedText.length} chars):\n${combinedText}`);
 
-  return { fields, text: combinedText, pageImages };
+  return { fields, text: combinedText, pageImages, nutritionTable };
 }
 
 async function extractFieldsFromImage(imageBuffer: Buffer, knownFlavours: readonly string[]): Promise<FieldPass> {
@@ -537,11 +546,13 @@ export async function extractLabelFromTextLayerOnly(
     // if spans are not available.
     let text = textLayerText;
     let fields: ExtractedLabelFields;
+    let nutritionTable: Record<string, string> | undefined;
 
     if (textLayerUsable) {
       const result = await extractFieldsFromTextLayer(pdfBuffer, textLayerText, knownFlavours);
       text = result.orderedText;
       fields = result.fields;
+      nutritionTable = result.nutritionTable;
     } else {
       // No usable text layer; return blank fields
       fields = extractLabelFields('', { knownFlavours });
@@ -550,7 +561,7 @@ export async function extractLabelFromTextLayerOnly(
     debugLog(`Parsed fields: ${JSON.stringify(fields)}`);
 
     // Extract extended fields without a page image (text layer only, no colour)
-    const extended = await extractExtendedFields(text, undefined, knownClaims);
+    const extended = await extractExtendedFields(text, undefined, knownClaims, nutritionTable);
     const result = toResult(fields, extended);
 
     // Post-process the result: placeholder scrubbing, garbage detection, AI fallback

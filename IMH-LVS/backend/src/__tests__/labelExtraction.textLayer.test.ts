@@ -104,6 +104,30 @@ test('synthetic FSSAI regression: FSSAI number survives the new geometry path un
   assert.equal(result.fssaiNumber, '10012345678901', `Expected FSSAI '10012345678901', got '${result.fssaiNumber}'`);
 });
 
+// Test that synthetic PDF with nutrition table wires through the text-layer path.
+// Uses a real fixture PDF with a known nutrition table to verify the wiring works end-to-end.
+test('synthetic nutrition table PDF: nutrition table extracted and wired through', async () => {
+  const result = await extractLabelFromTextLayerOnly(load('she-arise-gummies.pdf'));
+
+  // The nutrition table should be extracted and stringified from the real fixture
+  assert.ok(result.nutritionTable, 'nutritionTable should not be empty for she-arise-gummies.pdf');
+
+  // Parse and validate the JSON structure
+  const parsed = JSON.parse(result.nutritionTable);
+  assert.ok(typeof parsed === 'object', 'nutritionTable should be a valid JSON object');
+
+  // Verify it contains expected nutrition entries (from the fixture)
+  assert.ok('Energy' in parsed, 'Should contain Energy entry');
+  assert.ok(parsed.Energy.includes('kcal'), 'Energy value should contain unit');
+
+  // Verify the cleanup rule works by checking that no values contain bare % tokens (like "<0.5%")
+  // after name (they should have been stripped if present)
+  const valuesWithBarePercent = Object.values(parsed).filter((v: any) =>
+    typeof v === 'string' && /\s[<>≤≥~]?\d[\d.,]*\s*%\s[<>≤≥~]?\d/.test(v)
+  );
+  assert.equal(valuesWithBarePercent.length, 0, 'No values should have trailing bare % columns (cleanup rule should have stripped them)');
+});
+
 // Print detailed results for manual inspection and debugging
 test('print extracted fields for all fixtures', { skip: false }, async () => {
   const fixtures = ['she-arise-gummies.pdf', 'chyawanprash-gummies.pdf', 'apple-cider-vinegar-gummy.pdf', 'sharp-mind-plus-gummies.pdf'];

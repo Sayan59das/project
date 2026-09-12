@@ -408,6 +408,12 @@ export function extractNutritionTableFromPanels(panels: readonly Panel[]): Recor
 
     // Skip if value does not START with a number (with optional comparison operator) or name is empty
     if (name && value && valueStartsWithNumberRegex.test(value)) {
+      // Strip trailing %-column tokens: remove " [<>≤≥~]?digit[digit.,]* %anything" from the end.
+      // This cleans up rows where the value cell physically contains %RDA/%DV columns:
+      // "7.5 kcal <0.5% <0.5% <0.5%" becomes "7.5 kcal"; "40 mg (66%)" is left alone
+      // because the % is inside parentheses (not a bare column token).
+      value = value.replace(/\s+[<>≤≥~]?\d[\d.,]*\s*%.*$/, '').trim();
+
       // Store only if name not already present (keep first value)
       if (!(name in result)) {
         result[name] = value;

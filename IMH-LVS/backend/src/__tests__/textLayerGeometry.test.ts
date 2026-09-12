@@ -413,3 +413,34 @@ test('extractNutritionTableFromPanels: real fixture IMH-LVS/Dataset_Example/Mult
   }
   console.log('Multivitamin IRN56-3.pdf nutrition table:', JSON.stringify(result, null, 2));
 });
+
+test('extractNutritionTableFromPanels: value cleanup strips trailing %-column tokens', () => {
+  // Test case from brief: "7.5 kcal <0.5% <0.5% <0.5%" should become "7.5 kcal"
+  const allSpans = [
+    span({ text: 'Nutritional Information', x: 0, y: 200, width: 300, fontSize: 8 }),
+    // This row has the value cell containing %RDA columns
+    span({ text: 'Some Nutrient', x: 0, y: 188, width: 80, fontSize: 8 }),
+    span({ text: '7.5 kcal <0.5% <0.5% <0.5%', x: 200, y: 188, width: 150, fontSize: 8 }),
+  ];
+  const panels = segmentPanels(allSpans);
+  const result = extractNutritionTableFromPanels(panels);
+
+  assert.deepEqual(result, {
+    'Some Nutrient': '7.5 kcal',
+  }, 'Value should have trailing %-column tokens stripped');
+});
+
+test('extractNutritionTableFromPanels: value with parenthesized % is left alone', () => {
+  // Test case from brief: "40 mg (66%)" should NOT be changed because the % is in parentheses
+  const allSpans = [
+    span({ text: 'Nutritional Information', x: 0, y: 200, width: 300, fontSize: 8 }),
+    span({ text: 'Calcium', x: 0, y: 188, width: 50, fontSize: 8 }),
+    span({ text: '40 mg (66%)', x: 200, y: 188, width: 80, fontSize: 8 }),
+  ];
+  const panels = segmentPanels(allSpans);
+  const result = extractNutritionTableFromPanels(panels);
+
+  assert.deepEqual(result, {
+    'Calcium': '40 mg (66%)',
+  }, 'Value with parenthesized % should not be stripped');
+});
