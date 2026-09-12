@@ -158,8 +158,9 @@ test('rankDisplayLines: returns empty when median is 0', () => {
   assert.equal(displayLines.length, 0);
 });
 
-test('segmentPanels: groups lines into panels by (page, rotation, along-proximity)', () => {
-  // Two columns: left at x=0..100, right at x=400..500
+test('segmentPanels: two columns of 3 spans each with shared baselines → two panels', () => {
+  // Two columns: left at x=0..100, right at x=400..500, three shared baselines (y=100, 80, 60)
+  // Since no span bridges the columns, they remain separate panels.
   const allSpans = [
     span({ text: 'Left1', x: 0, y: 100, width: 100, fontSize: 8 }),
     span({ text: 'Left2', x: 0, y: 80, width: 100, fontSize: 8 }),
@@ -168,20 +169,55 @@ test('segmentPanels: groups lines into panels by (page, rotation, along-proximit
     span({ text: 'Right2', x: 400, y: 80, width: 100, fontSize: 8 }),
     span({ text: 'Right3', x: 400, y: 60, width: 100, fontSize: 8 }),
   ];
-  const lines = groupSpansIntoLines(allSpans);
-  const panels = segmentPanels(lines);
+  const panels = segmentPanels(allSpans);
   assert.equal(panels.length, 2);
+  // First panel has left column, second has right column
+  assert.ok(panels[0].lines[0].text.includes('Left1'));
+  assert.ok(panels[1].lines[0].text.includes('Right1'));
 });
 
-test('segmentPanels: merges lines into single panel when close enough', () => {
-  // One wide line spanning both columns
+test('segmentPanels: wide header span bridges columns into one panel', () => {
+  // A wide header span at x=0 width 500 bridges both columns on a fourth baseline (y=120)
+  // This creates one panel that contains spans from both columns.
   const allSpans = [
-    span({ text: 'Wide', x: 0, y: 100, width: 500, fontSize: 8 }),
-    span({ text: 'Left2', x: 0, y: 80, width: 100, fontSize: 8 }),
+    span({ text: 'Header', x: 0, y: 120, width: 500, fontSize: 8 }),
+    span({ text: 'Left1', x: 0, y: 100, width: 100, fontSize: 8 }),
+    span({ text: 'Right1', x: 400, y: 100, width: 100, fontSize: 8 }),
   ];
-  const lines = groupSpansIntoLines(allSpans);
-  const panels = segmentPanels(lines);
+  const panels = segmentPanels(allSpans);
   assert.equal(panels.length, 1);
+  // The panel contains both left and right spans
+  const allText = panels[0].lines.map((l) => l.text).join(' ');
+  assert.ok(allText.includes('Left1'));
+  assert.ok(allText.includes('Right1'));
+});
+
+test('segmentPanels: nutrition-row case — header bridges name and value on one line', () => {
+  // Header span at x=0 width 300 (y=200) bridges a nutrition row:
+  // "Vitamin C" at x=0 width 40 (y=188) and "40 mg" at x=250 width 25 (y=188).
+  // Because the header bridges the gap, all three spans are in one panel,
+  // and the baseline y=188 becomes ONE line with two spans.
+  const withHeader = [
+    span({ text: 'Nutritional Information', x: 0, y: 200, width: 300, fontSize: 8 }),
+    span({ text: 'Vitamin C', x: 0, y: 188, width: 40, fontSize: 8 }),
+    span({ text: '40 mg', x: 250, y: 188, width: 25, fontSize: 8 }),
+  ];
+  const panels = segmentPanels(withHeader);
+  assert.equal(panels.length, 1, 'Header bridges columns into one panel');
+  // Find the line at y=188 (cross=188 for rotation 0)
+  const line188 = panels[0].lines.find((l) => Math.abs(l.cross - 188) < 1);
+  assert.ok(line188, 'Should have a line at y=188');
+  assert.equal(line188!.text, 'Vitamin C 40 mg', 'Line should contain both name and value');
+  const cells = splitLineIntoCells(line188!);
+  assert.deepEqual(cells, ['Vitamin C', '40 mg'], 'Cells should split by the gap');
+
+  // Without the header, the two spans are in separate panels
+  const withoutHeader = [
+    span({ text: 'Vitamin C', x: 0, y: 188, width: 40, fontSize: 8 }),
+    span({ text: '40 mg', x: 250, y: 188, width: 25, fontSize: 8 }),
+  ];
+  const panelsNoHeader = segmentPanels(withoutHeader);
+  assert.equal(panelsNoHeader.length, 2, 'Without header, no span bridges the gap, so two panels');
 });
 
 test('toReadingOrderText: converts spans to reading-order text with panels separated by blank lines', async () => {

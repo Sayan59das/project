@@ -19,6 +19,8 @@ export type TextLine = {
 export type Panel = { page: number; rotation: number; lines: TextLine[] };
 
 // Returns 0 for empty input; median of span.fontSize otherwise.
+// Median is used as a scaling factor for proximity thresholds throughout
+// the geometry pipeline (line baseline tolerance, panel banding, cell gaps).
 export function medianFontSize(spans: readonly TextSpan[]): number {
   if (spans.length === 0) return 0;
   const sorted = Array.from(spans).sort((a, b) => a.fontSize - b.fontSize);
@@ -42,7 +44,11 @@ function rotationBucket(rotation: number): number {
   return Math.round(rotation * 100) / 100;
 }
 
-// Groups spans into lines by (page, rotation bucket), handling baseline proximity.
+// Groups spans into lines by (page, rotation bucket), checking baseline proximity only.
+// Spans join the same line if their cross-axis (baseline) distance is small; along-axis
+// gaps are not checked here — that is what splitLineIntoCells is for. This allows a
+// nutrition row with a wide gap between name and value (but bridged by a header above)
+// to stay on one line rather than being falsely split.
 export function groupSpansIntoLines(spans: readonly TextSpan[]): TextLine[] {
   // Filter out empty spans
   const nonEmpty = Array.from(spans).filter((s) => s.text.trim().length > 0);
@@ -87,21 +93,9 @@ export function groupSpansIntoLines(spans: readonly TextSpan[]): TextLine[] {
           spans: [span],
         };
       } else {
-        // Check if span joins the current line
+        // Check if span joins the current line based on cross-axis distance only
         const crossThreshold = 0.5 * Math.min(span.fontSize, currentLine.fontSize);
-        const crossOk = Math.abs(geo.cross - currentLine.cross) <= crossThreshold;
-
-        // Also check along-axis gap to prevent far-apart spans from merging
-        let alongOk = true;
-        if (currentLine.spans.length > 0) {
-          const lastSpan = currentLine.spans[currentLine.spans.length - 1];
-          const lastGeo = spanGeometry(lastSpan);
-          const gap = geo.along - (lastGeo.along + lastSpan.width);
-          const alongThreshold = 1.5 * span.fontSize;
-          alongOk = gap <= alongThreshold;
-        }
-
-        if (crossOk && alongOk) {
+        if (Math.abs(geo.cross - currentLine.cross) <= crossThreshold) {
           // Join the span to current line
           currentLine.spans.push(span);
           currentLine.text += ' ' + span.text.trim();
@@ -147,6 +141,8 @@ export function groupSpansIntoLines(spans: readonly TextSpan[]): TextLine[] {
 }
 
 // Splits a line into cells by gaps between spans.
+// Cells are separated when gap > 1.5 × line.fontSize — used to break a nutrition
+// row with a wide gap between name and value into display columns.
 export function splitLineIntoCells(line: TextLine): string[] {
   if (line.spans.length === 1) {
     return [line.text];
@@ -188,6 +184,7 @@ export function splitLineIntoCells(line: TextLine): string[] {
 }
 
 // Ranks and filters lines by display prominence (font size), excluding non-letter text.
+// Used to identify field labels like product names in the text layer.
 export function rankDisplayLines(lines: readonly TextLine[], ratio: number = 2.5): TextLine[] {
   // Collect all spans from all lines
   const allSpans: TextSpan[] = [];
@@ -212,68 +209,83 @@ export function rankDisplayLines(lines: readonly TextLine[], ratio: number = 2.5
   return filtered;
 }
 
-// Segments lines into panels based on (page, rotation) and along-proximity.
-export function segmentPanels(lines: readonly TextLine[]): Panel[] {
-  if (lines.length === 0) return [];
+// Segments spans into panels using a gutter-detection algorithm, then groups lines within each panel.
+// Panels are banded at the SPAN level (before line grouping) so that a nutrition row with a wide
+// gap between name and value, but bridged above by a header span, stays on one line in a single panel.
+// Conversely, die-line folds (where NO span bridges) are detected as panel boundaries and create
+// separate panels even on the same baselines. Within each panel, groupSpansIntoLines handles the
+// cross-only baseline rule, leaving wide gaps to splitLineIntoCells.
+export function segmentPanels(spans: readonly TextSpan[]): Panel[] {
+  // Filter out empty spans
+  const nonEmpty = Array.from(spans).filter((s) => s.text.trim().length > 0);
+  if (nonEmpty.length === 0) return [];
 
   // Group by (page, rotation bucket)
-  const groups = new Map<string, TextLine[]>();
-  for (const line of lines) {
-    const bucket = rotationBucket(line.rotation);
-    const key = `${line.page}|${bucket}`;
+  const groups = new Map<string, TextSpan[]>();
+  for (const span of nonEmpty) {
+    const bucket = rotationBucket(span.rotation);
+    const key = `${span.page}|${bucket}`;
     if (!groups.has(key)) groups.set(key, []);
-    groups.get(key)!.push(line);
+    groups.get(key)!.push(span);
   }
 
   const allPanels: Panel[] = [];
 
-  for (const [groupKey, groupLines] of groups) {
+  for (const [groupKey, groupSpans] of groups) {
     const [pageStr, bucketStr] = groupKey.split('|');
     const page = parseInt(pageStr, 10);
     const rotation = parseFloat(bucketStr);
 
-    // Sort lines by along
-    groupLines.sort((a, b) => a.along - b.along);
+    // Calculate median for this group
+    const m = medianFontSize(groupSpans);
 
-    // Collect all spans to get median for this group
-    const allSpans: TextSpan[] = [];
-    for (const line of groupLines) {
-      allSpans.push(...line.spans);
-    }
-    const m = medianFontSize(allSpans);
+    // Sort spans by along
+    groupSpans.sort((a, b) => {
+      const aGeo = spanGeometry(a);
+      const bGeo = spanGeometry(b);
+      return aGeo.along - bGeo.along;
+    });
 
-    // Greedily band lines
-    const bands: TextLine[][] = [];
-    let currentBand: TextLine[] = [groupLines[0]];
-    let bandEnd = groupLines[0].along + groupLines[0].extent;
+    // Greedily band spans: a span joins current band if span.along <= band.end + 1.5 * m
+    const spanBands: TextSpan[][] = [];
+    if (m === 0) {
+      // If median is 0, whole group is one band
+      spanBands.push(groupSpans);
+    } else {
+      let currentBand: TextSpan[] = [groupSpans[0]];
+      let bandEnd = spanGeometry(groupSpans[0]).along + groupSpans[0].width;
 
-    for (let i = 1; i < groupLines.length; i++) {
-      const line = groupLines[i];
-      const threshold = 3 * (m > 0 ? m : 8); // fallback to 8 if m === 0
-      if (line.along <= bandEnd + threshold) {
-        // Join current band
-        currentBand.push(line);
-        bandEnd = Math.max(bandEnd, line.along + line.extent);
-      } else {
-        // Start new band
-        bands.push(currentBand);
-        currentBand = [line];
-        bandEnd = line.along + line.extent;
+      for (let i = 1; i < groupSpans.length; i++) {
+        const span = groupSpans[i];
+        const spanGeo = spanGeometry(span);
+        const threshold = 1.5 * m;
+
+        if (spanGeo.along <= bandEnd + threshold) {
+          // Span joins current band
+          currentBand.push(span);
+          bandEnd = Math.max(bandEnd, spanGeo.along + span.width);
+        } else {
+          // Start new band
+          spanBands.push(currentBand);
+          currentBand = [span];
+          bandEnd = spanGeo.along + span.width;
+        }
       }
+      if (currentBand.length > 0) spanBands.push(currentBand);
     }
-    if (currentBand.length > 0) bands.push(currentBand);
 
-    // Create panels from bands
-    for (const band of bands) {
-      // Re-sort band: cross DESC then along ASC
-      band.sort((a, b) => {
+    // Create panels from span bands
+    for (const bandSpans of spanBands) {
+      const lines = groupSpansIntoLines(bandSpans);
+      // Re-sort lines within the panel: cross DESC then along ASC
+      lines.sort((a, b) => {
         if (Math.abs(a.cross - b.cross) > 0.001) return b.cross - a.cross;
         return a.along - b.along;
       });
       allPanels.push({
         page,
         rotation,
-        lines: band,
+        lines,
       });
     }
   }
@@ -289,6 +301,7 @@ export function segmentPanels(lines: readonly TextLine[]): Panel[] {
       return aBucketAbs - bBucketAbs;
     }
     if (a.rotation !== b.rotation) return a.rotation - b.rotation;
+    // Band start = minimum along of spans in the band (panel's first line's along value)
     const aStart = a.lines.length > 0 ? a.lines[0].along : 0;
     const bStart = b.lines.length > 0 ? b.lines[0].along : 0;
     return aStart - bStart;
@@ -298,11 +311,12 @@ export function segmentPanels(lines: readonly TextLine[]): Panel[] {
 }
 
 // Converts spans to reading-order text via panels, with lines and panels separated.
+// Calls segmentPanels directly on spans to enable gutter detection at the span level,
+// then groups lines within each panel and formats output.
 export function toReadingOrderText(spans: readonly TextSpan[]): string {
   if (spans.length === 0) return '';
 
-  const lines = groupSpansIntoLines(spans);
-  const panels = segmentPanels(lines);
+  const panels = segmentPanels(spans);
 
   const panelTexts = panels.map((panel) => {
     const lineTexts = panel.lines.map((line) => line.text);
