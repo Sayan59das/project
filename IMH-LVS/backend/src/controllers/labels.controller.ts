@@ -80,7 +80,8 @@ const EXTRACTION_RESULT_KEYS: (keyof LabelExtractionResult)[] = [
   'claims',
   'ingredients',
   'nutritionTableFormat',
-  'nutritionTable'
+  'nutritionTable',
+  'displayTextCandidates'
 ];
 
 // Accepts only a plain object whose extraction-result fields are all

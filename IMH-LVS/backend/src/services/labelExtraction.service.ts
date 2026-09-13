@@ -36,11 +36,13 @@
 // the underlying OCR engine later never touches the controller or the API
 // response contract.
 import fs from 'fs';
+import sharp from 'sharp';
 import { env } from '../config/env';
 import { FIXED_MANUFACTURING_COMPANY } from '../config/constants';
-import { extractPdfText, extractTextSpans, hasUsablePdfText, rasterizePdfPages } from './pdf.service';
+import { extractPdfText, extractTextSpans, hasUsablePdfText, rasterizePdfPages, type TextSpan } from './pdf.service';
 import { preprocessForOcr, preprocessForOcrAlt } from './imagePreprocessing.service';
 import { recognizePageWithWords } from './tesseract.service';
+import { recognizeLines } from './paddleOcr.service';
 import { extractMarketingCompanyAndAddressFromRegion } from './regionOcr.service';
 import { recoverProductTitleFromRegion, type OcrSource } from './titleRegionOcr.service';
 import { recoverPackageSizeFromBadge } from './packageSizeOcr.service';
@@ -54,6 +56,7 @@ import {
   extractNutritionTableFormat
 } from './labelSemanticExtractor.service';
 import { segmentPanels, toReadingOrderText, extractNutritionTableFromPanels } from './textLayerGeometry.service';
+import { projectSpanToPixels, findOutlinedLines } from './outlinedText.service';
 
 setLabelFieldExtractorDebug(env.labelExtractionDebug);
 
@@ -94,6 +97,20 @@ export type LabelExtractionResult = {
   // of these into a real per-nutrient CONFLICT/MATCH, rather than the
   // coarse nutritionTableFormat classification comparing as one string.
   nutritionTable: string;
+
+  // Ranked display-text candidates (brand names, product titles, marketing
+  // headers) recovered from the rasterized PDF page or image when the text
+  // layer doesn't have them, as a JSON array of { text, heightPx, confidence },
+  // ordered tallest first. '' when none are recovered or when the text layer
+  // was complete so no rasterization occurred. Filled only for PDFs/images;
+  // text-layer-only extractions leave it '' (fast path, no pixels).
+  displayTextCandidates: string;
+};
+
+export type DisplayTextCandidate = {
+  text: string;
+  heightPx: number;
+  confidence: number;
 };
 
 /**
@@ -142,7 +159,8 @@ export function buildPlaceholderExtraction(): LabelExtractionResult {
     claims: '',
     ingredients: '',
     nutritionTableFormat: '',
-    nutritionTable: ''
+    nutritionTable: '',
+    displayTextCandidates: ''
   };
 }
 
@@ -155,7 +173,7 @@ function toResult(fields: ExtractedLabelFields, extended: ExtendedFields): Label
 }
 
 type ExtendedFields = {
-  values: Pick<LabelExtractionResult, 'colourTheme' | 'claims' | 'ingredients' | 'nutritionTableFormat' | 'nutritionTable'>;
+  values: Pick<LabelExtractionResult, 'colourTheme' | 'claims' | 'ingredients' | 'nutritionTableFormat' | 'nutritionTable' | 'displayTextCandidates'>;
   unknownClaims: string[];
 };
 
@@ -171,12 +189,17 @@ type ExtendedFields = {
  * `nutritionTable` is the structured nutrition data parsed from the PDF's geometry.
  * It is filled by Task 5 from the text layer's structured layout; here we only
  * pass it through to the result.
+ *
+ * `displayTextCandidates` is ranked display-text candidates (brand names, product
+ * titles) recovered from the rasterized page or image when the text layer doesn't
+ * have them. Filled when OCR runs, absent when the text layer was complete.
  */
 async function extractExtendedFields(
   text: string,
   pageImage: Buffer | undefined,
   knownClaims: readonly string[],
-  nutritionTable?: Record<string, string>
+  nutritionTable?: Record<string, string>,
+  displayTextCandidates?: DisplayTextCandidate[]
 ): Promise<ExtendedFields> {
   const claims = extractClaims(text, knownClaims);
 
@@ -204,7 +227,10 @@ async function extractExtendedFields(
       // nutritionTable is filled from the PDF's geometry structure (Task 5) or
       // the AI backend's vision-model fallback. This function only stringifies
       // what was already extracted; never invents a value.
-      nutritionTable: nutritionTable && Object.keys(nutritionTable).length ? JSON.stringify(nutritionTable) : ''
+      nutritionTable: nutritionTable && Object.keys(nutritionTable).length ? JSON.stringify(nutritionTable) : '',
+      // displayTextCandidates is filled from display text recovered from the rasterized
+      // page or image; stringified when present, '' when none.
+      displayTextCandidates: displayTextCandidates && displayTextCandidates.length ? JSON.stringify(displayTextCandidates) : ''
     },
     unknownClaims: claims.unmatched
   };
@@ -278,13 +304,14 @@ async function extractFieldsFromTextLayer(
   pdfBuffer: Buffer,
   textLayerText: string,
   knownFlavours: readonly string[]
-): Promise<{ orderedText: string; fields: ExtractedLabelFields; nutritionTable?: Record<string, string> }> {
+): Promise<{ orderedText: string; fields: ExtractedLabelFields; nutritionTable?: Record<string, string>; spans: TextSpan[] }> {
   let orderedText = textLayerText;
   let fields = extractLabelFields(textLayerText, { knownFlavours });
   let nutritionTable: Record<string, string> | undefined;
+  let spans: TextSpan[] = [];
 
   try {
-    const spans = await extractTextSpans(pdfBuffer);
+    spans = await extractTextSpans(pdfBuffer);
     if (spans.length > 0) {
       const panels = segmentPanels(spans);
       orderedText = toReadingOrderText(spans);
@@ -327,7 +354,7 @@ async function extractFieldsFromTextLayer(
     debugLog(`Failed to extract text spans: ${error instanceof Error ? error.message : error}. Continuing with flattened text.`);
   }
 
-  return { orderedText, fields, nutritionTable };
+  return { orderedText, fields, nutritionTable, spans };
 }
 
 // Runs the primary OCR pass over one image (a rasterized PDF page, or the
@@ -421,7 +448,59 @@ type FieldPass = {
   pageImages: Buffer[];
   /** Nutrition table parsed from the PDF's geometry structure. Undefined until Task 5 fills it. */
   nutritionTable?: Record<string, string>;
+  /** Display-text candidates recovered from rasterized page or image when text layer is incomplete. Empty on the text-layer fast path. */
+  displayTextCandidates?: DisplayTextCandidate[];
 };
+
+// Recovery helper for display-text candidates: outlined text detected on the
+// rasterized page after OCR's primary pass. When the text layer is incomplete
+// (missing brand or product name), we rasterize and OCR the page. This helper
+// then looks for the outlined/stylised display text that branded headers are
+// typically rendered in — the same text OCR often mangles — by running paddle
+// OCR on the image and filtering to outlined lines (lines with confidence high
+// enough to have survived the segmentation logic in outlinedText.service.ts).
+// Returns top 8 ranked by height, since brand graphics are typically the
+// largest text on the page.
+async function recoverDisplayTextCandidates(
+  pageImage: Buffer,
+  spans: readonly TextSpan[],
+  dpi: number
+): Promise<DisplayTextCandidate[]> {
+  try {
+    // Identify which text spans are "covered" by the geometry layer, so we can
+    // focus on text regions not already in the text layer.
+    let spanRects: ReturnType<typeof projectSpanToPixels>[] = [];
+    if (spans.length > 0) {
+      // Compute page height in points from the image height in pixels
+      const metadata = await sharp(pageImage).metadata();
+      const pageHeightPt = metadata.height! / (dpi / 72);
+      // Project only first page's spans to pixel rectangles
+      spanRects = spans
+        .filter((s) => s.page === 1)
+        .map((s) => projectSpanToPixels(s, pageHeightPt, dpi));
+    }
+
+    // Run paddle OCR on the image to extract lines
+    const lines = await recognizeLines(pageImage);
+
+    // Filter to outlined lines: those that survived the segmentation logic
+    // (high confidence, consistent box structure, etc.)
+    const outlined = findOutlinedLines(lines, spanRects);
+
+    // Return top 8 by height, with heights and confidence rounded for readability
+    return outlined.slice(0, 8).map((l) => ({
+      text: l.text,
+      heightPx: Math.round(l.box.y1 - l.box.y0),
+      confidence: Math.round(l.confidence * 100) / 100
+    }));
+  } catch (error) {
+    console.warn(
+      '[labelExtraction] display-text candidate recovery failed: ' +
+        (error instanceof Error ? error.message : String(error))
+    );
+    return [];
+  }
+}
 
 async function extractFieldsFromPdf(pdfBuffer: Buffer, knownFlavours: readonly string[]): Promise<FieldPass> {
   const { text: textLayerText } = await extractPdfText(pdfBuffer);
@@ -433,12 +512,14 @@ async function extractFieldsFromPdf(pdfBuffer: Buffer, knownFlavours: readonly s
   let orderedText = textLayerText;
   let textLayerFields = textLayerUsable ? extractLabelFields(textLayerText, { knownFlavours }) : null;
   let nutritionTable: Record<string, string> | undefined;
+  let spans: TextSpan[] = [];
 
   if (textLayerUsable) {
     const result = await extractFieldsFromTextLayer(pdfBuffer, textLayerText, knownFlavours);
     orderedText = result.orderedText;
     textLayerFields = result.fields;
     nutritionTable = result.nutritionTable;
+    spans = result.spans;
   }
 
   if (textLayerFields && isComplete(textLayerFields)) {
@@ -479,14 +560,30 @@ async function extractFieldsFromPdf(pdfBuffer: Buffer, knownFlavours: readonly s
   // layout while still getting the OCR improvements for missing fields.
   const finalText = [orderedText, combinedText].filter((t) => t.trim().length > 0).join('\n');
 
-  return { fields, text: finalText, pageImages, nutritionTable };
+  // After the OCR loop, if brand or product name are still missing, recover display-text
+  // candidates from the first rasterized page to surface candidate brand/product titles
+  // that OCR couldn't reliably extract but are visibly rendered.
+  let displayTextCandidates: DisplayTextCandidate[] | undefined;
+  if ((!fields.brand || !fields.productName) && pageImages.length > 0) {
+    displayTextCandidates = await recoverDisplayTextCandidates(pageImages[0], spans, env.pdfRasterDpi);
+  }
+
+  return { fields, text: finalText, pageImages, nutritionTable, displayTextCandidates };
 }
 
 async function extractFieldsFromImage(imageBuffer: Buffer, knownFlavours: readonly string[]): Promise<FieldPass> {
   const { text, fields } = await ocrImageWithEnhancement(imageBuffer, '', knownFlavours);
   debugLog(`OCR text (${text.length} chars):\n${text}`);
   // The upload IS the page image, so colour reads straight off it.
-  return { fields, text, pageImages: [imageBuffer] };
+
+  // For image uploads, if brand or product name are still missing after OCR,
+  // recover display-text candidates. No spans from text layer, so pass empty array.
+  let displayTextCandidates: DisplayTextCandidate[] | undefined;
+  if (!fields.brand || !fields.productName) {
+    displayTextCandidates = await recoverDisplayTextCandidates(imageBuffer, [], env.pdfRasterDpi);
+  }
+
+  return { fields, text, pageImages: [imageBuffer], displayTextCandidates };
 }
 
 // Shared post-processing for extraction results: placeholder scrubbing, garbage
@@ -668,7 +765,7 @@ export async function extractLabelReportFromFile(
       }
     }
 
-    const extended = await extractExtendedFields(pass.text, pageImage, knownClaims, pass.nutritionTable);
+    const extended = await extractExtendedFields(pass.text, pageImage, knownClaims, pass.nutritionTable, pass.displayTextCandidates);
     const result = toResult(pass.fields, extended);
 
     // Post-process the result: placeholder scrubbing, garbage detection, AI fallback

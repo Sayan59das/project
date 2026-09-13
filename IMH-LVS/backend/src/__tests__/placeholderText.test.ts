@@ -141,3 +141,24 @@ test('exempts nutritionTable from placeholder scrubbing', () => {
   // Only brand was blanked
   assert.deepEqual(blanked, ['brand']);
 });
+
+// Display-text candidates is JSON-stringified array data that should never be subject
+// to placeholder detection. Like nutritionTable, the WHOLLY_PARENTHETICAL regex would
+// mistakenly match JSON arrays like [{"text":"Homeo-Vita"}]. The displayTextCandidates
+// field is exempted to preserve recovered display-text candidates through post-processing.
+test('exempts displayTextCandidates from placeholder scrubbing', () => {
+  const { fields, blanked } = scrubPlaceholders({
+    displayTextCandidates: '[{"text":"Homeo-Vita","heightPx":137,"confidence":0.98}]',
+    brand: '(Brand Name)',
+    marketingCompany: 'Real Company Ltd'
+  });
+
+  // displayTextCandidates should be preserved despite looking like it contains parentheses
+  assert.equal(fields.displayTextCandidates, '[{"text":"Homeo-Vita","heightPx":137,"confidence":0.98}]');
+  // brand should be blanked as a true placeholder
+  assert.equal(fields.brand, '');
+  // marketingCompany should be preserved as real
+  assert.equal(fields.marketingCompany, 'Real Company Ltd');
+  // Only brand was blanked
+  assert.deepEqual(blanked, ['brand']);
+});
