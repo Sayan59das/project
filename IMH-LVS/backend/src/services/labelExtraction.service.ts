@@ -56,7 +56,7 @@ import {
   extractNutritionTableFormat
 } from './labelSemanticExtractor.service';
 import { segmentPanels, toReadingOrderText, extractNutritionTableFromPanels, medianFontSize } from './textLayerGeometry.service';
-import { projectSpanToPixels, findOutlinedLines, planOcrStrips, type OcrLineLike } from './outlinedText.service';
+import { projectSpanToPixels, findOutlinedLines, planOcrStrips, dropStripEdgeLines, type OcrLineLike } from './outlinedText.service';
 import { isVlmEnabled, prepareImage, ollamaClient, type VlmImage, type VlmClient } from './ollamaVlm.service';
 import { resolveDisplayRoles, type DisplayCandidateIn } from './displayRoleResolver.service';
 
@@ -539,8 +539,11 @@ async function recoverDisplayTextCandidates(
 
         const lines = await recognizeLines(crop);
 
+        // Drop lines cut by the strip boundary (fragment removal)
+        const trimmedLines = dropStripEdgeLines(lines, strip, width);
+
         // Offset every box by +strip.left on x
-        for (const line of lines) {
+        for (const line of trimmedLines) {
           allLines.push({
             text: line.text,
             box: {
@@ -613,8 +616,9 @@ async function recoverDisplayTextCandidates(
     // (high confidence, consistent box structure, etc.)
     const outlined = findOutlinedLines(deduped, spanRects);
 
-    // Return top 8 by height, with heights and confidence rounded for readability
-    return outlined.slice(0, 8).map((l) => ({
+    // Return top 10 by height, with heights and confidence rounded for readability.
+    // Fragment removal plus headroom for two-line product names (e.g. "Sharp\nMind Plus").
+    return outlined.slice(0, 10).map((l) => ({
       text: l.text,
       heightPx: Math.round(l.box.y1 - l.box.y0),
       confidence: Math.round(l.confidence * 100) / 100,

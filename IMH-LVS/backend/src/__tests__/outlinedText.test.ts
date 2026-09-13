@@ -6,6 +6,7 @@ import {
   looksLikeDisplayText,
   findOutlinedLines,
   planOcrStrips,
+  dropStripEdgeLines,
   type OcrLineLike
 } from '../services/outlinedText.service';
 import type { Rectangle } from '../services/tesseract.service';
@@ -291,4 +292,41 @@ test('planOcrStrips: a gap narrower than minGapFraction is dropped', () => {
   assert.equal(strips[1].width, 120); // 360 - 240
   assert.equal(strips[2].left, 360);
   assert.equal(strips[2].width, 640); // 1000 - 360
+});
+
+test('dropStripEdgeLines: strip {left:1282,width:1202} on pageWidth 3621', () => {
+  const lines: OcrLineLike[] = [
+    { text: 'left-cut', box: { x0: 2, y0: 0, x1: 100, y1: 50 }, confidence: 0.9 }, // x0=2 <= marginPx=6 → dropped
+    { text: 'right-cut', box: { x0: 100, y0: 0, x1: 1199, y1: 50 }, confidence: 0.9 }, // x1=1199 >= strip.width-marginPx=1196 → dropped
+    { text: 'middle', box: { x0: 40, y0: 0, x1: 900, y1: 50 }, confidence: 0.9 } // kept
+  ];
+
+  const result = dropStripEdgeLines(lines, { left: 1282, width: 1202 }, 3621);
+
+  assert.equal(result.length, 1);
+  assert.equal(result[0].text, 'middle');
+});
+
+test('dropStripEdgeLines: strip {left:0,width:1322} keeps page-edge left-touching lines', () => {
+  const lines: OcrLineLike[] = [
+    { text: 'page-left', box: { x0: 2, y0: 0, x1: 100, y1: 50 }, confidence: 0.9 }, // x0=2 <= marginPx=6, but strip.left=0 → kept
+    { text: 'right-cut', box: { x0: 100, y0: 0, x1: 1320, y1: 50 }, confidence: 0.9 } // x1=1320 >= strip.width-marginPx=1316 → dropped
+  ];
+
+  const result = dropStripEdgeLines(lines, { left: 0, width: 1322 }, 3621);
+
+  assert.equal(result.length, 1);
+  assert.equal(result[0].text, 'page-left');
+});
+
+test('dropStripEdgeLines: strip covering whole page keeps everything', () => {
+  const lines: OcrLineLike[] = [
+    { text: 'left-touching', box: { x0: 2, y0: 0, x1: 100, y1: 50 }, confidence: 0.9 },
+    { text: 'right-touching', box: { x0: 100, y0: 0, x1: 3615, y1: 50 }, confidence: 0.9 },
+    { text: 'middle', box: { x0: 40, y0: 0, x1: 900, y1: 50 }, confidence: 0.9 }
+  ];
+
+  const result = dropStripEdgeLines(lines, { left: 0, width: 3621 }, 3621);
+
+  assert.equal(result.length, 3);
 });
