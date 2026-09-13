@@ -5,6 +5,9 @@ import {
   coverageFraction,
   looksLikeDisplayText,
   findOutlinedLines,
+  planOcrStrips,
+  dropStripEdgeLines,
+  dedupeOverlappingLines,
   type OcrLineLike
 } from '../services/outlinedText.service';
 import type { Rectangle } from '../services/tesseract.service';
@@ -217,4 +220,155 @@ test('findOutlinedLines: with custom options and empty spanRects', () => {
   assert.equal(result[1].text, 'GUMMIES');
   assert.equal(result[2].text, 'NUTRITIONAL INFORMATION');
   assert.equal(result[3].text, 'tiny');
+});
+
+test('planOcrStrips: no ranges → whole page', () => {
+  const strips = planOcrStrips([], 3621, 40);
+  assert.equal(strips.length, 1);
+  assert.equal(strips[0].left, 0);
+  assert.equal(strips[0].width, 3621);
+});
+
+test('planOcrStrips: two ranges [289,1282] and [2484,3335] on width 3621 with pad 40', () => {
+  const panelXRanges = [
+    { left: 289, right: 1282 },
+    { left: 2484, right: 3335 }
+  ];
+  const strips = planOcrStrips(panelXRanges, 3621, 40);
+
+  // Panel strip 1: [289-40, 1282+40] = [249, 1322]
+  // Panel strip 2: [2484-40, 3335+40] = [2444, 3375]
+  // Gap 1: [0, 249) width 249 < 8% * 3621 = 289.68 → dropped
+  // Gap 2: [1322, 2444) width 1122 >= 289.68 → included
+  // Gap 3: (3375, 3621] width 246 < 289.68 → dropped
+
+  assert.equal(strips.length, 3);
+  assert.equal(strips[0].left, 249);
+  assert.equal(strips[0].width, 1073); // 1322 - 249
+  assert.equal(strips[1].left, 1322);
+  assert.equal(strips[1].width, 1122); // 2444 - 1322
+  assert.equal(strips[2].left, 2444);
+  assert.equal(strips[2].width, 931); // 3375 - 2444
+});
+
+test('planOcrStrips: overlapping ranges merge into one', () => {
+  const panelXRanges = [
+    { left: 100, right: 300 },
+    { left: 250, right: 400 }
+  ];
+  const strips = planOcrStrips(panelXRanges, 1000, 10);
+
+  // Padded: [90, 310] and [240, 410]
+  // After merging: [90, 410]
+  // Panel strip: [90, 410]
+  // Gap 1: [0, 90) width 90 >= 8% * 1000 = 80 → included
+  // Gap 2: (410, 1000] width 590 >= 80 → included
+
+  assert.equal(strips.length, 3);
+  assert.equal(strips[0].left, 0);
+  assert.equal(strips[0].width, 90);
+  assert.equal(strips[1].left, 90);
+  assert.equal(strips[1].width, 320); // 410 - 90
+  assert.equal(strips[2].left, 410);
+  assert.equal(strips[2].width, 590); // 1000 - 410
+});
+
+test('planOcrStrips: a gap narrower than minGapFraction is dropped', () => {
+  const panelXRanges = [
+    { left: 100, right: 200 },
+    { left: 250, right: 350 }
+  ];
+  const strips = planOcrStrips(panelXRanges, 1000, 10, 0.1);
+
+  // Padded: [90, 210] and [240, 360]
+  // Gap: [210, 240] width 30 < 10% * 1000 = 100 → dropped
+  // Panel strips: [90, 210] and [240, 360]
+  // Gap 1: [0, 90) width 90 < 100 → dropped
+  // Gap 2: (360, 1000] width 640 >= 100 → included
+
+  assert.equal(strips.length, 3);
+  assert.equal(strips[0].left, 90);
+  assert.equal(strips[0].width, 120); // 210 - 90
+  assert.equal(strips[1].left, 240);
+  assert.equal(strips[1].width, 120); // 360 - 240
+  assert.equal(strips[2].left, 360);
+  assert.equal(strips[2].width, 640); // 1000 - 360
+});
+
+test('dropStripEdgeLines: strip {left:1282,width:1202} on pageWidth 3621', () => {
+  const lines: OcrLineLike[] = [
+    { text: 'left-cut', box: { x0: 2, y0: 0, x1: 100, y1: 50 }, confidence: 0.9 }, // x0=2 <= marginPx=6 → dropped
+    { text: 'right-cut', box: { x0: 100, y0: 0, x1: 1199, y1: 50 }, confidence: 0.9 }, // x1=1199 >= strip.width-marginPx=1196 → dropped
+    { text: 'middle', box: { x0: 40, y0: 0, x1: 900, y1: 50 }, confidence: 0.9 } // kept
+  ];
+
+  const result = dropStripEdgeLines(lines, { left: 1282, width: 1202 }, 3621);
+
+  assert.equal(result.length, 1);
+  assert.equal(result[0].text, 'middle');
+});
+
+test('dropStripEdgeLines: strip {left:0,width:1322} keeps page-edge left-touching lines', () => {
+  const lines: OcrLineLike[] = [
+    { text: 'page-left', box: { x0: 2, y0: 0, x1: 100, y1: 50 }, confidence: 0.9 }, // x0=2 <= marginPx=6, but strip.left=0 → kept
+    { text: 'right-cut', box: { x0: 100, y0: 0, x1: 1320, y1: 50 }, confidence: 0.9 } // x1=1320 >= strip.width-marginPx=1316 → dropped
+  ];
+
+  const result = dropStripEdgeLines(lines, { left: 0, width: 1322 }, 3621);
+
+  assert.equal(result.length, 1);
+  assert.equal(result[0].text, 'page-left');
+});
+
+test('dropStripEdgeLines: strip covering whole page keeps everything', () => {
+  const lines: OcrLineLike[] = [
+    { text: 'left-touching', box: { x0: 2, y0: 0, x1: 100, y1: 50 }, confidence: 0.9 },
+    { text: 'right-touching', box: { x0: 100, y0: 0, x1: 3615, y1: 50 }, confidence: 0.9 },
+    { text: 'middle', box: { x0: 40, y0: 0, x1: 900, y1: 50 }, confidence: 0.9 }
+  ];
+
+  const result = dropStripEdgeLines(lines, { left: 0, width: 3621 }, 3621);
+
+  assert.equal(result.length, 3);
+});
+
+test('dropStripEdgeLines: height-proportional margin catches tall wordmark fragments', () => {
+  const lines: OcrLineLike[] = [
+    // Tall line (h=122): threshold = Math.max(6, 0.5*122) = 61
+    { text: 'tall-left-cut', box: { x0: 14, y0: 0, x1: 300, y1: 122 }, confidence: 0.9 }, // x0=14 <= 61 → dropped
+    { text: 'tall-safe', box: { x0: 80, y0: 0, x1: 300, y1: 122 }, confidence: 0.9 }, // x0=80 > 61 → kept
+    // Short line (h=20): threshold = Math.max(6, 0.5*20) = 10
+    { text: 'short-left-cut', box: { x0: 14, y0: 0, x1: 100, y1: 20 }, confidence: 0.9 } // x0=14 > 10 → kept
+  ];
+
+  const result = dropStripEdgeLines(lines, { left: 1282, width: 1202 }, 3621);
+
+  assert.equal(result.length, 2);
+  assert.equal(result[0].text, 'tall-safe');
+  assert.equal(result[1].text, 'short-left-cut');
+});
+
+test('dedupeOverlappingLines: a later higher-confidence duplicate wins exactly once (never pushed twice)', () => {
+  const lines: OcrLineLike[] = [
+    { text: 'Homeo-Vita', box: { x0: 100, y0: 100, x1: 400, y1: 160 }, confidence: 0.8 },
+    { text: 'GUMMIES', box: { x0: 100, y0: 300, x1: 300, y1: 350 }, confidence: 0.9 },
+    { text: 'Homeo-Vita', box: { x0: 102, y0: 101, x1: 401, y1: 161 }, confidence: 0.95 }
+  ];
+  const out = dedupeOverlappingLines(lines);
+  assert.deepEqual(
+    out.map((l) => [l.text, l.confidence]),
+    [['Homeo-Vita', 0.95], ['GUMMIES', 0.9]]
+  );
+});
+
+test('dedupeOverlappingLines: an earlier higher-confidence read keeps its position; non-overlapping lines untouched', () => {
+  const lines: OcrLineLike[] = [
+    { text: 'A', box: { x0: 0, y0: 0, x1: 100, y1: 50 }, confidence: 0.99 },
+    { text: 'A', box: { x0: 1, y0: 0, x1: 101, y1: 50 }, confidence: 0.5 },
+    { text: 'B', box: { x0: 0, y0: 200, x1: 100, y1: 250 }, confidence: 0.7 },
+    { text: 'C', box: { x0: 50, y0: 0, x1: 150, y1: 50 }, confidence: 0.7 } // IoU with A = 0.33, kept
+  ];
+  const out = dedupeOverlappingLines(lines);
+  assert.deepEqual(out.map((l) => l.text), ['A', 'B', 'C']);
+  assert.equal(out[0].confidence, 0.99);
 });

@@ -55,8 +55,10 @@ import {
   extractIngredients,
   extractNutritionTableFormat
 } from './labelSemanticExtractor.service';
-import { segmentPanels, toReadingOrderText, extractNutritionTableFromPanels } from './textLayerGeometry.service';
-import { projectSpanToPixels, findOutlinedLines } from './outlinedText.service';
+import { segmentPanels, toReadingOrderText, extractNutritionTableFromPanels, medianFontSize } from './textLayerGeometry.service';
+import { projectSpanToPixels, findOutlinedLines, planOcrStrips, dropStripEdgeLines, dedupeOverlappingLines, type OcrLineLike } from './outlinedText.service';
+import { isVlmEnabled, prepareImage, ollamaClient, type VlmImage, type VlmClient } from './ollamaVlm.service';
+import { resolveDisplayRoles, type DisplayCandidateIn } from './displayRoleResolver.service';
 
 setLabelFieldExtractorDebug(env.labelExtractionDebug);
 
@@ -111,6 +113,8 @@ export type DisplayTextCandidate = {
   text: string;
   heightPx: number;
   confidence: number;
+  topPx: number;
+  occurrences: number;
 };
 
 /**
@@ -457,8 +461,9 @@ type FieldPass = {
 // (missing brand or product name), we rasterize and OCR the page. This helper
 // then looks for the outlined/stylised display text that branded headers are
 // typically rendered in — the same text OCR often mangles — by running paddle
-// OCR on the image and filtering to outlined lines (lines with confidence high
-// enough to have survived the segmentation logic in outlinedText.service.ts).
+// OCR on vertical strips (text-layer panels + silent gaps) and filtering to
+// outlined lines. Strip-wise OCR prevents the detector from merging same-baseline
+// text across neighbouring panels, which would hide the front panel's display text.
 // Returns top 8 ranked by height, since brand graphics are typically the
 // largest text on the page.
 async function recoverDisplayTextCandidates(
@@ -467,38 +472,187 @@ async function recoverDisplayTextCandidates(
   dpi: number
 ): Promise<DisplayTextCandidate[]> {
   try {
+    // Compute image metadata once
+    const metadata = await sharp(pageImage).metadata();
+    const pageHeightPt = metadata.height! / (dpi / 72);
+    const width = metadata.width!;
+
     // Identify which text spans are "covered" by the geometry layer, so we can
     // focus on text regions not already in the text layer.
     let spanRects: ReturnType<typeof projectSpanToPixels>[] = [];
     if (spans.length > 0) {
-      // Compute page height in points from the image height in pixels
-      const metadata = await sharp(pageImage).metadata();
-      const pageHeightPt = metadata.height! / (dpi / 72);
       // Project only first page's spans to pixel rectangles
       spanRects = spans
         .filter((s) => s.page === 1)
         .map((s) => projectSpanToPixels(s, pageHeightPt, dpi));
     }
 
-    // Run paddle OCR on the image to extract lines
-    const lines = await recognizeLines(pageImage);
+    // Compute panel X ranges from text-layer geometry (rotation-0 only)
+    const page1Spans = spans.filter((s) => s.page === 1);
+    let panelXRanges: Array<{ left: number; right: number }> = [];
+
+    if (page1Spans.length > 0) {
+      const panels = segmentPanels(page1Spans);
+      const s = dpi / 72;
+
+      // Filter to rotation-0 panels and extract their X ranges
+      for (const panel of panels) {
+        if (Math.abs(panel.rotation) < 0.01) {
+          let minX = Infinity;
+          let maxX = -Infinity;
+
+          for (const line of panel.lines) {
+            for (const span of line.spans) {
+              minX = Math.min(minX, span.x);
+              maxX = Math.max(maxX, span.x + span.width);
+            }
+          }
+
+          if (minX !== Infinity && maxX !== -Infinity) {
+            panelXRanges.push({
+              left: minX * s,
+              right: maxX * s
+            });
+          }
+        }
+      }
+    }
+
+    // Compute padding: 40px or 1.5 * median font size, whichever is larger
+    const s = dpi / 72;
+    const medianFontSizeVal = page1Spans.length > 0 ? medianFontSize(page1Spans) : 0;
+    const padPx = Math.max(40, Math.round(1.5 * medianFontSizeVal * s));
+
+    // Plan OCR strips (panels + gaps)
+    const strips = planOcrStrips(panelXRanges, width, padPx);
+
+    // OCR each strip and collect all lines
+    const allLines: OcrLineLike[] = [];
+
+    for (const strip of strips) {
+      try {
+        const crop = await sharp(pageImage).extract({
+          left: Math.round(strip.left),
+          top: 0,
+          width: Math.round(strip.width),
+          height: Math.round(metadata.height!)
+        }).png().toBuffer();
+
+        const lines = await recognizeLines(crop);
+
+        // Drop lines cut by the strip boundary (fragment removal)
+        const trimmedLines = dropStripEdgeLines(lines, strip, width);
+
+        // Offset every box by +strip.left on x
+        for (const line of trimmedLines) {
+          allLines.push({
+            text: line.text,
+            box: {
+              x0: line.box.x0 + strip.left,
+              y0: line.box.y0,
+              x1: line.box.x1 + strip.left,
+              y1: line.box.y1
+            },
+            confidence: line.confidence
+          });
+        }
+      } catch (stripError) {
+        // Strip OCR failure is fail-soft; continue with other strips
+        debugLog(`OCR strip [${strip.left}, ${strip.left + strip.width}) failed: ${
+          stripError instanceof Error ? stripError.message : String(stripError)
+        }`);
+      }
+    }
+
+    // Dedupe: two lines whose boxes have IoU > 0.7 are one line read by two
+    // overlapping strips (the padding) → keep the higher-confidence read.
+    const deduped = dedupeOverlappingLines(allLines);
+
+    // Compute occurrence count before filtering: across all collected lines (after strip-edge
+    // filtering, before findOutlinedLines), how many times does each normalized text appear?
+    // WHY: on die lines, a wordmark repeats on every panel (Homeo-Vita ×5, Nutrinol ×3);
+    // that repetition count is the best brand signal available and is otherwise discarded.
+    const occurrenceMap = new Map<string, number>();
+    for (const line of deduped) {
+      const normalized = line.text.toLowerCase().replace(/\s+/g, ' ').trim();
+      occurrenceMap.set(normalized, (occurrenceMap.get(normalized) ?? 0) + 1);
+    }
 
     // Filter to outlined lines: those that survived the segmentation logic
     // (high confidence, consistent box structure, etc.)
-    const outlined = findOutlinedLines(lines, spanRects);
+    const outlined = findOutlinedLines(deduped, spanRects);
 
-    // Return top 8 by height, with heights and confidence rounded for readability
-    return outlined.slice(0, 8).map((l) => ({
-      text: l.text,
-      heightPx: Math.round(l.box.y1 - l.box.y0),
-      confidence: Math.round(l.confidence * 100) / 100
-    }));
+    // Return top 10 by height, with heights and confidence rounded for readability.
+    // Fragment removal plus headroom for two-line product names (e.g. "Sharp\nMind Plus").
+    return outlined.slice(0, 10).map((l) => {
+      const normalized = l.text.toLowerCase().replace(/\s+/g, ' ').trim();
+      return {
+        text: l.text,
+        heightPx: Math.round(l.box.y1 - l.box.y0),
+        confidence: Math.round(l.confidence * 100) / 100,
+        topPx: Math.round(l.box.y0),
+        occurrences: occurrenceMap.get(normalized) ?? 0
+      };
+    });
   } catch (error) {
     console.warn(
       '[labelExtraction] display-text candidate recovery failed: ' +
         (error instanceof Error ? error.message : String(error))
     );
     return [];
+  }
+}
+
+// Blank, or filled with what the report stage will scrub as OCR debris anyway.
+function nameFieldMissing(value: string): boolean {
+  return !value || looksLikeOcrGarbage(value);
+}
+
+// Resolve blank brand/productName fields using VLM classification of display-text candidates.
+// Returns the fields unchanged if VLM is disabled, no candidates, or both fields already filled.
+// If resolution succeeds with confidence >= 0.6, fills blanks using fillBlanks;
+// otherwise returns fields unchanged. Wrapped in try/catch for fail-soft extraction.
+async function resolveBlankDisplayRoles(
+  fields: ExtractedLabelFields,
+  pageImage: Buffer,
+  candidates: DisplayTextCandidate[]
+): Promise<ExtractedLabelFields> {
+  // A field holding OCR debris ("Mc Mc Mg") is blank for our purposes: the
+  // report stage scrubs it anyway (looksLikeOcrGarbage), and if it is still
+  // there when fillBlanks runs, the model's grounded answer is thrown away
+  // in favour of the debris. Unicare lost "MULTIVITAMIN GUMMIES" exactly so.
+  const brandMissing = nameFieldMissing(fields.brand);
+  const productMissing = nameFieldMissing(fields.productName);
+  if (!isVlmEnabled() || candidates.length === 0 || (!brandMissing && !productMissing)) {
+    return fields;
+  }
+
+  try {
+    const image = await prepareImage(pageImage);
+    debugLog(`VLM display-role candidates: ${JSON.stringify(candidates)}`);
+    const roles = await resolveDisplayRoles(image, candidates, ollamaClient);
+    debugLog(`VLM display-role answer: ${JSON.stringify(roles)}`);
+
+    // No roles or confidence below threshold — return unchanged
+    if (!roles || roles.confidence < 0.6) {
+      return fields;
+    }
+
+    // Fill blanks with resolved brand/productName, ignoring empty patch values.
+    // Debris is cleared first so a grounded answer can replace it.
+    const base = {
+      ...fields,
+      brand: brandMissing ? '' : fields.brand,
+      productName: productMissing ? '' : fields.productName
+    };
+    return fillBlanks(base, { brand: roles.brand, productName: roles.productName });
+  } catch (error) {
+    console.warn(
+      '[labelExtraction] VLM display-role resolution failed: ' +
+        (error instanceof Error ? error.message : String(error))
+    );
+    // Fail-soft: return fields unchanged
+    return fields;
   }
 }
 
@@ -564,23 +718,31 @@ async function extractFieldsFromPdf(pdfBuffer: Buffer, knownFlavours: readonly s
   // candidates from the first rasterized page to surface candidate brand/product titles
   // that OCR couldn't reliably extract but are visibly rendered.
   let displayTextCandidates: DisplayTextCandidate[] | undefined;
-  if ((!fields.brand || !fields.productName) && pageImages.length > 0) {
+  if ((nameFieldMissing(fields.brand) || nameFieldMissing(fields.productName)) && pageImages.length > 0) {
     displayTextCandidates = await recoverDisplayTextCandidates(pageImages[0], spans, env.pdfRasterDpi);
+    // Resolve blank display roles using VLM classification if available
+    if (displayTextCandidates) {
+      fields = await resolveBlankDisplayRoles(fields, pageImages[0], displayTextCandidates);
+    }
   }
 
   return { fields, text: finalText, pageImages, nutritionTable, displayTextCandidates };
 }
 
 async function extractFieldsFromImage(imageBuffer: Buffer, knownFlavours: readonly string[]): Promise<FieldPass> {
-  const { text, fields } = await ocrImageWithEnhancement(imageBuffer, '', knownFlavours);
+  let { text, fields } = await ocrImageWithEnhancement(imageBuffer, '', knownFlavours);
   debugLog(`OCR text (${text.length} chars):\n${text}`);
   // The upload IS the page image, so colour reads straight off it.
 
   // For image uploads, if brand or product name are still missing after OCR,
   // recover display-text candidates. No spans from text layer, so pass empty array.
   let displayTextCandidates: DisplayTextCandidate[] | undefined;
-  if (!fields.brand || !fields.productName) {
+  if (nameFieldMissing(fields.brand) || nameFieldMissing(fields.productName)) {
     displayTextCandidates = await recoverDisplayTextCandidates(imageBuffer, [], env.pdfRasterDpi);
+    // Resolve blank display roles using VLM classification if available
+    if (displayTextCandidates) {
+      fields = await resolveBlankDisplayRoles(fields, imageBuffer, displayTextCandidates);
+    }
   }
 
   return { fields, text, pageImages: [imageBuffer], displayTextCandidates };

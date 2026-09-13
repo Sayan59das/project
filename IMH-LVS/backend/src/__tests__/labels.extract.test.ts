@@ -407,6 +407,7 @@ test('Real label PDF (Unicare Homeo-Vita, fully outlined display text): display-
     candidates.some((c) => /GUMMIES/i.test(c.text)),
     'displayTextCandidates must include text matching GUMMIES'
   );
+  assert.ok(candidates.some((c: any) => /MULTIVITAMIN/.test(c.text)), 'front-panel display text must be a candidate (strip-wise OCR)');
 
   // Verify array is ordered by heightPx (tallest first)
   for (let i = 0; i < candidates.length - 1; i++) {
@@ -425,19 +426,22 @@ test('Real label PDF (Unicare Homeo-Vita, fully outlined display text): display-
     assert.ok(candidate.confidence >= 0 && candidate.confidence <= 1, 'candidate confidence must be in [0,1]');
   }
 
-  // Verify that brand/productName fields are either blank or one of the candidates
-  // (never fabricated from a different source)
-  if (body.data.brand !== '') {
-    assert.ok(
-      candidates.some((c) => c.text === body.data.brand),
-      'brand must be blank or one of the displayTextCandidates'
-    );
+  // Verify that brand/productName are blank or GROUNDED in the candidates: every
+  // word of the value is a word of some candidate (Phase E may compose two
+  // vertically-adjacent candidates, "MULTIVITAMIN" + "GUMMIES") — never a word
+  // from any other source.
+  const candidateWords = new Set(candidates.flatMap((c: { text: string }) => c.text.toLowerCase().split(/\s+/)));
+  for (const field of ['brand', 'productName'] as const) {
+    if (body.data[field] === '') continue;
+    for (const word of String(body.data[field]).toLowerCase().split(/\s+/)) {
+      assert.ok(candidateWords.has(word), `${field} word "${word}" must come from a displayTextCandidate`);
+    }
   }
-  if (body.data.productName !== '') {
-    assert.ok(
-      candidates.some((c) => c.text === body.data.productName),
-      'productName must be blank or one of the displayTextCandidates'
-    );
+
+  // When VLM is enabled, verify that blank brand/productName are resolved from candidates
+  if (process.env.OLLAMA_URL) {
+    assert.equal(body.data.brand, 'Homeo-Vita');
+    assert.match(body.data.productName, /MULTIVITAMIN/);
   }
 });
 

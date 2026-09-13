@@ -2,7 +2,7 @@ import fs from 'fs';
 import { Request, Response } from 'express';
 import { buildPlaceholderExtraction, extractLabelFromFile, LabelExtractionResult } from '../services/labelExtraction.service';
 import { compareLabels as compareLabelData, ComparisonStage } from '../services/labelComparison.service';
-import { compareArtworkImages, compareFingerprints, fingerprintArtworkImage, ArtworkVisualComparison } from '../services/imageSimilarity.service';
+import { compareFingerprints, fingerprintArtworkImage, type ArtworkVisualComparison } from '../services/imageSimilarity.service';
 import { identifyProduct as identifyProductWithAi, ProductIdentificationInput } from '../services/productIdentification.service';
 import { claims as claimsMaster, flavours as flavoursMaster } from '../repositories/masters.repository';
 import { getProducts } from '../repositories/product.repository';
@@ -201,13 +201,19 @@ export async function compareLabels(req: Request, res: Response) {
 // same Promise.all — a visual-comparison failure degrades to MISSING for
 // both signals, the same contract the frontend's tryCompareVisual already
 // holds itself to.
-async function buildVisualComparison(fileA: Express.Multer.File, fileB: Express.Multer.File): Promise<ArtworkVisualComparison> {
+async function buildVisualComparison(
+  fileA: Express.Multer.File,
+  fileB: Express.Multer.File,
+  brandA?: string,
+  brandB?: string
+): Promise<ArtworkVisualComparison> {
   try {
     const [bufferA, bufferB] = await Promise.all([fs.promises.readFile(fileA.path), fs.promises.readFile(fileB.path)]);
-    return await compareArtworkImages(
-      { buffer: bufferA, mimeType: fileA.mimetype },
-      { buffer: bufferB, mimeType: fileB.mimetype }
-    );
+    const [fpA, fpB] = await Promise.all([
+      fingerprintArtworkImage({ buffer: bufferA, mimeType: fileA.mimetype }, { brandText: brandA }),
+      fingerprintArtworkImage({ buffer: bufferB, mimeType: fileB.mimetype }, { brandText: brandB })
+    ]);
+    return compareFingerprints(fpA, fpB);
   } catch (error) {
     console.error('[labels.controller] Could not build the visual comparison — reporting MISSING instead of failing the request:', error instanceof Error ? error.message : error);
     return { artworkSimilarity: { status: 'MISSING' }, colourSimilarity: { status: 'MISSING' } };
@@ -224,8 +230,11 @@ async function buildVisualComparison(fileA: Express.Multer.File, fileB: Express.
 // JSON-only contract.
 export async function compareVisual(req: Request, res: Response) {
   const files = req.files as { labelA?: Express.Multer.File[]; labelB?: Express.Multer.File[] } | undefined;
+  const body = req.body as { brandA?: string; brandB?: string } | undefined;
   const fileA = files?.labelA?.[0];
   const fileB = files?.labelB?.[0];
+  const brandA = typeof body?.brandA === 'string' ? body.brandA : undefined;
+  const brandB = typeof body?.brandB === 'string' ? body.brandB : undefined;
 
   if (!fileA || !fileB) {
     removeTempFile(fileA);
@@ -236,7 +245,7 @@ export async function compareVisual(req: Request, res: Response) {
   }
 
   try {
-    const visualComparison = await buildVisualComparison(fileA, fileB);
+    const visualComparison = await buildVisualComparison(fileA, fileB, brandA, brandB);
     res.status(200).json({ success: true, data: { visualComparison } });
   } catch (error) {
     console.error('[labels.controller] Unexpected failure building the visual comparison result:', error instanceof Error ? error.message : error);
@@ -250,10 +259,10 @@ export async function compareVisual(req: Request, res: Response) {
 // Reads and fingerprints one uploaded file, never throwing — an unreadable
 // file fingerprints to null, which compareFingerprints reports as MISSING
 // for both signals rather than crashing the batch.
-async function fingerprintUploadedFile(file: Express.Multer.File) {
+async function fingerprintUploadedFile(file: Express.Multer.File, brandText?: string) {
   try {
     const buffer = await fs.promises.readFile(file.path);
-    return await fingerprintArtworkImage({ buffer, mimeType: file.mimetype });
+    return await fingerprintArtworkImage({ buffer, mimeType: file.mimetype }, { brandText });
   } catch (error) {
     console.error('[labels.controller] Could not fingerprint an uploaded file for batch visual comparison:', error instanceof Error ? error.message : error);
     return null;
@@ -270,8 +279,29 @@ async function fingerprintUploadedFile(file: Express.Multer.File) {
 // were sent.
 export async function compareVisualBatch(req: Request, res: Response) {
   const files = req.files as { subject?: Express.Multer.File[]; candidates?: Express.Multer.File[] } | undefined;
+  const body = req.body as { brandSubject?: string; brandCandidates?: string } | undefined;
   const subjectFile = files?.subject?.[0];
   const candidateFiles = files?.candidates ?? [];
+
+  // Parse brandSubject (single string) and brandCandidates (JSON array or string)
+  let brandSubject: string | undefined;
+  let brandCandidates: string[] = [];
+
+  if (body?.brandSubject && typeof body.brandSubject === 'string') {
+    brandSubject = body.brandSubject;
+  }
+
+  if (body?.brandCandidates && typeof body.brandCandidates === 'string') {
+    try {
+      const parsed = JSON.parse(body.brandCandidates);
+      if (Array.isArray(parsed) && parsed.every((v) => typeof v === 'string')) {
+        brandCandidates = parsed;
+      }
+    } catch {
+      // If not valid JSON, treat as empty array — missing → '' as per spec
+    }
+  }
+
   const cleanup = () => {
     removeTempFile(subjectFile);
     candidateFiles.forEach(removeTempFile);
@@ -285,9 +315,11 @@ export async function compareVisualBatch(req: Request, res: Response) {
   }
 
   try {
-    const subjectFingerprint = await fingerprintUploadedFile(subjectFile);
+    const subjectFingerprint = await fingerprintUploadedFile(subjectFile, brandSubject);
     const results = await Promise.all(
-      candidateFiles.map(async (candidateFile) => compareFingerprints(subjectFingerprint, await fingerprintUploadedFile(candidateFile)))
+      candidateFiles.map(async (candidateFile, i) =>
+        compareFingerprints(subjectFingerprint, await fingerprintUploadedFile(candidateFile, brandCandidates[i] ?? ''))
+      )
     );
     res.status(200).json({ success: true, data: { results } });
   } catch (error) {

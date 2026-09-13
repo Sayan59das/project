@@ -4,7 +4,7 @@
 // smoke-testing rather than here; this covers what CAN run in plain Node.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { cell, fieldRows, formatVersionLabel, visualCell } from '../../utils/comparisonReportPdf';
+import { cell, fieldRows, formatVersionLabel, visualCell, visualRows } from '../../utils/comparisonReportPdf';
 import type { LabelComparisonFieldResult } from '../../types/labelComparison';
 
 test('cell renders a blank value as an em dash, not an empty string', () => {
@@ -33,4 +33,20 @@ test('fieldRows builds one Parameter/Current/Compared/Result row per field, matc
 test('visualCell renders a real percentage when present, an em dash for MISSING (no percentage computed)', () => {
   assert.equal(visualCell({ status: 'MATCH', similarityPercentage: 97 }), '97%');
   assert.equal(visualCell({ status: 'MISSING' }), '—');
+});
+
+test('visualRows splits Logo from Design/Layout only when logoSimilarity is present', () => {
+  const base = {
+    artworkSimilarity: { status: 'SIMILAR' as const, similarityPercentage: 81 },
+    colourSimilarity: { status: 'MATCH' as const, similarityPercentage: 96 }
+  };
+  assert.deepEqual(visualRows(base), [
+    ['Logo & Design/Layout', '81%', 'SIMILAR'],
+    ['Colour', '96%', 'MATCH']
+  ]);
+  assert.deepEqual(visualRows({ ...base, logoSimilarity: { status: 'MATCH', similarityPercentage: 98 } }), [
+    ['Logo', '98%', 'MATCH'],
+    ['Design/Layout', '81%', 'SIMILAR'],
+    ['Colour', '96%', 'MATCH']
+  ]);
 });

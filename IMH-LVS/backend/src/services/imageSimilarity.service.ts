@@ -52,7 +52,14 @@
 // Isolating the logo or the label region specifically would need an
 // object-detection step this project does not have yet.
 import sharp from 'sharp';
+import crypto from 'crypto';
 import { rasterizePdfPages } from './pdf.service';
+import { recognizeLines } from './paddleOcr.service';
+import { locateLogo } from './logoLocator.service';
+import { isVlmEnabled, prepareImage, ollamaClient } from './ollamaVlm.service';
+import type { VlmImage, VlmClient } from './ollamaVlm.service';
+import type { OcrLine } from './paddleOcr.service';
+import { env } from '../config/env';
 
 export type VisualComparisonStatus = 'MATCH' | 'SIMILAR' | 'CONFLICT' | 'MISSING';
 
@@ -68,6 +75,7 @@ export type VisualComparisonResult = {
 export type ArtworkVisualComparison = {
   artworkSimilarity: VisualComparisonResult;
   colourSimilarity: VisualComparisonResult;
+  logoSimilarity?: VisualComparisonResult;
 };
 
 // dHash: 9 columns x 8 rows of grayscale pixels, one bit per horizontal
@@ -101,6 +109,15 @@ const MATCH_MAX_DISTANCE = 4; // similarity >= 93.75%
 const SIMILAR_MAX_DISTANCE = 12; // similarity >= 81.25%
 const COLOUR_MATCH_MIN_SIMILARITY = 0.85;
 const COLOUR_SIMILAR_MIN_SIMILARITY = 0.6;
+
+// Per-process cache for logo fingerprinting results, keyed by sha256(fileBytes)+'|'+brandText.
+// Capped at 64 entries; when full, the oldest insertion is deleted (FIFO eviction).
+// Why: the batch endpoint reuses the same subject file across many candidates,
+// and calling locateLogo + recognizeLines on identical bytes repeatedly wastes compute.
+type LogoCacheEntry = { logoHash: bigint | null; logoSource: 'vlm' | 'brand-wordmark' | null };
+const logoCache = new Map<string, LogoCacheEntry>();
+const MAX_LOGO_CACHE_SIZE = 64;
+const logoCacheInsertionOrder: string[] = [];
 
 async function toRasterImage(buffer: Buffer, mimeType: string): Promise<Buffer | null> {
   if (mimeType === 'application/pdf') {
@@ -143,7 +160,137 @@ function computeColourHistogramFromRaster(data: Buffer): number[] {
 export type ImageFingerprint = {
   hash: bigint;
   colourHistogram: number[];
+  // Three-state logoHash: undefined = pass did not run; null = pass ran and found
+  // nothing; bigint = pass ran and found a logo to hash.
+  logoHash?: bigint | null;
+  // Three-state logoSource: undefined = pass did not run; null = pass ran and
+  // found nothing; 'vlm' | 'brand-wordmark' = pass ran and found a logo.
+  logoSource?: 'vlm' | 'brand-wordmark' | null;
 };
+
+/**
+ * Computes logo fingerprint from a located logo box.
+ * - Crops the image with sharp (extract, integer, clamped, min 8×8)
+ * - Resizes to HASH_WIDTH x HASH_HEIGHT grayscale
+ * - Computes difference hash on the crop
+ * Returns null if crop fails.
+ */
+async function computeLogoDifferenceHash(rasterBuffer: Buffer, box: { x0: number; y0: number; x1: number; y1: number }): Promise<bigint | null> {
+  try {
+    const x0 = Math.max(0, Math.floor(box.x0));
+    const y0 = Math.max(0, Math.floor(box.y0));
+    const x1 = Math.min(Math.floor(box.x1), 65535); // reasonable upper bound
+    const y1 = Math.min(Math.floor(box.y1), 65535);
+    const width = Math.max(8, x1 - x0);
+    const height = Math.max(8, y1 - y0);
+
+    const image = sharp(rasterBuffer);
+    const meta = await image.metadata();
+
+    // Clamp to actual image bounds
+    const cropX = Math.min(x0, (meta.width ?? 0) - 1);
+    const cropY = Math.min(y0, (meta.height ?? 0) - 1);
+    const cropWidth = Math.min(width, Math.max(8, (meta.width ?? 0) - cropX));
+    const cropHeight = Math.min(height, Math.max(8, (meta.height ?? 0) - cropY));
+
+    if (cropWidth < 8 || cropHeight < 8) {
+      return null;
+    }
+
+    const cropped = await image
+      .extract({ left: cropX, top: cropY, width: cropWidth, height: cropHeight })
+      .grayscale()
+      .resize(HASH_WIDTH, HASH_HEIGHT, { fit: 'fill' })
+      .raw()
+      .toBuffer();
+
+    return computeDifferenceHashFromRaster(cropped);
+  } catch (error) {
+    console.warn('[imageSimilarity] Could not compute logo hash from crop:', error instanceof Error ? error.message : error);
+    return null;
+  }
+}
+
+/**
+ * Compute and cache logo fingerprint (logoHash + logoSource).
+ * Uses a per-process Map keyed by sha256(fileBytes)+'|'+brandText, capped at 64 entries.
+ * Never throws; returns { logoHash: null, logoSource: null } on any error.
+ */
+async function computeLogoCached(
+  rasterBuffer: Buffer,
+  brandText: string,
+  deps?: { recognizeLines?: typeof recognizeLines; locateLogo?: typeof locateLogo }
+): Promise<{ logoHash: bigint | null; logoSource: 'vlm' | 'brand-wordmark' | null }> {
+  // Compute cache key
+  const hash = crypto.createHash('sha256').update(rasterBuffer).digest('hex');
+  const cacheKey = `${hash}|${brandText}`;
+
+  // Check cache
+  const cached = logoCache.get(cacheKey);
+  if (cached !== undefined) {
+    return cached;
+  }
+
+  try {
+    // Get metadata (width/height) from the raster
+    const meta = await sharp(rasterBuffer).metadata();
+    if (!meta.width || !meta.height) {
+      return { logoHash: null, logoSource: null };
+    }
+
+    // Use provided deps or real imports
+    const ocr = deps?.recognizeLines ?? recognizeLines;
+    const locate = deps?.locateLogo ?? locateLogo;
+
+    // Run OCR
+    const ocrLines = await ocr(rasterBuffer);
+
+    // Prepare VLM image if enabled
+    const vlmImage = isVlmEnabled() ? await prepareImage(rasterBuffer) : null;
+
+    // Locate logo
+    const location = await locate(
+      { width: meta.width, height: meta.height },
+      vlmImage,
+      ocrLines,
+      brandText,
+      ollamaClient
+    );
+
+    if (!location) {
+      const result = { logoHash: null, logoSource: null };
+      storeInLogoCache(cacheKey, result);
+      return result;
+    }
+
+    // Compute hash on the crop
+    const logoHash = await computeLogoDifferenceHash(rasterBuffer, location.box);
+    const result = { logoHash, logoSource: location.source };
+    storeInLogoCache(cacheKey, result);
+    return result;
+  } catch (error) {
+    console.warn('[imageSimilarity] Could not compute logo fingerprint:', error instanceof Error ? error.message : error);
+    const result = { logoHash: null, logoSource: null };
+    storeInLogoCache(cacheKey, result);
+    return result;
+  }
+}
+
+/**
+ * Store a logo cache entry, evicting the oldest if the cache is full.
+ */
+function storeInLogoCache(key: string, value: LogoCacheEntry): void {
+  if (!logoCache.has(key)) {
+    logoCacheInsertionOrder.push(key);
+    if (logoCache.size >= MAX_LOGO_CACHE_SIZE) {
+      const oldestKey = logoCacheInsertionOrder.shift();
+      if (oldestKey) {
+        logoCache.delete(oldestKey);
+      }
+    }
+  }
+  logoCache.set(key, value);
+}
 
 // Rasterizes and fingerprints one artwork file ONCE, producing both
 // signals from the same decode — exported separately from
@@ -154,7 +301,10 @@ export type ImageFingerprint = {
 // subject image once per candidate. Never throws: an unreadable file
 // resolves to null, which compareFingerprints below treats as MISSING
 // rather than a crash.
-export async function fingerprintArtworkImage(file: { buffer: Buffer; mimeType: string }): Promise<ImageFingerprint | null> {
+export async function fingerprintArtworkImage(
+  file: { buffer: Buffer; mimeType: string },
+  options?: { brandText?: string; deps?: { recognizeLines?: typeof recognizeLines; locateLogo?: typeof locateLogo } }
+): Promise<ImageFingerprint | null> {
   try {
     const rasterBuffer = await toRasterImage(file.buffer, file.mimeType);
     if (!rasterBuffer) return null;
@@ -170,10 +320,23 @@ export async function fingerprintArtworkImage(file: { buffer: Buffer; mimeType: 
         .toBuffer()
     ]);
 
-    return {
+    // Compute logo fingerprint if OCR is enabled. When the pass runs, logoHash
+    // and logoSource are set to null (pass ran, nothing found) or their actual
+    // values (pass ran, found logo). When the pass is skipped, both remain
+    // undefined to signal the pass did not run.
+    const brandText = options?.brandText ?? '';
+    const result: ImageFingerprint = {
       hash: computeDifferenceHashFromRaster(hashPixels),
       colourHistogram: computeColourHistogramFromRaster(colourPixels)
     };
+
+    if (env.paddleOcrEnabled) {
+      const logoResult = await computeLogoCached(rasterBuffer, brandText, options?.deps);
+      result.logoHash = logoResult.logoHash;
+      result.logoSource = logoResult.logoSource;
+    }
+
+    return result;
   } catch (error) {
     console.error('[imageSimilarity] Could not fingerprint image for visual comparison:', error instanceof Error ? error.message : error);
     return null;
@@ -203,7 +366,7 @@ function classifyColour(similarity: number): VisualComparisonStatus {
 }
 
 /** Compares two already-computed hashes. */
-function compareHashes(hashA: bigint, hashB: bigint): VisualComparisonResult {
+export function compareHashes(hashA: bigint, hashB: bigint): VisualComparisonResult {
   const distance = hammingDistance(hashA, hashB);
   const similarityPercentage = Math.round(((HASH_BITS - distance) / HASH_BITS) * 100);
   return { status: classifyStructural(distance), similarityPercentage };
@@ -227,15 +390,34 @@ function compareColourHistograms(histogramA: number[], histogramB: number[]): Vi
  * use. Either side being null (unreadable file) reports MISSING for both
  * signals, the same honest "nothing to compare" treatment every other
  * field in this system gives an absent value — never a fabricated result.
+ * Only includes logoSimilarity when at least one of a.logoHash or b.logoHash
+ * is not undefined (i.e. the logo pass ran).
  */
 export function compareFingerprints(a: ImageFingerprint | null, b: ImageFingerprint | null): ArtworkVisualComparison {
   if (!a || !b) {
     return { artworkSimilarity: { status: 'MISSING' }, colourSimilarity: { status: 'MISSING' } };
   }
-  return {
+
+  const comparison: ArtworkVisualComparison = {
     artworkSimilarity: compareHashes(a.hash, b.hash),
     colourSimilarity: compareColourHistograms(a.colourHistogram, b.colourHistogram)
   };
+
+  // Include logoSimilarity only if the logo pass ran on at least one side.
+  // logoHash is undefined when the pass did not run (paddleOcrEnabled false or
+  // file could not be rasterized); null when it ran and found nothing; or a
+  // bigint when it ran and found a logo. The !== undefined check ensures the
+  // key is absent from the result when the pass never ran on either side.
+  // `!= null` and not truthiness: 0n is a legitimate dHash (a flat crop) and
+  // two flat crops must compare as MATCH, not vanish into MISSING.
+  if (a.logoHash !== undefined || b.logoHash !== undefined) {
+    comparison.logoSimilarity =
+      a.logoHash != null && b.logoHash != null
+        ? compareHashes(a.logoHash, b.logoHash)
+        : { status: 'MISSING' };
+  }
+
+  return comparison;
 }
 
 /**

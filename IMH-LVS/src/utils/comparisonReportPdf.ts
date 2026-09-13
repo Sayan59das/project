@@ -16,7 +16,7 @@ import autoTable from 'jspdf-autotable';
 import { renderPdfFirstPageToDataUrl } from '../hooks/usePdfThumbnail';
 import { formatDateTime } from './dateFormat';
 import type { LabelComparisonRun } from '../types/labelComparisonRecord';
-import type { LabelComparisonFieldResult, VisualComparisonResult } from '../types/labelComparison';
+import type { ArtworkVisualComparison, LabelComparisonFieldResult, VisualComparisonResult } from '../types/labelComparison';
 
 type PreviewableFile = { fileName: string; fileType: string; filePath: string };
 
@@ -83,6 +83,20 @@ export function fieldRows(fields: LabelComparisonFieldResult[]): string[][] {
 // cell that reads as a rendering bug.
 export function visualCell(result: VisualComparisonResult): string {
   return typeof result.similarityPercentage === 'number' ? `${result.similarityPercentage}%` : '—';
+}
+
+// Rows for the Visual Comparison table: Logo gets its own row only when the
+// backend measured the located logo crop (logoSimilarity present); otherwise
+// the shared row is kept — mirrors VisualComparisonSection.tsx exactly.
+export function visualRows(visual: ArtworkVisualComparison): string[][] {
+  const rows: string[][] = visual.logoSimilarity
+    ? [
+        ['Logo', visualCell(visual.logoSimilarity), visual.logoSimilarity.status],
+        ['Design/Layout', visualCell(visual.artworkSimilarity), visual.artworkSimilarity.status]
+      ]
+    : [['Logo & Design/Layout', visualCell(visual.artworkSimilarity), visual.artworkSimilarity.status]];
+  rows.push(['Colour', visualCell(visual.colourSimilarity), visual.colourSimilarity.status]);
+  return rows;
 }
 
 export type ArtworkImageInputs = {
@@ -257,10 +271,7 @@ export async function generateComparisonReportPdf(run: LabelComparisonRun, artwo
       autoTable(doc, {
         startY: y,
         head: [['Parameter', 'Similarity', 'Result']],
-        body: [
-          ['Logo & Design/Layout', visualCell(visual.artworkSimilarity), visual.artworkSimilarity.status],
-          ['Colour', visualCell(visual.colourSimilarity), visual.colourSimilarity.status]
-        ],
+        body: visualRows(visual),
         styles: { fontSize: BASE_FONT_PT, cellPadding: 2.5 },
         headStyles: { fillColor: [40, 40, 40], textColor: 255, fontStyle: 'bold' },
         margin: { left: MARGIN_MM, right: MARGIN_MM }
