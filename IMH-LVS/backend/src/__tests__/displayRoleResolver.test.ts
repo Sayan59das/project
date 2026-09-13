@@ -7,6 +7,9 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
+  isRoleEligible,
+  transcriptCorroborates,
+  TRANSCRIBE_PROMPT,
   groundToCandidates,
   resolveDisplayRoles,
   buildDisplayRolePrompt,
@@ -86,6 +89,56 @@ test('buildRoleOptions: Unicare-like set includes MULTIVITAMIN GUMMIES composite
 
   // Should NOT include Good Lifer Homeo-Vita (gap 1629-(680+45)=904 ≫ 1.2×137≈164)
   assert(!options.includes('Good Lifer Homeo-Vita'));
+});
+
+test('isRoleEligible: weight, regulatory, flavour and category lines are never name options', () => {
+  const reject = [
+    'EKnoll Net Wt. 90gm (30 Gummies)',
+    'fssat FSSAI Lic. No.10924999000068',
+    '30 Strawberry Flavour',
+    'Gummies HEALTHSUPPLEMENT',
+    'B12 Boost 500 mcg',
+    'MRP Rs. 499'
+  ];
+  for (const text of reject) {
+    assert.equal(isRoleEligible({ text, heightPx: 60, confidence: 0.99 }), false, `should reject: ${text}`);
+  }
+  const accept = ['Homeo-Vita', 'MULTIVITAMIN', 'Sharp Mind Plus', 'Omega 3 Gummies', 'Vitamin D3', 'Delicious Gummies', 'Express Energy'];
+  for (const text of accept) {
+    assert.equal(isRoleEligible({ text, heightPx: 60, confidence: 0.99 }), true, `should accept: ${text}`);
+  }
+});
+
+test('isRoleEligible: an OCR read below 0.7 confidence is debris whatever it says', () => {
+  assert.equal(isRoleEligible({ text: 'Son Lijo CUC', heightPx: 76, confidence: 0.64 }), false);
+  assert.equal(isRoleEligible({ text: 'Fod Heal', heightPx: 108, confidence: 0.67 }), false);
+  assert.equal(isRoleEligible({ text: 'Homeo-Vita', heightPx: 120, confidence: 0.7 }), true);
+});
+
+test('buildRoleOptions: ineligible candidates are kept out of composites too (the real Unicare list)', () => {
+  const unicare: DisplayCandidateIn[] = [
+    { text: 'Homeo-Vita', heightPx: 120, confidence: 0.99, topPx: 1628, occurrences: 4 },
+    { text: 'Fod Heal', heightPx: 108, confidence: 0.67, topPx: 598, occurrences: 1 },
+    { text: 'CUC', heightPx: 85, confidence: 0.75, topPx: 1521, occurrences: 1 },
+    { text: 'Son Lijo CUC', heightPx: 76, confidence: 0.64, topPx: 1528, occurrences: 1 },
+    { text: 'MULTIVITAMIN', heightPx: 71, confidence: 0.97, topPx: 2070, occurrences: 1 },
+    { text: '30 Strawberry Flavour', heightPx: 70, confidence: 0.99, topPx: 2840, occurrences: 1 },
+    { text: 'GUMMIES', heightPx: 69, confidence: 0.99, topPx: 2169, occurrences: 1 },
+    { text: 'fssat FSSAI Lic. No.10924999000068', heightPx: 66, confidence: 0.97, topPx: 2765, occurrences: 1 },
+    { text: 'UC MBKE INMONA', heightPx: 52, confidence: 0.88, topPx: 2422, occurrences: 1 },
+    { text: 'Gummies HEALTHSUPPLEMENT', heightPx: 51, confidence: 1, topPx: 2909, occurrences: 1 }
+  ];
+  const options = buildRoleOptions(unicare);
+  assert.deepEqual(options, ['Homeo-Vita', 'MULTIVITAMIN', 'GUMMIES', 'UC MBKE INMONA', 'MULTIVITAMIN GUMMIES']);
+});
+
+test('buildRoleOptions: the real Sharp Mind Plus list offers only the wordmark read', () => {
+  const sharpMind: DisplayCandidateIn[] = [
+    { text: 'FOCUS MEMORY CLARITY MENTAL 30', heightPx: 85, confidence: 0.99, topPx: 1731, occurrences: 1 },
+    { text: 'EKnoll Net Wt. 90gm (30 Gummies)', heightPx: 58, confidence: 0.88, topPx: 1442, occurrences: 1 },
+    { text: 'NUTRINOU', heightPx: 45, confidence: 0.98, topPx: 261, occurrences: 2 }
+  ];
+  assert.deepEqual(buildRoleOptions(sharpMind), ['FOCUS MEMORY CLARITY MENTAL 30', 'NUTRINOU']);
 });
 
 test('buildRoleOptions: excludes logo debris (short rare) like CUC with occurrences ≤ 2', () => {
@@ -270,7 +323,8 @@ test('resolveDisplayRoles: fake returns composite option → grounds to composit
   let receivedSchema: object | null = null;
   const fakeClient = {
     askJson: async (_image: unknown, _prompt: unknown, schema: object) => {
-      receivedSchema = schema;
+      // The role call comes first; the transcription call that follows has its own schema.
+      if (receivedSchema === null) receivedSchema = schema;
       return {
         brand: 'Homeo-Vita',
         productName: 'MULTIVITAMIN GUMMIES',
@@ -423,6 +477,97 @@ test('resolveDisplayRoles: occurrence prior stays silent when two candidates bot
   const result = await resolveDisplayRoles(fakeImage, candidates, fakeClient);
 
   assert.equal(result, null);
+});
+
+const IMG = { base64: 'dummy', sentWidth: 1008, sentHeight: 28, originalWidth: 100, originalHeight: 100 };
+
+// A fake that answers the role call and the transcription call differently.
+function twoCallClient(roles: object, transcript: { brandAsPrinted: string; productAsPrinted: string } | null) {
+  const prompts: string[] = [];
+  return {
+    prompts,
+    askJson: async (_image: unknown, prompt: string) => {
+      prompts.push(prompt);
+      return prompt === TRANSCRIBE_PROMPT ? transcript : roles;
+    }
+  };
+}
+
+test('transcriptCorroborates: whole words, case- and hyphen-insensitive', () => {
+  assert.equal(transcriptCorroborates('Homeo-Vita Gummies', 'Homeo-Vita'), true);
+  assert.equal(transcriptCorroborates('HOMEO VITA GUMMIES', 'Homeo-Vita'), true);
+  assert.equal(transcriptCorroborates('NUTRINOL SHARP MIND PLUS GUMMIES', 'NUTRINOU'), false);
+  assert.equal(transcriptCorroborates('NUTRINOL SHARP MIND PLUS GUMMIES', 'NUTRINOL'), true);
+  assert.equal(transcriptCorroborates('Supernutrinol', 'NUTRINOL'), false); // not a whole word
+  assert.equal(transcriptCorroborates('', 'NUTRINOL'), false);
+});
+
+test('resolveDisplayRoles: the transcript vetoes a brand the model did not read that way (NUTRINOU vs NUTRINOL)', async () => {
+  const candidates: DisplayCandidateIn[] = [
+    { text: 'FOCUS MEMORY CLARITY MENTAL 30', heightPx: 85, confidence: 0.99, topPx: 1731, occurrences: 1 },
+    { text: 'NUTRINOU', heightPx: 45, confidence: 0.98, topPx: 261, occurrences: 2 }
+  ];
+  const client = twoCallClient(
+    { brand: 'NUTRINOU', productName: '', confidence: 0.9 },
+    { brandAsPrinted: '', productAsPrinted: 'NUTRINOL SHARP MIND PLUS GUMMIES' }
+  );
+  const result = await resolveDisplayRoles(IMG, candidates, client);
+  // Brand vetoed and nothing else grounded → null (blank beats a one-letter-wrong brand).
+  assert.equal(result, null);
+  assert.equal(client.prompts.length, 2);
+  assert.equal(client.prompts[1], TRANSCRIBE_PROMPT);
+  assert.ok(!client.prompts[1].includes('NUTRINOU'), 'the transcription prompt must not show the model the OCR options');
+});
+
+test('resolveDisplayRoles: a string given for both roles and then vetoed as brand does not survive as the product', async () => {
+  const candidates: DisplayCandidateIn[] = [
+    { text: 'FOCUS MEMORY CLARITY MENTAL 30', heightPx: 85, confidence: 0.99, topPx: 1731, occurrences: 1 },
+    { text: 'NUTRINOU', heightPx: 45, confidence: 0.98, topPx: 261, occurrences: 2 }
+  ];
+  const client = twoCallClient(
+    { brand: 'NUTRINOU', productName: 'NUTRINOU', confidence: 0.9 },
+    { brandAsPrinted: '', productAsPrinted: 'NUTRINOL SHARP MIND PLUS GUMMIES' }
+  );
+  assert.equal(await resolveDisplayRoles(IMG, candidates, client), null);
+});
+
+test('resolveDisplayRoles: a corroborated brand passes; the product is not subject to the veto', async () => {
+  const candidates: DisplayCandidateIn[] = [
+    { text: 'Homeo-Vita', heightPx: 120, confidence: 0.99, topPx: 1628, occurrences: 4 },
+    { text: 'MULTIVITAMIN', heightPx: 71, confidence: 0.97, topPx: 2070, occurrences: 1 },
+    { text: 'GUMMIES', heightPx: 69, confidence: 0.99, topPx: 2169, occurrences: 1 }
+  ];
+  const client = twoCallClient(
+    { brand: 'Homeo-Vita', productName: 'MULTIVITAMIN GUMMIES', confidence: 0.95 },
+    { brandAsPrinted: '', productAsPrinted: 'Homeo-Vita Gummies' } // no MULTIVITAMIN in the transcript
+  );
+  const result = await resolveDisplayRoles(IMG, candidates, client);
+  assert.deepEqual(result, { brand: 'Homeo-Vita', productName: 'MULTIVITAMIN GUMMIES', confidence: 0.95 });
+});
+
+test('resolveDisplayRoles: the veto also applies to a brand the occurrence prior filled', async () => {
+  const candidates: DisplayCandidateIn[] = [
+    { text: 'NUTRINOU', heightPx: 45, confidence: 0.98, topPx: 261, occurrences: 3 },
+    { text: 'GUMMIES', heightPx: 69, confidence: 0.99, topPx: 2169, occurrences: 1 }
+  ];
+  const client = twoCallClient(
+    { brand: '', productName: 'GUMMIES', confidence: 0.9 },
+    { brandAsPrinted: 'NUTRINOL', productAsPrinted: 'GUMMIES' }
+  );
+  const result = await resolveDisplayRoles(IMG, candidates, client);
+  assert.deepEqual(result, { brand: '', productName: 'GUMMIES', confidence: 0.9, brandVetoedBy: 'NUTRINOL GUMMIES' });
+});
+
+test('resolveDisplayRoles: an empty or failed transcription is no evidence — the brand stands', async () => {
+  const candidates: DisplayCandidateIn[] = [
+    { text: 'Homeo-Vita', heightPx: 120, confidence: 0.99, topPx: 1628, occurrences: 4 },
+    { text: 'GUMMIES', heightPx: 69, confidence: 0.99, topPx: 2169, occurrences: 1 }
+  ];
+  for (const transcript of [null, { brandAsPrinted: '', productAsPrinted: '' }]) {
+    const client = twoCallClient({ brand: 'Homeo-Vita', productName: 'GUMMIES', confidence: 0.9 }, transcript);
+    const result = await resolveDisplayRoles(IMG, candidates, client);
+    assert.deepEqual(result, { brand: 'Homeo-Vita', productName: 'GUMMIES', confidence: 0.9 });
+  }
 });
 
 // ============================================================================

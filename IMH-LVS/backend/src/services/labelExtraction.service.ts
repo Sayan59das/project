@@ -603,6 +603,11 @@ async function recoverDisplayTextCandidates(
   }
 }
 
+// Blank, or filled with what the report stage will scrub as OCR debris anyway.
+function nameFieldMissing(value: string): boolean {
+  return !value || looksLikeOcrGarbage(value);
+}
+
 // Resolve blank brand/productName fields using VLM classification of display-text candidates.
 // Returns the fields unchanged if VLM is disabled, no candidates, or both fields already filled.
 // If resolution succeeds with confidence >= 0.6, fills blanks using fillBlanks;
@@ -612,22 +617,35 @@ async function resolveBlankDisplayRoles(
   pageImage: Buffer,
   candidates: DisplayTextCandidate[]
 ): Promise<ExtractedLabelFields> {
-  // Early return if VLM disabled, no candidates, or both fields already filled
-  if (!isVlmEnabled() || candidates.length === 0 || (fields.brand && fields.productName)) {
+  // A field holding OCR debris ("Mc Mc Mg") is blank for our purposes: the
+  // report stage scrubs it anyway (looksLikeOcrGarbage), and if it is still
+  // there when fillBlanks runs, the model's grounded answer is thrown away
+  // in favour of the debris. Unicare lost "MULTIVITAMIN GUMMIES" exactly so.
+  const brandMissing = nameFieldMissing(fields.brand);
+  const productMissing = nameFieldMissing(fields.productName);
+  if (!isVlmEnabled() || candidates.length === 0 || (!brandMissing && !productMissing)) {
     return fields;
   }
 
   try {
     const image = await prepareImage(pageImage);
+    debugLog(`VLM display-role candidates: ${JSON.stringify(candidates)}`);
     const roles = await resolveDisplayRoles(image, candidates, ollamaClient);
+    debugLog(`VLM display-role answer: ${JSON.stringify(roles)}`);
 
     // No roles or confidence below threshold — return unchanged
     if (!roles || roles.confidence < 0.6) {
       return fields;
     }
 
-    // Fill blanks with resolved brand/productName, ignoring empty patch values
-    return fillBlanks(fields, { brand: roles.brand, productName: roles.productName });
+    // Fill blanks with resolved brand/productName, ignoring empty patch values.
+    // Debris is cleared first so a grounded answer can replace it.
+    const base = {
+      ...fields,
+      brand: brandMissing ? '' : fields.brand,
+      productName: productMissing ? '' : fields.productName
+    };
+    return fillBlanks(base, { brand: roles.brand, productName: roles.productName });
   } catch (error) {
     console.warn(
       '[labelExtraction] VLM display-role resolution failed: ' +
@@ -700,7 +718,7 @@ async function extractFieldsFromPdf(pdfBuffer: Buffer, knownFlavours: readonly s
   // candidates from the first rasterized page to surface candidate brand/product titles
   // that OCR couldn't reliably extract but are visibly rendered.
   let displayTextCandidates: DisplayTextCandidate[] | undefined;
-  if ((!fields.brand || !fields.productName) && pageImages.length > 0) {
+  if ((nameFieldMissing(fields.brand) || nameFieldMissing(fields.productName)) && pageImages.length > 0) {
     displayTextCandidates = await recoverDisplayTextCandidates(pageImages[0], spans, env.pdfRasterDpi);
     // Resolve blank display roles using VLM classification if available
     if (displayTextCandidates) {
@@ -719,7 +737,7 @@ async function extractFieldsFromImage(imageBuffer: Buffer, knownFlavours: readon
   // For image uploads, if brand or product name are still missing after OCR,
   // recover display-text candidates. No spans from text layer, so pass empty array.
   let displayTextCandidates: DisplayTextCandidate[] | undefined;
-  if (!fields.brand || !fields.productName) {
+  if (nameFieldMissing(fields.brand) || nameFieldMissing(fields.productName)) {
     displayTextCandidates = await recoverDisplayTextCandidates(imageBuffer, [], env.pdfRasterDpi);
     // Resolve blank display roles using VLM classification if available
     if (displayTextCandidates) {

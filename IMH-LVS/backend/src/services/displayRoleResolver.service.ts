@@ -22,6 +22,8 @@ export type DisplayRoles = {
   brand: string;
   productName: string;
   confidence: number;
+  /** The model's transcript that vetoed the resolved brand, when that happened (diagnostics only). */
+  brandVetoedBy?: string;
 };
 
 export const DISPLAY_ROLE_SCHEMA: object = {
@@ -47,9 +49,45 @@ function norm(s: string): string {
     .trim();
 }
 
+// Lines that are display text but can never be a brand or a product name:
+// weights and counts ("Net Wt. 90gm (30 Gummies)"), regulatory identifiers
+// ("FSSAI Lic. No.…"), the flavour line, the category line ("Health
+// Supplement"). A 3B model offered such a line as an option WILL pick it —
+// Sharp Mind Plus came back with brand "EKnoll Net Wt. 90gm (30 Gummies)" at
+// confidence 1 — so they are kept out of the enum entirely.
+const NON_NAME_LINE = [
+  /\b(net\s*wt|net\s*weight|fssai|lic\.?|licen[cs]e|batch|mfg|mfd|exp\.?|expiry|mrp|rs\.?|₹)\b/i,
+  /\d+\s*(gm|g|mg|mcg|µg|ml|l|kg|kcal|%)\b/i,
+  /\(\s*\d+\s*[a-z]+\s*\)/i,
+  /\bflavou?r(ed)?\b/i,
+  /\b(health|dietary|food)\s*supplement/i,
+  /\bnutraceutical/i
+];
+
+// PP-OCR reads a clean word at ≥ 0.9; "Son Lijo CUC" (0.64) and "Fod Heal"
+// (0.67) are what a logo emblem or a strip edge look like when forced into
+// text. Below this the read is debris, whatever it says.
+const MIN_ROLE_CONFIDENCE = 0.7;
+
 /**
- * Build the set of valid role options: single candidates plus vertically-adjacent composites.
- * Returns singles (deduplicated by norm, keeping first casing, excluding logo debris) + composites (pairs only),
+ * A candidate is offered to the model (alone or inside a composite) only if
+ * it could plausibly BE a brand or product name: a confident OCR read, not a
+ * short rare token (logo debris — a real 3-letter brand repeats on every
+ * panel), and not a weight / regulatory / flavour / category line.
+ */
+export function isRoleEligible(c: DisplayCandidateIn): boolean {
+  if (c.confidence < MIN_ROLE_CONFIDENCE) return false;
+  if (NON_NAME_LINE.some((re) => re.test(c.text))) return false;
+  const tokens = norm(c.text).split(/\s+/);
+  const shortSingleToken = tokens.length === 1 && tokens[0].length < 4;
+  if (shortSingleToken && (c.occurrences === undefined || c.occurrences <= 2)) return false;
+  return true;
+}
+
+/**
+ * Build the set of valid role options: eligible single candidates plus
+ * vertically-adjacent composites of eligible candidates. Returns singles
+ * (deduplicated by norm, keeping first casing) + composites (pairs only),
  * deduplicated by norm, capped at 24 entries (singles first).
  *
  * Composites are built only from candidates with numeric topPx, sorted ascending.
@@ -58,39 +96,26 @@ function norm(s: string): string {
  * - height ratio <= 2 — candidates are similar size (not tiny text above huge text)
  * - normalized texts are different — avoid "foo foo" from near-duplicates
  *
- * Logo debris (e.g., "CUC" from an emblem) is excluded: single-token candidates with
- * fewer than 4 letters and occurrences undefined or ≤ 2 are filtered out.
- * A real 3-letter brand repeats on every panel (occurrences >= 4), so the threshold
- * guards against rare short noise while keeping legitimate repetitive branding.
+ * Ineligible candidates (see isRoleEligible) are excluded from BOTH singles and
+ * composites — filtering singles alone let "CUC" come back as "CUC Son Lijo CUC".
  */
 export function buildRoleOptions(candidates: readonly DisplayCandidateIn[]): string[] {
-  // Helper: is this text single-token and short?
-  const isShortSingleToken = (text: string): boolean => {
-    const tokens = norm(text).split(/\s+/);
-    return tokens.length === 1 && tokens[0].length < 4;
-  };
+  const eligible = candidates.filter(isRoleEligible);
 
-  // Singles: deduplicated by norm, keeping first casing; exclude logo debris
+  // Singles: deduplicated by norm, keeping first casing
   const seen = new Set<string>();
   const singles: string[] = [];
-  for (const c of candidates) {
+  for (const c of eligible) {
     const n = norm(c.text);
     if (!seen.has(n)) {
-      // Exclude logo debris: short rare candidates
-      if (isShortSingleToken(c.text) && (c.occurrences === undefined || c.occurrences <= 2)) {
-        continue; // Skip this candidate
-      }
       seen.add(n);
       singles.push(c.text);
     }
   }
 
-  // Composites: find vertically adjacent pairs
+  // Composites: find vertically adjacent pairs among the eligible candidates
   const composites: string[] = [];
-  const withTopPx = candidates.filter((c) => c.topPx !== undefined);
-
-  // Sort by topPx ascending
-  const sorted = [...withTopPx].sort((a, b) => (a.topPx ?? 0) - (b.topPx ?? 0));
+  const sorted = eligible.filter((c) => c.topPx !== undefined).sort((a, b) => (a.topPx ?? 0) - (b.topPx ?? 0));
 
   // Check each consecutive pair
   for (let i = 0; i < sorted.length - 1; i++) {
@@ -115,8 +140,7 @@ export function buildRoleOptions(candidates: readonly DisplayCandidateIn[]): str
   }
 
   // Combine singles + composites, deduplicated, capped at 24
-  const result = [...singles, ...composites].slice(0, 24);
-  return result;
+  return [...singles, ...composites].slice(0, 24);
 }
 
 /**
@@ -150,7 +174,7 @@ export function buildDisplayRolePrompt(candidates: readonly DisplayCandidateIn[]
     `and which one is the PRODUCT name (what the item is, e.g. 'Multivitamin Gummies'). Answer using ONLY strings from the list; use an empty string when unsure. confidence is 0..1.`;
 
   // Add repetition signal if any candidate appears more than once across panels
-  const repetitions = candidates.filter((c) => (c.occurrences ?? 1) > 1);
+  const repetitions = candidates.filter((c) => isRoleEligible(c) && (c.occurrences ?? 1) > 1);
   if (repetitions.length > 0) {
     const repetitionMap = Object.fromEntries(
       repetitions.map((c) => [c.text, c.occurrences])
@@ -222,14 +246,64 @@ export function groundToCandidates(answer: string, candidates: readonly DisplayC
   return sorted.map((c) => c.text).join(' ');
 }
 
+// Second, options-free call: the model transcribes the brand and product
+// exactly as printed. This is an INDEPENDENT read of the same pixels — the
+// enum call can only echo an OCR string, so an OCR misread of a stylised
+// wordmark ("NUTRINOU" for NUTRINOL) sails through it, while the model
+// itself reads NUTRINOL every time. The options are deliberately absent from
+// this prompt: a 3B model shown "NUTRINOU" as an option copies it.
+//
+// The `confidence` field is load-bearing, not decoration: with only the two
+// string fields in the schema, qwen2.5vl:3b's grammar-constrained decode
+// returns two empty strings for the very image it transcribes in full once
+// a number field follows them (measured 2026-09-13, Sharp Mind Plus: A/D
+// empty, B/C "NUTRINOL SHARP MIND PLUS GUMMIES"). Keep prompt and schema
+// together if you change either.
+export const TRANSCRIBE_SCHEMA = {
+  type: 'object',
+  properties: {
+    brandAsPrinted: { type: 'string' },
+    productAsPrinted: { type: 'string' },
+    confidence: { type: 'number' }
+  },
+  required: ['brandAsPrinted', 'productAsPrinted', 'confidence']
+};
+
+export const TRANSCRIBE_PROMPT =
+  "This is the print artwork of a food-supplement label. Transcribe the BRAND name (the maker's mark, usually next to the logo and repeated on several panels) EXACTLY as printed, letter for letter, and the PRODUCT name exactly as printed. Use an empty string if unreadable. confidence is 0..1.";
+
+/** The model's own transcription of the display text, '' when it gave none or the call failed. */
+export async function transcribeDisplayText(image: VlmImage, client: VlmClient): Promise<string> {
+  const raw = await client.askJson(image, TRANSCRIBE_PROMPT, TRANSCRIBE_SCHEMA);
+  if (typeof raw !== 'object' || raw === null) return '';
+  const obj = raw as Record<string, unknown>;
+  const parts = [obj.brandAsPrinted, obj.productAsPrinted].filter((v): v is string => typeof v === 'string');
+  return parts.join(' ').trim();
+}
+
+/** True when `text` appears in `transcript` as whole words (case- and hyphen-insensitive). */
+export function transcriptCorroborates(transcript: string, text: string): boolean {
+  const t = ` ${norm(transcript)} `;
+  const needle = ` ${norm(text)} `;
+  return needle.trim().length > 0 && t.includes(needle);
+}
+
 /**
  * Ask a VLM to classify which candidate is brand and which is product,
  * then ground the answer back to the original candidate text.
  *
+ * A resolved BRAND must additionally survive the model's own transcription
+ * (transcribeDisplayText): a non-empty transcript that does not contain it
+ * vetoes it. Brands are stylised wordmarks — exactly where OCR misreads — and
+ * a wrong brand is worse than a blank one (brief §3). Product names are not
+ * vetoed: they are plain type OCR reads well, and the model's transcript
+ * routinely omits the descriptor ("Homeo-Vita Gummies" for MULTIVITAMIN
+ * GUMMIES). An empty transcript is no evidence either way.
+ *
  * Returns null if:
  * - candidates array is empty (VLM not called)
  * - VLM returns invalid JSON
- * - neither brand nor productName ground to candidates
+ * - neither brand nor productName ground to candidates (after the veto)
  * - both ground to the same text (after normalization)
  */
 export async function resolveDisplayRoles(
@@ -282,22 +356,38 @@ export async function resolveDisplayRoles(
   let finalBrand = brand;
   let finalBrandConf = 1.0;
   if (!finalBrand) {
-    const repeated = candidates.filter((c) => (c.occurrences ?? 1) >= 3);
+    const repeated = candidates.filter((c) => isRoleEligible(c) && (c.occurrences ?? 1) >= 3);
     if (repeated.length === 1 && (!productName || norm(repeated[0].text) !== norm(productName))) {
       finalBrand = repeated[0].text;
       finalBrandConf = 0.7;
     }
   }
 
-  // Both null → reject
-  if (finalBrand === null && productName === null) {
-    return null;
-  }
-
-  // Both grounded but same text (after norm) → set productName to empty
+  // Both grounded but same text (after norm) → the product is dropped. This
+  // runs BEFORE the veto on purpose: a string the model gave for both roles
+  // and then contradicted in its own transcript must not survive as the
+  // product name just because the brand slot was cleared first.
   let finalProductName = productName;
   if (finalBrand && productName && norm(finalBrand) === norm(productName)) {
     finalProductName = null;
+  }
+
+  // Transcription veto (see the function comment): the brand we are about to
+  // return — the model's pick or the prior's — must appear in the model's own
+  // letter-for-letter read of the label, whenever it gave one.
+  let brandVetoedBy: string | null = null;
+  if (finalBrand) {
+    const transcript = await transcribeDisplayText(image, client);
+    if (transcript && !transcriptCorroborates(transcript, finalBrand)) {
+      brandVetoedBy = transcript;
+      finalBrand = null;
+      finalBrandConf = 1.0;
+    }
+  }
+
+  // Both null → reject
+  if (finalBrand === null && finalProductName === null) {
+    return null;
   }
 
   // Extract model confidence, clamp to [0, 1]
@@ -317,9 +407,11 @@ export async function resolveDisplayRoles(
   // Final confidence = min(modelConf, groundConf, priorConf)
   const confidence = Math.min(modelConf, groundConf, finalBrandConf);
 
-  return {
+  const roles: DisplayRoles = {
     brand: finalBrand ?? '',
     productName: finalProductName ?? '',
     confidence
   };
+  if (brandVetoedBy !== null) roles.brandVetoedBy = brandVetoedBy;
+  return roles;
 }
