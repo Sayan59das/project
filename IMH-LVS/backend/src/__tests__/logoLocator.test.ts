@@ -2,14 +2,13 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   type LogoBox,
-  type VlmClient,
-  type VlmImage,
   LOGO_BOX_SCHEMA,
   buildLogoPrompt,
   validateVlmBox,
   brandWordmarkBox,
   locateLogo
 } from '../services/logoLocator.service';
+import type { VlmClient, VlmImage } from '../services/ollamaVlm.service';
 import type { OcrLine } from '../services/paddleOcr.service';
 import type { Rectangle } from '../services/tesseract.service';
 

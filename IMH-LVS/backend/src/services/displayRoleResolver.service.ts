@@ -15,6 +15,7 @@ export type DisplayCandidateIn = {
   heightPx: number;
   confidence: number;
   topPx?: number;
+  occurrences?: number;
 };
 
 export type DisplayRoles = {
@@ -48,7 +49,7 @@ function norm(s: string): string {
 
 /**
  * Build the set of valid role options: single candidates plus vertically-adjacent composites.
- * Returns singles (deduplicated by norm, keeping first casing) + composites (pairs only),
+ * Returns singles (deduplicated by norm, keeping first casing, excluding logo debris) + composites (pairs only),
  * deduplicated by norm, capped at 24 entries (singles first).
  *
  * Composites are built only from candidates with numeric topPx, sorted ascending.
@@ -56,14 +57,29 @@ function norm(s: string): string {
  * - vertical gap < 1.2 × max(heightPx) — candidates are close vertically
  * - height ratio <= 2 — candidates are similar size (not tiny text above huge text)
  * - normalized texts are different — avoid "foo foo" from near-duplicates
+ *
+ * Logo debris (e.g., "CUC" from an emblem) is excluded: single-token candidates with
+ * fewer than 4 letters and occurrences undefined or ≤ 2 are filtered out.
+ * A real 3-letter brand repeats on every panel (occurrences >= 4), so the threshold
+ * guards against rare short noise while keeping legitimate repetitive branding.
  */
 export function buildRoleOptions(candidates: readonly DisplayCandidateIn[]): string[] {
-  // Singles: deduplicated by norm, keeping first casing
+  // Helper: is this text single-token and short?
+  const isShortSingleToken = (text: string): boolean => {
+    const tokens = norm(text).split(/\s+/);
+    return tokens.length === 1 && tokens[0].length < 4;
+  };
+
+  // Singles: deduplicated by norm, keeping first casing; exclude logo debris
   const seen = new Set<string>();
   const singles: string[] = [];
   for (const c of candidates) {
     const n = norm(c.text);
     if (!seen.has(n)) {
+      // Exclude logo debris: short rare candidates
+      if (isShortSingleToken(c.text) && (c.occurrences === undefined || c.occurrences <= 2)) {
+        continue; // Skip this candidate
+      }
       seen.add(n);
       singles.push(c.text);
     }
@@ -123,15 +139,26 @@ export function buildDisplayRoleSchema(options: readonly string[]): object {
 /**
  * Build the prompt for the VLM to classify brand vs product.
  * Uses the role options (singles + composites) rather than raw candidate texts.
+ * Includes repetition signal (occurrences) to help identify the brand wordmark.
  */
 export function buildDisplayRolePrompt(candidates: readonly DisplayCandidateIn[]): string {
   const options = buildRoleOptions(candidates);
-  return (
+  let prompt =
     `This is the print artwork of a food-supplement label. OCR read these prominent display texts on it: ${JSON.stringify(
       options
     )}. Decide which one is the BRAND name (the maker's mark, often near a logo, often repeated on several panels) ` +
-    `and which one is the PRODUCT name (what the item is, e.g. 'Multivitamin Gummies'). Answer using ONLY strings from the list; use an empty string when unsure. confidence is 0..1.`
-  );
+    `and which one is the PRODUCT name (what the item is, e.g. 'Multivitamin Gummies'). Answer using ONLY strings from the list; use an empty string when unsure. confidence is 0..1.`;
+
+  // Add repetition signal if any candidate appears more than once across panels
+  const repetitions = candidates.filter((c) => (c.occurrences ?? 1) > 1);
+  if (repetitions.length > 0) {
+    const repetitionMap = Object.fromEntries(
+      repetitions.map((c) => [c.text, c.occurrences])
+    );
+    prompt += ` Repetition across the label's panels: ${JSON.stringify(repetitionMap)} — the brand wordmark is usually the one repeated on several panels; the product name usually appears once, on the front panel, often above a dosage-form word such as GUMMIES.`;
+  }
+
+  return prompt;
 }
 
 /**
@@ -247,18 +274,29 @@ export async function resolveDisplayRoles(
   const brand = groundToCandidates(String(rawObj.brand ?? ''), allCandidates);
   const productName = groundToCandidates(String(rawObj.productName ?? ''), allCandidates);
 
+  // Deterministic prior: when the model left the brand blank, a lone candidate repeated
+  // on >= 3 panels is the wordmark (on die lines the maker's mark is printed on every
+  // panel: Homeo-Vita x5, Nutrinol x3). Fills a blank only, never overrides the model,
+  // never duplicates the product name, and caps confidence at 0.7 (heuristic, not vision).
+  // Runs BEFORE the both-null gate: the model answering ''/'' is exactly the case it is for.
+  let finalBrand = brand;
+  let finalBrandConf = 1.0;
+  if (!finalBrand) {
+    const repeated = candidates.filter((c) => (c.occurrences ?? 1) >= 3);
+    if (repeated.length === 1 && (!productName || norm(repeated[0].text) !== norm(productName))) {
+      finalBrand = repeated[0].text;
+      finalBrandConf = 0.7;
+    }
+  }
+
   // Both null → reject
-  if (brand === null && productName === null) {
+  if (finalBrand === null && productName === null) {
     return null;
   }
 
-  // Normalize for duplicate check
-  const brandNorm = brand ? norm(brand) : '';
-  const productNorm = productName ? norm(productName) : '';
-
   // Both grounded but same text (after norm) → set productName to empty
   let finalProductName = productName;
-  if (brand && productName && brandNorm === productNorm) {
+  if (finalBrand && productName && norm(finalBrand) === norm(productName)) {
     finalProductName = null;
   }
 
@@ -269,18 +307,18 @@ export async function resolveDisplayRoles(
   // Exact means: the normalized text matches a single candidate in allCandidates
   // (which includes both real and composite candidates).
   let groundConf = 1.0;
-  const brandWasExact = brand && allCandidates.find((c) => norm(c.text) === norm(brand));
+  const brandWasExact = finalBrand && allCandidates.find((c) => norm(c.text) === norm(finalBrand));
   const productWasExact = finalProductName && allCandidates.find((c) => norm(c.text) === norm(finalProductName));
 
-  if ((brand && !brandWasExact) || (finalProductName && !productWasExact)) {
+  if ((finalBrand && !brandWasExact) || (finalProductName && !productWasExact)) {
     groundConf = 0.85;
   }
 
-  // Final confidence = min(modelConf, groundConf)
-  const confidence = Math.min(modelConf, groundConf);
+  // Final confidence = min(modelConf, groundConf, priorConf)
+  const confidence = Math.min(modelConf, groundConf, finalBrandConf);
 
   return {
-    brand: brand ?? '',
+    brand: finalBrand ?? '',
     productName: finalProductName ?? '',
     confidence
   };

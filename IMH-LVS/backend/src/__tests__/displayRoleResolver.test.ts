@@ -88,6 +88,36 @@ test('buildRoleOptions: Unicare-like set includes MULTIVITAMIN GUMMIES composite
   assert(!options.includes('Good Lifer Homeo-Vita'));
 });
 
+test('buildRoleOptions: excludes logo debris (short rare) like CUC with occurrences ≤ 2', () => {
+  const candidatesWithLogoDebris: DisplayCandidateIn[] = [
+    { text: 'CUC', heightPx: 85, confidence: 0.75, occurrences: 2 },
+    { text: 'Homeo-Vita', heightPx: 120, confidence: 0.99, occurrences: 5, topPx: 1628 },
+    { text: 'MULTIVITAMIN', heightPx: 71, confidence: 0.9, topPx: 2070, occurrences: 1 },
+    { text: 'GUMMIES', heightPx: 69, confidence: 0.99, topPx: 2169, occurrences: 2 }
+  ];
+
+  const options = buildRoleOptions(candidatesWithLogoDebris);
+
+  // CUC is short (3 letters) and rare (occurrences 2) → excluded
+  assert(!options.includes('CUC'), 'CUC should be excluded as logo debris');
+  // Homeo-Vita is repeated 5 times → included
+  assert(options.includes('Homeo-Vita'), 'Homeo-Vita should be included');
+  // Composite should still be built
+  assert(options.includes('MULTIVITAMIN GUMMIES'), 'MULTIVITAMIN GUMMIES composite should be included');
+});
+
+test('buildRoleOptions: includes short candidate if it has high occurrences (real 3-letter brand)', () => {
+  const candidatesWithRealBrand: DisplayCandidateIn[] = [
+    { text: 'CUC', heightPx: 85, confidence: 0.75, occurrences: 4 },
+    { text: 'Homeo-Vita', heightPx: 120, confidence: 0.99, occurrences: 5, topPx: 1628 }
+  ];
+
+  const options = buildRoleOptions(candidatesWithRealBrand);
+
+  // CUC with occurrences 4 (>= 3) → included (real brand repeats on every panel)
+  assert(options.includes('CUC'), 'CUC with occurrences 4 should be included');
+});
+
 test('buildDisplayRoleSchema: includes enum constraint with options and empty string', () => {
   const options = ['A', 'B'];
   const schema = buildDisplayRoleSchema(options) as Record<string, unknown>;
@@ -287,6 +317,112 @@ test('buildDisplayRolePrompt: returns correct prompt template with options (incl
   assert(prompt.includes('GUMMIES'));
   // Should include composite option
   assert(prompt.includes('MULTIVITAMIN GUMMIES'));
+});
+
+test('buildDisplayRolePrompt: includes repetition info when candidates have occurrences > 1', () => {
+  const candidatesWithReps: DisplayCandidateIn[] = [
+    { text: 'Homeo-Vita', heightPx: 120, confidence: 0.99, occurrences: 5, topPx: 1628 },
+    { text: 'MULTIVITAMIN', heightPx: 71, confidence: 0.9, topPx: 2070, occurrences: 1 },
+    { text: 'GUMMIES', heightPx: 69, confidence: 0.99, topPx: 2169, occurrences: 2 }
+  ];
+
+  const prompt = buildDisplayRolePrompt(candidatesWithReps);
+  // Should include the base prompt
+  assert(prompt.includes('This is the print artwork of a food-supplement label'));
+  // Should include repetition sentence
+  assert(prompt.includes('Repetition across the label\'s panels'));
+  // Should include the occurrence counts
+  assert(prompt.includes('"Homeo-Vita":5'));
+  // MULTIVITAMIN has occurrences 1, so it's not in the repetition map
+  assert(!prompt.includes('"MULTIVITAMIN":1'));
+});
+
+test('buildDisplayRolePrompt: does not include repetition when all occurrences are 1', () => {
+  const candidatesNoReps: DisplayCandidateIn[] = [
+    { text: 'Brand', heightPx: 120, confidence: 0.99, occurrences: 1 },
+    { text: 'Product', heightPx: 71, confidence: 0.9, occurrences: 1 }
+  ];
+
+  const prompt = buildDisplayRolePrompt(candidatesNoReps);
+  // Should NOT include repetition info
+  assert(!prompt.includes('Repetition across the label\'s panels'));
+});
+
+test('resolveDisplayRoles: occurrence prior fills blank brand when one candidate repeats >= 3 times', async () => {
+  // Clean candidate list: brand repeats on every panel, product form once
+  const candidatesWithOccurrences: DisplayCandidateIn[] = [
+    { text: 'Homeo-Vita', heightPx: 120, confidence: 0.99, occurrences: 5, topPx: 1628 },
+    { text: 'MULTIVITAMIN', heightPx: 71, confidence: 0.9, topPx: 2070, occurrences: 1 },
+    { text: 'GUMMIES', heightPx: 69, confidence: 0.99, topPx: 2169, occurrences: 1 }
+  ];
+
+  const fakeClient = {
+    askJson: async () => ({
+      brand: '',
+      productName: 'MULTIVITAMIN GUMMIES',
+      confidence: 0.9
+    })
+  };
+
+  const fakeImage = {
+    base64: 'dummy',
+    sentWidth: 1008,
+    sentHeight: 28,
+    originalWidth: 100,
+    originalHeight: 100
+  };
+
+  const result = await resolveDisplayRoles(fakeImage, candidatesWithOccurrences, fakeClient);
+
+  // Brand is blank from model, but prior detects Homeo-Vita (occurrences 5 >= 3)
+  // with all others <= 1, so brand is filled with Homeo-Vita and confidence capped at 0.7
+  assert.deepEqual(result, {
+    brand: 'Homeo-Vita',
+    productName: 'MULTIVITAMIN GUMMIES',
+    confidence: 0.7
+  });
+});
+
+test('resolveDisplayRoles: occurrence prior fills the brand even when the model answers blank for both', async () => {
+  const candidates: DisplayCandidateIn[] = [
+    { text: 'Homeo-Vita', heightPx: 120, confidence: 0.99, occurrences: 5, topPx: 1628 },
+    { text: 'MULTIVITAMIN', heightPx: 71, confidence: 0.9, topPx: 2070, occurrences: 1 },
+    { text: 'GUMMIES', heightPx: 69, confidence: 0.99, topPx: 2169, occurrences: 2 }
+  ];
+  const fakeClient = { askJson: async () => ({ brand: '', productName: '', confidence: 0.3 }) };
+  const fakeImage = { base64: 'dummy', sentWidth: 1008, sentHeight: 28, originalWidth: 100, originalHeight: 100 };
+
+  const result = await resolveDisplayRoles(fakeImage, candidates, fakeClient);
+
+  // Without the prior this would be null (both blank). The lone x5 wordmark fills the brand;
+  // GUMMIES x2 does not block it (only a second >=3 candidate would). Confidence = min(0.3, 0.7).
+  assert.deepEqual(result, { brand: 'Homeo-Vita', productName: '', confidence: 0.3 });
+});
+
+test('resolveDisplayRoles: occurrence prior never duplicates the product the model chose', async () => {
+  const candidates: DisplayCandidateIn[] = [
+    { text: 'Homeo-Vita', heightPx: 120, confidence: 0.99, occurrences: 5, topPx: 1628 },
+    { text: 'GUMMIES', heightPx: 69, confidence: 0.99, topPx: 2169, occurrences: 1 }
+  ];
+  const fakeClient = { askJson: async () => ({ brand: '', productName: 'Homeo-Vita', confidence: 0.9 }) };
+  const fakeImage = { base64: 'dummy', sentWidth: 1008, sentHeight: 28, originalWidth: 100, originalHeight: 100 };
+
+  const result = await resolveDisplayRoles(fakeImage, candidates, fakeClient);
+
+  assert.deepEqual(result, { brand: '', productName: 'Homeo-Vita', confidence: 0.9 });
+});
+
+test('resolveDisplayRoles: occurrence prior stays silent when two candidates both repeat >= 3 times', async () => {
+  const candidates: DisplayCandidateIn[] = [
+    { text: 'Nutrinol', heightPx: 60, confidence: 0.99, occurrences: 3, topPx: 100 },
+    { text: 'Good Life', heightPx: 58, confidence: 0.95, occurrences: 3, topPx: 900 }
+  ];
+  const fakeClient = { askJson: async () => ({ brand: '', productName: '', confidence: 0.5 }) };
+  const fakeImage = { base64: 'dummy', sentWidth: 1008, sentHeight: 28, originalWidth: 100, originalHeight: 100 };
+
+  const result = await resolveDisplayRoles(fakeImage, candidates, fakeClient);
+
+  assert.equal(result, null);
 });
 
 // ============================================================================
