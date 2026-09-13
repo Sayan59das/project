@@ -47,12 +47,88 @@ function norm(s: string): string {
 }
 
 /**
+ * Build the set of valid role options: single candidates plus vertically-adjacent composites.
+ * Returns singles (deduplicated by norm, keeping first casing) + composites (pairs only),
+ * deduplicated by norm, capped at 24 entries (singles first).
+ *
+ * Composites are built only from candidates with numeric topPx, sorted ascending.
+ * A pair (a, b) is included if:
+ * - vertical gap < 1.2 × max(heightPx) — candidates are close vertically
+ * - height ratio <= 2 — candidates are similar size (not tiny text above huge text)
+ * - normalized texts are different — avoid "foo foo" from near-duplicates
+ */
+export function buildRoleOptions(candidates: readonly DisplayCandidateIn[]): string[] {
+  // Singles: deduplicated by norm, keeping first casing
+  const seen = new Set<string>();
+  const singles: string[] = [];
+  for (const c of candidates) {
+    const n = norm(c.text);
+    if (!seen.has(n)) {
+      seen.add(n);
+      singles.push(c.text);
+    }
+  }
+
+  // Composites: find vertically adjacent pairs
+  const composites: string[] = [];
+  const withTopPx = candidates.filter((c) => c.topPx !== undefined);
+
+  // Sort by topPx ascending
+  const sorted = [...withTopPx].sort((a, b) => (a.topPx ?? 0) - (b.topPx ?? 0));
+
+  // Check each consecutive pair
+  for (let i = 0; i < sorted.length - 1; i++) {
+    const a = sorted[i];
+    const b = sorted[i + 1];
+
+    // Calculate vertical gap: distance from a's bottom to b's top
+    const gap = (b.topPx ?? 0) - ((a.topPx ?? 0) + a.heightPx);
+    const maxHeight = Math.max(a.heightPx, b.heightPx);
+    const minHeight = Math.min(a.heightPx, b.heightPx);
+    const heightRatio = maxHeight / minHeight;
+
+    // Check conditions
+    if (gap < 1.2 * maxHeight && heightRatio <= 2 && norm(a.text) !== norm(b.text)) {
+      const composite = `${a.text} ${b.text}`;
+      const compositeNorm = norm(composite);
+      if (!seen.has(compositeNorm)) {
+        seen.add(compositeNorm);
+        composites.push(composite);
+      }
+    }
+  }
+
+  // Combine singles + composites, deduplicated, capped at 24
+  const result = [...singles, ...composites].slice(0, 24);
+  return result;
+}
+
+/**
+ * Build the JSON schema for display role resolution with enum constraints.
+ * Forces the model to choose from the provided options (plus empty string).
+ */
+export function buildDisplayRoleSchema(options: readonly string[]): object {
+  const enumValues = [...options, ''];
+  return {
+    type: 'object',
+    properties: {
+      brand: { type: 'string', enum: enumValues },
+      productName: { type: 'string', enum: enumValues },
+      confidence: { type: 'number' }
+    },
+    required: ['brand', 'productName', 'confidence']
+  };
+}
+
+/**
  * Build the prompt for the VLM to classify brand vs product.
+ * Uses the role options (singles + composites) rather than raw candidate texts.
  */
 export function buildDisplayRolePrompt(candidates: readonly DisplayCandidateIn[]): string {
+  const options = buildRoleOptions(candidates);
   return (
     `This is the print artwork of a food-supplement label. OCR read these prominent display texts on it: ${JSON.stringify(
-      candidates.map((c) => c.text)
+      options
     )}. Decide which one is the BRAND name (the maker's mark, often near a logo, often repeated on several panels) ` +
     `and which one is the PRODUCT name (what the item is, e.g. 'Multivitamin Gummies'). Answer using ONLY strings from the list; use an empty string when unsure. confidence is 0..1.`
   );
@@ -139,18 +215,37 @@ export async function resolveDisplayRoles(
     return null;
   }
 
+  // Build role options and schema with enum constraints
+  const options = buildRoleOptions(candidates);
+  const schema = buildDisplayRoleSchema(options);
+
   // Ask VLM
-  const raw = await client.askJson(image, buildDisplayRolePrompt(candidates), DISPLAY_ROLE_SCHEMA);
+  const raw = await client.askJson(image, buildDisplayRolePrompt(candidates), schema);
 
   // Not an object → null
   if (typeof raw !== 'object' || raw === null) {
     return null;
   }
 
-  // Ground brand and productName
+  // Build allCandidates: real candidates + composites-as-candidates for grounding.
+  // Composites are treated as candidates with heightPx=0 and confidence=1 so they
+  // match exactly (rule 1) and get groundConf=1.0 when grounded as composites.
+  const composites = options.filter(
+    (opt) =>
+      !candidates.some((c) => norm(c.text) === norm(opt)) // opt is a composite (not in singles)
+  );
+  const compositeCandidates: DisplayCandidateIn[] = composites.map((text) => ({
+    text,
+    heightPx: 0,
+    confidence: 1,
+    topPx: 0
+  }));
+  const allCandidates = [...candidates, ...compositeCandidates];
+
+  // Ground brand and productName against allCandidates (real + composite)
   const rawObj = raw as Record<string, unknown>;
-  const brand = groundToCandidates(String(rawObj.brand ?? ''), candidates);
-  const productName = groundToCandidates(String(rawObj.productName ?? ''), candidates);
+  const brand = groundToCandidates(String(rawObj.brand ?? ''), allCandidates);
+  const productName = groundToCandidates(String(rawObj.productName ?? ''), allCandidates);
 
   // Both null → reject
   if (brand === null && productName === null) {
@@ -170,10 +265,12 @@ export async function resolveDisplayRoles(
   // Extract model confidence, clamp to [0, 1]
   const modelConf = Math.max(0, Math.min(1, Number(rawObj.confidence) || 0.5));
 
-  // Ground confidence: 1.0 if both exact (rule 1), 0.85 if any composed
+  // Ground confidence: 1.0 if both exact, 0.85 if any composed.
+  // Exact means: the normalized text matches a single candidate in allCandidates
+  // (which includes both real and composite candidates).
   let groundConf = 1.0;
-  const brandWasExact = brand && candidates.find((c) => norm(c.text) === norm(brand));
-  const productWasExact = finalProductName && candidates.find((c) => norm(c.text) === norm(finalProductName));
+  const brandWasExact = brand && allCandidates.find((c) => norm(c.text) === norm(brand));
+  const productWasExact = finalProductName && allCandidates.find((c) => norm(c.text) === norm(finalProductName));
 
   if ((brand && !brandWasExact) || (finalProductName && !productWasExact)) {
     groundConf = 0.85;
