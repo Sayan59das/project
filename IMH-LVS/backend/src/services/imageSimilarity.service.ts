@@ -160,8 +160,12 @@ function computeColourHistogramFromRaster(data: Buffer): number[] {
 export type ImageFingerprint = {
   hash: bigint;
   colourHistogram: number[];
-  logoHash: bigint | null;
-  logoSource: 'vlm' | 'brand-wordmark' | null;
+  // Three-state logoHash: undefined = pass did not run; null = pass ran and found
+  // nothing; bigint = pass ran and found a logo to hash.
+  logoHash?: bigint | null;
+  // Three-state logoSource: undefined = pass did not run; null = pass ran and
+  // found nothing; 'vlm' | 'brand-wordmark' = pass ran and found a logo.
+  logoSource?: 'vlm' | 'brand-wordmark' | null;
 };
 
 /**
@@ -316,23 +320,23 @@ export async function fingerprintArtworkImage(
         .toBuffer()
     ]);
 
-    // Compute logo fingerprint if OCR is enabled
+    // Compute logo fingerprint if OCR is enabled. When the pass runs, logoHash
+    // and logoSource are set to null (pass ran, nothing found) or their actual
+    // values (pass ran, found logo). When the pass is skipped, both remain
+    // undefined to signal the pass did not run.
     const brandText = options?.brandText ?? '';
-    let logoHash: bigint | null = null;
-    let logoSource: 'vlm' | 'brand-wordmark' | null = null;
+    const result: ImageFingerprint = {
+      hash: computeDifferenceHashFromRaster(hashPixels),
+      colourHistogram: computeColourHistogramFromRaster(colourPixels)
+    };
 
     if (env.paddleOcrEnabled) {
       const logoResult = await computeLogoCached(rasterBuffer, brandText, options?.deps);
-      logoHash = logoResult.logoHash;
-      logoSource = logoResult.logoSource;
+      result.logoHash = logoResult.logoHash;
+      result.logoSource = logoResult.logoSource;
     }
 
-    return {
-      hash: computeDifferenceHashFromRaster(hashPixels),
-      colourHistogram: computeColourHistogramFromRaster(colourPixels),
-      logoHash,
-      logoSource
-    };
+    return result;
   } catch (error) {
     console.error('[imageSimilarity] Could not fingerprint image for visual comparison:', error instanceof Error ? error.message : error);
     return null;
@@ -399,7 +403,11 @@ export function compareFingerprints(a: ImageFingerprint | null, b: ImageFingerpr
     colourSimilarity: compareColourHistograms(a.colourHistogram, b.colourHistogram)
   };
 
-  // Include logoSimilarity only if the logo pass ran on at least one side
+  // Include logoSimilarity only if the logo pass ran on at least one side.
+  // logoHash is undefined when the pass did not run (paddleOcrEnabled false or
+  // file could not be rasterized); null when it ran and found nothing; or a
+  // bigint when it ran and found a logo. The !== undefined check ensures the
+  // key is absent from the result when the pass never ran on either side.
   if (a.logoHash !== undefined || b.logoHash !== undefined) {
     comparison.logoSimilarity =
       a.logoHash && b.logoHash

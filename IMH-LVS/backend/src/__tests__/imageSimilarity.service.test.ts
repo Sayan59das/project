@@ -99,6 +99,39 @@ test('Colour similarity and structural similarity are independent measurements, 
 });
 
 // Unit tests for logo similarity feature
+test('compareFingerprints with logoHash undefined excludes logoSimilarity key (pass never ran)', async () => {
+  // When both fingerprints have logoHash and logoSource as undefined, it means
+  // the logo pass never ran on either side. compareFingerprints must omit the
+  // logoSimilarity key entirely in this case.
+  const fpA = {
+    hash: 0x1234567890abcdefn,
+    colourHistogram: new Array(216).fill(0.01)
+    // logoHash and logoSource intentionally omitted (undefined)
+  };
+  const fpB = {
+    hash: 0x1234567890abcdefn,
+    colourHistogram: new Array(216).fill(0.01)
+    // logoHash and logoSource intentionally omitted (undefined)
+  };
+  const result = compareFingerprints(fpA as any, fpB as any);
+  assert.equal('logoSimilarity' in result, false, 'logoSimilarity key should be absent when pass never ran');
+});
+
+test('When logo pass runs but finds nothing, logoHash is null and logoSimilarity is MISSING', async () => {
+  const mockLocateLogo = async () => null; // Always return null
+  const buffer = fixture('jpg-label.jpg');
+  const deps = { locateLogo: mockLocateLogo };
+
+  const fp = await fingerprintArtworkImage({ buffer, mimeType: 'image/jpeg' }, { brandText: 'Test', deps });
+  assert.ok(fp, 'fingerprint should not be null');
+  assert.equal(fp!.logoHash, null, 'logoHash should be null when pass ran but found nothing');
+  assert.equal(fp!.logoSource, null, 'logoSource should be null when pass ran but found nothing');
+
+  const result = compareFingerprints(fp, fp);
+  assert.ok(result.logoSimilarity, 'logoSimilarity should be present when pass ran');
+  assert.equal(result.logoSimilarity!.status, 'MISSING', 'logoSimilarity should be MISSING when no logos found');
+});
+
 test('compareFingerprints with both logoHash equal reports logoSimilarity MATCH', async () => {
   const logoHash = 0x12345678n;
   const fpA = {
@@ -116,41 +149,6 @@ test('compareFingerprints with both logoHash equal reports logoSimilarity MATCH'
   const result = compareFingerprints(fpA, fpB);
   assert.ok(result.logoSimilarity, 'logoSimilarity should be present');
   assert.equal(result.logoSimilarity!.status, 'MATCH');
-});
-
-test('compareFingerprints with one null logoHash reports logoSimilarity MISSING', async () => {
-  const fpA = {
-    hash: 0x1234567890abcdefn,
-    colourHistogram: new Array(216).fill(0.01),
-    logoHash: 0x12345678n,
-    logoSource: 'vlm' as const
-  };
-  const fpB = {
-    hash: 0x1234567890abcdefn,
-    colourHistogram: new Array(216).fill(0.01),
-    logoHash: null,
-    logoSource: null
-  };
-  const result = compareFingerprints(fpA, fpB);
-  assert.ok(result.logoSimilarity, 'logoSimilarity should be present');
-  assert.equal(result.logoSimilarity!.status, 'MISSING');
-});
-
-test('compareFingerprints with both logoHash undefined excludes logoSimilarity key', async () => {
-  const fpA: any = {
-    hash: 0x1234567890abcdefn,
-    colourHistogram: new Array(216).fill(0.01),
-    logoHash: undefined,
-    logoSource: undefined
-  };
-  const fpB: any = {
-    hash: 0x1234567890abcdefn,
-    colourHistogram: new Array(216).fill(0.01),
-    logoHash: undefined,
-    logoSource: undefined
-  };
-  const result = compareFingerprints(fpA, fpB);
-  assert.equal(result.logoSimilarity, undefined, 'logoSimilarity should be absent when logo pass did not run');
 });
 
 test('Cache: two fingerprintArtworkImage calls on identical bytes call recognizeLines once', async () => {
