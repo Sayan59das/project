@@ -408,9 +408,11 @@ export function compareFingerprints(a: ImageFingerprint | null, b: ImageFingerpr
   // file could not be rasterized); null when it ran and found nothing; or a
   // bigint when it ran and found a logo. The !== undefined check ensures the
   // key is absent from the result when the pass never ran on either side.
+  // `!= null` and not truthiness: 0n is a legitimate dHash (a flat crop) and
+  // two flat crops must compare as MATCH, not vanish into MISSING.
   if (a.logoHash !== undefined || b.logoHash !== undefined) {
     comparison.logoSimilarity =
-      a.logoHash && b.logoHash
+      a.logoHash != null && b.logoHash != null
         ? compareHashes(a.logoHash, b.logoHash)
         : { status: 'MISSING' };
   }

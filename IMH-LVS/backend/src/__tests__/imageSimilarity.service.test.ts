@@ -151,6 +151,16 @@ test('compareFingerprints with both logoHash equal reports logoSimilarity MATCH'
   assert.equal(result.logoSimilarity!.status, 'MATCH');
 });
 
+test('compareFingerprints treats a 0n logoHash as a real hash, not as "pass found nothing"', () => {
+  // A flat (uniform) crop hashes to 0n. Two of them are identical → MATCH.
+  const fp = { hash: 0x1234567890abcdefn, colourHistogram: new Array(216).fill(0.01), logoHash: 0n, logoSource: 'vlm' as const };
+  const result = compareFingerprints(fp, { ...fp });
+  assert.equal(result.logoSimilarity?.status, 'MATCH');
+  // And 0n against a real hash is a comparison, not MISSING.
+  const other = { ...fp, logoHash: 0xffffffffffffffffn };
+  assert.notEqual(compareFingerprints(fp, other).logoSimilarity?.status, 'MISSING');
+});
+
 test('Cache: two fingerprintArtworkImage calls on identical bytes call recognizeLines once', async () => {
   let recognizeLinesCalls = 0;
   const mockRecognizeLines = async (image: Buffer): Promise<OcrLine[]> => {
