@@ -56,7 +56,7 @@ import {
   extractNutritionTableFormat
 } from './labelSemanticExtractor.service';
 import { segmentPanels, toReadingOrderText, extractNutritionTableFromPanels, medianFontSize } from './textLayerGeometry.service';
-import { projectSpanToPixels, findOutlinedLines, planOcrStrips, dropStripEdgeLines, type OcrLineLike } from './outlinedText.service';
+import { projectSpanToPixels, findOutlinedLines, planOcrStrips, dropStripEdgeLines, dedupeOverlappingLines, type OcrLineLike } from './outlinedText.service';
 import { isVlmEnabled, prepareImage, ollamaClient, type VlmImage, type VlmClient } from './ollamaVlm.service';
 import { resolveDisplayRoles, type DisplayCandidateIn } from './displayRoleResolver.service';
 
@@ -564,54 +564,9 @@ async function recoverDisplayTextCandidates(
       }
     }
 
-    // Dedupe: two lines whose boxes have IoU > 0.7 → keep the higher confidence
-    // (overlaps come from the padding)
-    const deduped: OcrLineLike[] = [];
-    const used = new Set<number>();
-
-    for (let i = 0; i < allLines.length; i++) {
-      if (used.has(i)) continue;
-
-      let bestIdx = i;
-      let bestConfidence = allLines[i].confidence;
-
-      for (let j = i + 1; j < allLines.length; j++) {
-        if (used.has(j)) continue;
-
-        const box1 = allLines[i].box;
-        const box2 = allLines[j].box;
-
-        // Calculate IoU
-        const left = Math.max(box1.x0, box2.x0);
-        const right = Math.min(box1.x1, box2.x1);
-        const top = Math.max(box1.y0, box2.y0);
-        const bottom = Math.min(box1.y1, box2.y1);
-
-        if (left < right && top < bottom) {
-          const intersectionArea = (right - left) * (bottom - top);
-          const area1 = (box1.x1 - box1.x0) * (box1.y1 - box1.y0);
-          const area2 = (box2.x1 - box2.x0) * (box2.y1 - box2.y0);
-          const unionArea = area1 + area2 - intersectionArea;
-
-          if (unionArea > 0) {
-            const iou = intersectionArea / unionArea;
-
-            if (iou > 0.7) {
-              // Mark the lower-confidence one as used
-              if (allLines[j].confidence > bestConfidence) {
-                used.add(bestIdx);
-                bestIdx = j;
-                bestConfidence = allLines[j].confidence;
-              } else {
-                used.add(j);
-              }
-            }
-          }
-        }
-      }
-
-      deduped.push(allLines[bestIdx]);
-    }
+    // Dedupe: two lines whose boxes have IoU > 0.7 are one line read by two
+    // overlapping strips (the padding) → keep the higher-confidence read.
+    const deduped = dedupeOverlappingLines(allLines);
 
     // Compute occurrence count before filtering: across all collected lines (after strip-edge
     // filtering, before findOutlinedLines), how many times does each normalized text appear?

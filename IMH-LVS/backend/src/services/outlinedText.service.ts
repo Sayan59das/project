@@ -313,3 +313,48 @@ export function planOcrStrips(
   strips.sort((a, b) => a.left - b.left);
   return strips;
 }
+
+// Strip OCR overlaps by `padPx` on each side, so a line that sits in the
+// padding is read by two neighbouring strips. Two lines whose boxes overlap
+// with IoU > 0.7 are the same line: keep the higher-confidence read, drop the
+// other. Order of survivors follows first appearance. Pure; used by
+// recoverDisplayTextCandidates before occurrences are counted, so a
+// double-read line must not count twice.
+export function dedupeOverlappingLines<T extends { box: { x0: number; y0: number; x1: number; y1: number }; confidence: number }>(
+  lines: readonly T[],
+  iouThreshold = 0.7
+): T[] {
+  const deduped: T[] = [];
+  const used = new Set<number>();
+  for (let i = 0; i < lines.length; i++) {
+    if (used.has(i)) continue;
+    let bestIdx = i;
+    for (let j = i + 1; j < lines.length; j++) {
+      if (used.has(j)) continue;
+      if (boxIou(lines[i].box, lines[j].box) > iouThreshold) {
+        if (lines[j].confidence > lines[bestIdx].confidence) {
+          used.add(bestIdx);
+          bestIdx = j;
+        } else {
+          used.add(j);
+        }
+      }
+    }
+    // The winner may be a later index; mark it consumed or the outer loop
+    // reaches it again and pushes the same line twice.
+    used.add(bestIdx);
+    deduped.push(lines[bestIdx]);
+  }
+  return deduped;
+}
+
+function boxIou(a: { x0: number; y0: number; x1: number; y1: number }, b: { x0: number; y0: number; x1: number; y1: number }): number {
+  const left = Math.max(a.x0, b.x0);
+  const right = Math.min(a.x1, b.x1);
+  const top = Math.max(a.y0, b.y0);
+  const bottom = Math.min(a.y1, b.y1);
+  if (left >= right || top >= bottom) return 0;
+  const intersection = (right - left) * (bottom - top);
+  const union = (a.x1 - a.x0) * (a.y1 - a.y0) + (b.x1 - b.x0) * (b.y1 - b.y0) - intersection;
+  return union > 0 ? intersection / union : 0;
+}

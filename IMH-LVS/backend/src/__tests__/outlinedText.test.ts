@@ -7,6 +7,7 @@ import {
   findOutlinedLines,
   planOcrStrips,
   dropStripEdgeLines,
+  dedupeOverlappingLines,
   type OcrLineLike
 } from '../services/outlinedText.service';
 import type { Rectangle } from '../services/tesseract.service';
@@ -345,4 +346,29 @@ test('dropStripEdgeLines: height-proportional margin catches tall wordmark fragm
   assert.equal(result.length, 2);
   assert.equal(result[0].text, 'tall-safe');
   assert.equal(result[1].text, 'short-left-cut');
+});
+
+test('dedupeOverlappingLines: a later higher-confidence duplicate wins exactly once (never pushed twice)', () => {
+  const lines: OcrLineLike[] = [
+    { text: 'Homeo-Vita', box: { x0: 100, y0: 100, x1: 400, y1: 160 }, confidence: 0.8 },
+    { text: 'GUMMIES', box: { x0: 100, y0: 300, x1: 300, y1: 350 }, confidence: 0.9 },
+    { text: 'Homeo-Vita', box: { x0: 102, y0: 101, x1: 401, y1: 161 }, confidence: 0.95 }
+  ];
+  const out = dedupeOverlappingLines(lines);
+  assert.deepEqual(
+    out.map((l) => [l.text, l.confidence]),
+    [['Homeo-Vita', 0.95], ['GUMMIES', 0.9]]
+  );
+});
+
+test('dedupeOverlappingLines: an earlier higher-confidence read keeps its position; non-overlapping lines untouched', () => {
+  const lines: OcrLineLike[] = [
+    { text: 'A', box: { x0: 0, y0: 0, x1: 100, y1: 50 }, confidence: 0.99 },
+    { text: 'A', box: { x0: 1, y0: 0, x1: 101, y1: 50 }, confidence: 0.5 },
+    { text: 'B', box: { x0: 0, y0: 200, x1: 100, y1: 250 }, confidence: 0.7 },
+    { text: 'C', box: { x0: 50, y0: 0, x1: 150, y1: 50 }, confidence: 0.7 } // IoU with A = 0.33, kept
+  ];
+  const out = dedupeOverlappingLines(lines);
+  assert.deepEqual(out.map((l) => l.text), ['A', 'B', 'C']);
+  assert.equal(out[0].confidence, 0.99);
 });

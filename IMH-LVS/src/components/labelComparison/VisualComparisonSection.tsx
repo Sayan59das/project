@@ -7,7 +7,16 @@
 // VisualComparisonStatus) — mixing the two would either lose that
 // distinction or misrepresent one as the other.
 //
-// Logo gets its own row only when the backend located a logo region (logoSimilarity present); otherwise Logo and Design/Layout share one row driven by the whole-image hash, because showing one hash as two numbers would misrepresent a single measurement as two.
+// Logo gets its own row only when the backend located a logo region
+// (logoSimilarity present); otherwise Logo and Design/Layout share one row
+// driven by the whole-image hash, because showing one hash as two numbers
+// would misrepresent a single measurement as two. Colour is a genuinely
+// separate measurement (a colour histogram, not a grayscale structural
+// hash) — a same-layout artwork recoloured into a different palette would
+// MATCH on the layout row and correctly CONFLICT on this one, so folding
+// them into one number would hide a real difference. See
+// imageSimilarity.service.ts's module comment for exactly what each
+// measures.
 import { Box, Paper, Typography } from '@mui/material';
 import { StatusChip } from '../StatusChip';
 import type { ArtworkVisualComparison, VisualComparisonResult } from '../../types/labelComparison';
