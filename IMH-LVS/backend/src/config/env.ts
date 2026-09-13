@@ -97,6 +97,15 @@ export const env = {
   // a stalled model cannot hold an upload open indefinitely.
   aiExtractionTimeoutMs: parsePositiveNumber(process.env.AI_EXTRACTION_TIMEOUT_MS, 45_000),
 
+  // Ollama VLM service origin (e.g. http://127.0.0.1:11434). OFF (empty string)
+  // unless explicitly set: the local VLM is an optional resolver, and absence
+  // means "skip this resolver", never "use a default address".
+  ollamaUrl: (process.env.OLLAMA_URL?.trim() || '').replace(/\/+$/, ''),
+  // Model identifier for the VLM service (defaults to qwen2.5vl:3b if not set).
+  ollamaVlmModel: process.env.OLLAMA_VLM_MODEL?.trim() || 'qwen2.5vl:3b',
+  // Timeout for VLM inference requests in milliseconds.
+  ollamaTimeoutMs: parsePositiveNumber(process.env.OLLAMA_TIMEOUT_MS, 30000),
+
   // How long a session lasts from the moment it is issued. Absolute, not
   // sliding — see 004_auth.sql. Eight hours is one working day: a reviewer
   // signs in once in the morning, and a machine left logged in overnight is
