@@ -38,7 +38,7 @@ test('collapseRepeatedPhrase: empty string → empty string', () => {
   assert.equal(collapseRepeatedPhrase(''), '');
 });
 
-test.skip('recognizeLines: white 4×4 PNG → empty array (no throw)', async () => {
+test('recognizeLines: white 4×4 PNG → empty array (no throw)', async () => {
   // Create a small but valid PNG (4x4 white image)
   const whitePng = await sharp({
     create: { width: 4, height: 4, channels: 3, background: { r: 255, g: 255, b: 255 } }
