@@ -407,6 +407,7 @@ test('Real label PDF (Unicare Homeo-Vita, fully outlined display text): display-
     candidates.some((c) => /GUMMIES/i.test(c.text)),
     'displayTextCandidates must include text matching GUMMIES'
   );
+  assert.ok(candidates.some((c: any) => /MULTIVITAMIN/.test(c.text)), 'front-panel display text must be a candidate (strip-wise OCR)');
 
   // Verify array is ordered by heightPx (tallest first)
   for (let i = 0; i < candidates.length - 1; i++) {

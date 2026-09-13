@@ -55,8 +55,8 @@ import {
   extractIngredients,
   extractNutritionTableFormat
 } from './labelSemanticExtractor.service';
-import { segmentPanels, toReadingOrderText, extractNutritionTableFromPanels } from './textLayerGeometry.service';
-import { projectSpanToPixels, findOutlinedLines } from './outlinedText.service';
+import { segmentPanels, toReadingOrderText, extractNutritionTableFromPanels, medianFontSize } from './textLayerGeometry.service';
+import { projectSpanToPixels, findOutlinedLines, planOcrStrips, type OcrLineLike } from './outlinedText.service';
 import { isVlmEnabled, prepareImage, ollamaClient, type VlmImage, type VlmClient } from './ollamaVlm.service';
 import { resolveDisplayRoles, type DisplayCandidateIn } from './displayRoleResolver.service';
 
@@ -460,8 +460,9 @@ type FieldPass = {
 // (missing brand or product name), we rasterize and OCR the page. This helper
 // then looks for the outlined/stylised display text that branded headers are
 // typically rendered in — the same text OCR often mangles — by running paddle
-// OCR on the image and filtering to outlined lines (lines with confidence high
-// enough to have survived the segmentation logic in outlinedText.service.ts).
+// OCR on vertical strips (text-layer panels + silent gaps) and filtering to
+// outlined lines. Strip-wise OCR prevents the detector from merging same-baseline
+// text across neighbouring panels, which would hide the front panel's display text.
 // Returns top 8 ranked by height, since brand graphics are typically the
 // largest text on the page.
 async function recoverDisplayTextCandidates(
@@ -470,25 +471,147 @@ async function recoverDisplayTextCandidates(
   dpi: number
 ): Promise<DisplayTextCandidate[]> {
   try {
+    // Compute image metadata once
+    const metadata = await sharp(pageImage).metadata();
+    const pageHeightPt = metadata.height! / (dpi / 72);
+    const width = metadata.width!;
+
     // Identify which text spans are "covered" by the geometry layer, so we can
     // focus on text regions not already in the text layer.
     let spanRects: ReturnType<typeof projectSpanToPixels>[] = [];
     if (spans.length > 0) {
-      // Compute page height in points from the image height in pixels
-      const metadata = await sharp(pageImage).metadata();
-      const pageHeightPt = metadata.height! / (dpi / 72);
       // Project only first page's spans to pixel rectangles
       spanRects = spans
         .filter((s) => s.page === 1)
         .map((s) => projectSpanToPixels(s, pageHeightPt, dpi));
     }
 
-    // Run paddle OCR on the image to extract lines
-    const lines = await recognizeLines(pageImage);
+    // Compute panel X ranges from text-layer geometry (rotation-0 only)
+    const page1Spans = spans.filter((s) => s.page === 1);
+    let panelXRanges: Array<{ left: number; right: number }> = [];
+
+    if (page1Spans.length > 0) {
+      const panels = segmentPanels(page1Spans);
+      const s = dpi / 72;
+
+      // Filter to rotation-0 panels and extract their X ranges
+      for (const panel of panels) {
+        if (Math.abs(panel.rotation) < 0.01) {
+          let minX = Infinity;
+          let maxX = -Infinity;
+
+          for (const line of panel.lines) {
+            for (const span of line.spans) {
+              minX = Math.min(minX, span.x);
+              maxX = Math.max(maxX, span.x + span.width);
+            }
+          }
+
+          if (minX !== Infinity && maxX !== -Infinity) {
+            panelXRanges.push({
+              left: minX * s,
+              right: maxX * s
+            });
+          }
+        }
+      }
+    }
+
+    // Compute padding: 40px or 1.5 * median font size, whichever is larger
+    const s = dpi / 72;
+    const medianFontSizeVal = page1Spans.length > 0 ? medianFontSize(page1Spans) : 0;
+    const padPx = Math.max(40, Math.round(1.5 * medianFontSizeVal * s));
+
+    // Plan OCR strips (panels + gaps)
+    const strips = planOcrStrips(panelXRanges, width, padPx);
+
+    // OCR each strip and collect all lines
+    const allLines: OcrLineLike[] = [];
+
+    for (const strip of strips) {
+      try {
+        const crop = await sharp(pageImage).extract({
+          left: Math.round(strip.left),
+          top: 0,
+          width: Math.round(strip.width),
+          height: Math.round(metadata.height!)
+        }).png().toBuffer();
+
+        const lines = await recognizeLines(crop);
+
+        // Offset every box by +strip.left on x
+        for (const line of lines) {
+          allLines.push({
+            text: line.text,
+            box: {
+              x0: line.box.x0 + strip.left,
+              y0: line.box.y0,
+              x1: line.box.x1 + strip.left,
+              y1: line.box.y1
+            },
+            confidence: line.confidence
+          });
+        }
+      } catch (stripError) {
+        // Strip OCR failure is fail-soft; continue with other strips
+        debugLog(`OCR strip [${strip.left}, ${strip.left + strip.width}) failed: ${
+          stripError instanceof Error ? stripError.message : String(stripError)
+        }`);
+      }
+    }
+
+    // Dedupe: two lines whose boxes have IoU > 0.7 → keep the higher confidence
+    // (overlaps come from the padding)
+    const deduped: OcrLineLike[] = [];
+    const used = new Set<number>();
+
+    for (let i = 0; i < allLines.length; i++) {
+      if (used.has(i)) continue;
+
+      let bestIdx = i;
+      let bestConfidence = allLines[i].confidence;
+
+      for (let j = i + 1; j < allLines.length; j++) {
+        if (used.has(j)) continue;
+
+        const box1 = allLines[i].box;
+        const box2 = allLines[j].box;
+
+        // Calculate IoU
+        const left = Math.max(box1.x0, box2.x0);
+        const right = Math.min(box1.x1, box2.x1);
+        const top = Math.max(box1.y0, box2.y0);
+        const bottom = Math.min(box1.y1, box2.y1);
+
+        if (left < right && top < bottom) {
+          const intersectionArea = (right - left) * (bottom - top);
+          const area1 = (box1.x1 - box1.x0) * (box1.y1 - box1.y0);
+          const area2 = (box2.x1 - box2.x0) * (box2.y1 - box2.y0);
+          const unionArea = area1 + area2 - intersectionArea;
+
+          if (unionArea > 0) {
+            const iou = intersectionArea / unionArea;
+
+            if (iou > 0.7) {
+              // Mark the lower-confidence one as used
+              if (allLines[j].confidence > bestConfidence) {
+                used.add(bestIdx);
+                bestIdx = j;
+                bestConfidence = allLines[j].confidence;
+              } else {
+                used.add(j);
+              }
+            }
+          }
+        }
+      }
+
+      deduped.push(allLines[bestIdx]);
+    }
 
     // Filter to outlined lines: those that survived the segmentation logic
     // (high confidence, consistent box structure, etc.)
-    const outlined = findOutlinedLines(lines, spanRects);
+    const outlined = findOutlinedLines(deduped, spanRects);
 
     // Return top 8 by height, with heights and confidence rounded for readability
     return outlined.slice(0, 8).map((l) => ({

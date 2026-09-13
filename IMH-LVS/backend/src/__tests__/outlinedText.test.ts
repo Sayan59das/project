@@ -5,6 +5,7 @@ import {
   coverageFraction,
   looksLikeDisplayText,
   findOutlinedLines,
+  planOcrStrips,
   type OcrLineLike
 } from '../services/outlinedText.service';
 import type { Rectangle } from '../services/tesseract.service';
@@ -217,4 +218,77 @@ test('findOutlinedLines: with custom options and empty spanRects', () => {
   assert.equal(result[1].text, 'GUMMIES');
   assert.equal(result[2].text, 'NUTRITIONAL INFORMATION');
   assert.equal(result[3].text, 'tiny');
+});
+
+test('planOcrStrips: no ranges → whole page', () => {
+  const strips = planOcrStrips([], 3621, 40);
+  assert.equal(strips.length, 1);
+  assert.equal(strips[0].left, 0);
+  assert.equal(strips[0].width, 3621);
+});
+
+test('planOcrStrips: two ranges [289,1282] and [2484,3335] on width 3621 with pad 40', () => {
+  const panelXRanges = [
+    { left: 289, right: 1282 },
+    { left: 2484, right: 3335 }
+  ];
+  const strips = planOcrStrips(panelXRanges, 3621, 40);
+
+  // Panel strip 1: [289-40, 1282+40] = [249, 1322]
+  // Panel strip 2: [2484-40, 3335+40] = [2444, 3375]
+  // Gap 1: [0, 249) width 249 < 8% * 3621 = 289.68 → dropped
+  // Gap 2: [1322, 2444) width 1122 >= 289.68 → included
+  // Gap 3: (3375, 3621] width 246 < 289.68 → dropped
+
+  assert.equal(strips.length, 3);
+  assert.equal(strips[0].left, 249);
+  assert.equal(strips[0].width, 1073); // 1322 - 249
+  assert.equal(strips[1].left, 1322);
+  assert.equal(strips[1].width, 1122); // 2444 - 1322
+  assert.equal(strips[2].left, 2444);
+  assert.equal(strips[2].width, 931); // 3375 - 2444
+});
+
+test('planOcrStrips: overlapping ranges merge into one', () => {
+  const panelXRanges = [
+    { left: 100, right: 300 },
+    { left: 250, right: 400 }
+  ];
+  const strips = planOcrStrips(panelXRanges, 1000, 10);
+
+  // Padded: [90, 310] and [240, 410]
+  // After merging: [90, 410]
+  // Panel strip: [90, 410]
+  // Gap 1: [0, 90) width 90 >= 8% * 1000 = 80 → included
+  // Gap 2: (410, 1000] width 590 >= 80 → included
+
+  assert.equal(strips.length, 3);
+  assert.equal(strips[0].left, 0);
+  assert.equal(strips[0].width, 90);
+  assert.equal(strips[1].left, 90);
+  assert.equal(strips[1].width, 320); // 410 - 90
+  assert.equal(strips[2].left, 410);
+  assert.equal(strips[2].width, 590); // 1000 - 410
+});
+
+test('planOcrStrips: a gap narrower than minGapFraction is dropped', () => {
+  const panelXRanges = [
+    { left: 100, right: 200 },
+    { left: 250, right: 350 }
+  ];
+  const strips = planOcrStrips(panelXRanges, 1000, 10, 0.1);
+
+  // Padded: [90, 210] and [240, 360]
+  // Gap: [210, 240] width 30 < 10% * 1000 = 100 → dropped
+  // Panel strips: [90, 210] and [240, 360]
+  // Gap 1: [0, 90) width 90 < 100 → dropped
+  // Gap 2: (360, 1000] width 640 >= 100 → included
+
+  assert.equal(strips.length, 3);
+  assert.equal(strips[0].left, 90);
+  assert.equal(strips[0].width, 120); // 210 - 90
+  assert.equal(strips[1].left, 240);
+  assert.equal(strips[1].width, 120); // 360 - 240
+  assert.equal(strips[2].left, 360);
+  assert.equal(strips[2].width, 640); // 1000 - 360
 });
