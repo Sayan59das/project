@@ -77,7 +77,11 @@ const RESPONSE_FIELD_KEYS = [
   // The nutrition panel's actual rows (JSON-encoded) — only ever populated
   // via the AI backend's vision-model fallback, '' from Tesseract alone,
   // same as every other key here when nothing was read.
-  'nutritionTable'
+  'nutritionTable',
+  // Ranked display-text candidates (brand names, product titles) recovered from
+  // the rasterized page when the text layer is incomplete. JSON array or ''
+  // when none are recovered, same absence-is-blank convention as every other key.
+  'displayTextCandidates'
 ];
 
 function assertWellFormedSuccessResponse(body: any) {
