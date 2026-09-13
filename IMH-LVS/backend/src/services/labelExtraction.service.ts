@@ -114,6 +114,7 @@ export type DisplayTextCandidate = {
   heightPx: number;
   confidence: number;
   topPx: number;
+  occurrences: number;
 };
 
 /**
@@ -612,18 +613,32 @@ async function recoverDisplayTextCandidates(
       deduped.push(allLines[bestIdx]);
     }
 
+    // Compute occurrence count before filtering: across all collected lines (after strip-edge
+    // filtering, before findOutlinedLines), how many times does each normalized text appear?
+    // WHY: on die lines, a wordmark repeats on every panel (Homeo-Vita ×5, Nutrinol ×3);
+    // that repetition count is the best brand signal available and is otherwise discarded.
+    const occurrenceMap = new Map<string, number>();
+    for (const line of deduped) {
+      const normalized = line.text.toLowerCase().replace(/\s+/g, ' ').trim();
+      occurrenceMap.set(normalized, (occurrenceMap.get(normalized) ?? 0) + 1);
+    }
+
     // Filter to outlined lines: those that survived the segmentation logic
     // (high confidence, consistent box structure, etc.)
     const outlined = findOutlinedLines(deduped, spanRects);
 
     // Return top 10 by height, with heights and confidence rounded for readability.
     // Fragment removal plus headroom for two-line product names (e.g. "Sharp\nMind Plus").
-    return outlined.slice(0, 10).map((l) => ({
-      text: l.text,
-      heightPx: Math.round(l.box.y1 - l.box.y0),
-      confidence: Math.round(l.confidence * 100) / 100,
-      topPx: Math.round(l.box.y0)
-    }));
+    return outlined.slice(0, 10).map((l) => {
+      const normalized = l.text.toLowerCase().replace(/\s+/g, ' ').trim();
+      return {
+        text: l.text,
+        heightPx: Math.round(l.box.y1 - l.box.y0),
+        confidence: Math.round(l.confidence * 100) / 100,
+        topPx: Math.round(l.box.y0),
+        occurrences: occurrenceMap.get(normalized) ?? 0
+      };
+    });
   } catch (error) {
     console.warn(
       '[labelExtraction] display-text candidate recovery failed: ' +

@@ -185,30 +185,38 @@ export function findOutlinedLines(
  *
  * WHY: cut-off text at a strip boundary is never a valid candidate — it is a
  * fragment of a word whose complete form appears whole inside some strip.
+ * A glyph cut mid-way leaves at most ~half a glyph height of whitespace.
+ *
+ * The margin is height-proportional: for a line with height h, the threshold is
+ * Math.max(marginPx, 0.5 * h). This catches mid-glyph cuts even on tall wordmarks
+ * where a fixed 6px margin would fail.
  *
  * Drops a line if:
- * - The strip is not at the page's left edge AND the line touches the left cut
- *   (x0 <= marginPx)
- * - The strip is not at the page's right edge AND the line touches the right cut
- *   (x1 >= strip.width - marginPx)
+ * - The strip is not at the page's left edge AND the line touches the interior left cut
+ *   (x0 <= Math.max(marginPx, 0.5 * height))
+ * - The strip is not at the page's right edge AND the line touches the interior right cut
+ *   (x1 >= strip.width - Math.max(marginPx, 0.5 * height))
  *
  * Lines in a strip at the page's left edge keep left-touching lines; likewise
  * for the page's right edge.
  */
-export function dropStripEdgeLines<T extends { box: { x0: number; x1: number } }>(
+export function dropStripEdgeLines<T extends { box: { x0: number; y0: number; x1: number; y1: number } }>(
   lines: readonly T[],
   strip: { left: number; width: number },
   pageWidth: number,
   marginPx = 6
 ): T[] {
   return lines.filter(line => {
-    // Strip does not start at page left edge: drop lines touching the left cut
-    if (strip.left > 0 && line.box.x0 <= marginPx) {
+    const height = line.box.y1 - line.box.y0;
+    const threshold = Math.max(marginPx, 0.5 * height);
+
+    // Strip does not start at page left edge: drop lines touching the interior left cut
+    if (strip.left > 0 && line.box.x0 <= threshold) {
       return false;
     }
 
-    // Strip does not end at page right edge: drop lines touching the right cut
-    if (strip.left + strip.width < pageWidth && line.box.x1 >= strip.width - marginPx) {
+    // Strip does not end at page right edge: drop lines touching the interior right cut
+    if (strip.left + strip.width < pageWidth && line.box.x1 >= strip.width - threshold) {
       return false;
     }
 

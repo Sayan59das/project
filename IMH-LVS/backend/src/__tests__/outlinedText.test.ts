@@ -330,3 +330,19 @@ test('dropStripEdgeLines: strip covering whole page keeps everything', () => {
 
   assert.equal(result.length, 3);
 });
+
+test('dropStripEdgeLines: height-proportional margin catches tall wordmark fragments', () => {
+  const lines: OcrLineLike[] = [
+    // Tall line (h=122): threshold = Math.max(6, 0.5*122) = 61
+    { text: 'tall-left-cut', box: { x0: 14, y0: 0, x1: 300, y1: 122 }, confidence: 0.9 }, // x0=14 <= 61 → dropped
+    { text: 'tall-safe', box: { x0: 80, y0: 0, x1: 300, y1: 122 }, confidence: 0.9 }, // x0=80 > 61 → kept
+    // Short line (h=20): threshold = Math.max(6, 0.5*20) = 10
+    { text: 'short-left-cut', box: { x0: 14, y0: 0, x1: 100, y1: 20 }, confidence: 0.9 } // x0=14 > 10 → kept
+  ];
+
+  const result = dropStripEdgeLines(lines, { left: 1282, width: 1202 }, 3621);
+
+  assert.equal(result.length, 2);
+  assert.equal(result[0].text, 'tall-safe');
+  assert.equal(result[1].text, 'short-left-cut');
+});
