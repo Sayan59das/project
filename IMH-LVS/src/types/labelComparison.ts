@@ -87,14 +87,18 @@ export type VisualComparisonResult = {
   similarityPercentage?: number;
 };
 
-// artworkSimilarity backs BOTH the "Logo" and "Design/Layout" rows the
-// brief asks for, not two independently measured ones: both would be
-// driven by the identical whole-image grayscale hash today (no logo
-// localisation step exists to measure them independently), so showing two
-// numbers would misrepresent one real measurement as two independent
-// ones. colourSimilarity is a genuinely separate measurement (colour
-// histogram, not grayscale structure) and gets its own row.
+// artworkSimilarity is the whole-image grayscale hash (Design/Layout).
+// logoSimilarity, when present, is the same measurement over the located
+// logo crop only; when absent the Logo row reuses artworkSimilarity (one
+// real measurement shown once, never two numbers from one hash).
+// colourSimilarity is a genuinely separate measurement (colour histogram,
+// not grayscale structure) and gets its own row.
 export type ArtworkVisualComparison = {
   artworkSimilarity: VisualComparisonResult;
+  // Present only when the backend's logo pass ran (a VLM-located emblem crop
+  // or the brand wordmark's OCR box — see backend logoLocator.service.ts).
+  // Absent ⇒ the Logo row keeps falling back to artworkSimilarity, exactly
+  // as before this field existed. Never fabricated client-side.
+  logoSimilarity?: VisualComparisonResult;
   colourSimilarity: VisualComparisonResult;
 };

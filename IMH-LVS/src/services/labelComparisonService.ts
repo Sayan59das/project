@@ -154,12 +154,16 @@ function readVisualComparisonResult(data: unknown): VisualComparisonResult {
   };
 }
 
-function readArtworkVisualComparison(data: unknown): ArtworkVisualComparison {
+export function readArtworkVisualComparison(data: unknown): ArtworkVisualComparison {
   const record = (data ?? {}) as Record<string, unknown>;
-  return {
+  const result: ArtworkVisualComparison = {
     artworkSimilarity: readVisualComparisonResult(record.artworkSimilarity),
     colourSimilarity: readVisualComparisonResult(record.colourSimilarity)
   };
+  if (record.logoSimilarity && typeof record.logoSimilarity === 'object') {
+    result.logoSimilarity = readVisualComparisonResult(record.logoSimilarity);
+  }
+  return result;
 }
 
 // Posts both artwork files for Artwork/Colour Similarity visual comparison
@@ -167,10 +171,19 @@ function readArtworkVisualComparison(data: unknown): ArtworkVisualComparison {
 // compareExtractedLabels below. Kept separate because it needs the actual
 // image bytes, not extracted text fields; see
 // backend/src/services/imageSimilarity.service.ts for what it measures.
-export async function compareVisual(labelAFile: File, labelBFile: File): Promise<ArtworkVisualComparison> {
+export async function compareVisual(
+  labelAFile: File,
+  labelBFile: File,
+  brands?: { brandA?: string; brandB?: string }
+): Promise<ArtworkVisualComparison> {
   const formData = new FormData();
   formData.append('labelA', labelAFile);
   formData.append('labelB', labelBFile);
+
+  // Brand hints let the backend fall back to the brand wordmark's OCR box
+  // when its VLM cannot localise a distinct emblem. Optional; blank is skipped.
+  if (brands?.brandA?.trim()) formData.append('brandA', brands.brandA.trim());
+  if (brands?.brandB?.trim()) formData.append('brandB', brands.brandB.trim());
 
   const compareUrl = `${API_BASE_URL}/api/labels/compare-visual`;
 
@@ -206,10 +219,19 @@ export async function compareVisual(labelAFile: File, labelBFile: File): Promise
 // the identical subject file once per candidate. Returns results in the
 // same order `candidateFiles` was given, so the caller can zip them back
 // onto whichever candidates they came from.
-export async function compareVisualBatch(subjectFile: File, candidateFiles: File[]): Promise<ArtworkVisualComparison[]> {
+export async function compareVisualBatch(
+  subjectFile: File,
+  candidateFiles: File[],
+  brands?: { brandSubject?: string; brandCandidates?: string[] }
+): Promise<ArtworkVisualComparison[]> {
   const formData = new FormData();
   formData.append('subject', subjectFile);
   candidateFiles.forEach((file) => formData.append('candidates', file));
+
+  if (brands?.brandSubject?.trim()) formData.append('brandSubject', brands.brandSubject.trim());
+  if (brands?.brandCandidates && brands.brandCandidates.length === candidateFiles.length) {
+    formData.append('brandCandidates', JSON.stringify(brands.brandCandidates.map((b) => (b ?? '').trim())));
+  }
 
   const compareUrl = `${API_BASE_URL}/api/labels/compare-visual-batch`;
 

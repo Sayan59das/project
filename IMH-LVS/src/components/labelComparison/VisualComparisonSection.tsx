@@ -7,15 +7,7 @@
 // VisualComparisonStatus) — mixing the two would either lose that
 // distinction or misrepresent one as the other.
 //
-// Two rows, not one: Logo and Design/Layout share the "Logo & Design/Layout"
-// row (both driven by the identical whole-image grayscale hash today — no
-// logo localisation step exists to measure them independently). Colour is
-// a genuinely separate measurement (a colour histogram, not a grayscale
-// structural hash) — a same-layout artwork recoloured into a different
-// palette would MATCH on the first row and correctly CONFLICT on this one,
-// so folding them into one number would hide a real difference. See
-// imageSimilarity.service.ts's module comment for exactly what each
-// measures.
+// Logo gets its own row only when the backend located a logo region (logoSimilarity present); otherwise Logo and Design/Layout share one row driven by the whole-image hash, because showing one hash as two numbers would misrepresent a single measurement as two.
 import { Box, Paper, Typography } from '@mui/material';
 import { StatusChip } from '../StatusChip';
 import type { ArtworkVisualComparison, VisualComparisonResult } from '../../types/labelComparison';
@@ -70,10 +62,18 @@ export function VisualComparisonSection({ visualComparison }: Props) {
         Visual Comparison
       </Typography>
       <Typography variant="caption" sx={{ color: 'var(--c-text-3)', display: 'block', mb: 1.5 }}>
-        Compares the artworks' actual images, not extracted text. Logo and Design/Layout are measured together
-        (isolating just the logo region isn't built yet); Colour is a separate, independent measurement.
+        {visualComparison.logoSimilarity
+          ? 'Compares the artworks’ actual images, not extracted text. Logo is measured on the located logo crop; Design/Layout on the whole artwork; Colour is a separate, independent measurement.'
+          : 'Compares the artworks’ actual images, not extracted text. Logo and Design/Layout are measured together (no logo region was located for this pair); Colour is a separate, independent measurement.'}
       </Typography>
-      <VisualRow label="Logo & Design/Layout" result={visualComparison.artworkSimilarity} />
+      {visualComparison.logoSimilarity ? (
+        <>
+          <VisualRow label="Logo" result={visualComparison.logoSimilarity} />
+          <VisualRow label="Design/Layout" result={visualComparison.artworkSimilarity} />
+        </>
+      ) : (
+        <VisualRow label="Logo & Design/Layout" result={visualComparison.artworkSimilarity} />
+      )}
       <VisualRow label="Colour" result={visualComparison.colourSimilarity} />
     </Paper>
   );

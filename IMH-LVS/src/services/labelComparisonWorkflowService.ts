@@ -121,10 +121,14 @@ async function fetchArtworkFile(artwork: Artwork): Promise<File | undefined> {
 // touches. Deliberately never throws and never blocks the base comparison:
 // a vision-model-style capability being unreachable must cost this one row,
 // not the whole run — same principle as aiExtraction.service.ts's fallback.
-async function tryCompareVisual(fileA: File | undefined, fileB: File | undefined): Promise<ArtworkVisualComparison | undefined> {
+async function tryCompareVisual(
+  fileA: File | undefined,
+  fileB: File | undefined,
+  brands?: { brandA?: string; brandB?: string }
+): Promise<ArtworkVisualComparison | undefined> {
   if (!fileA || !fileB) return undefined;
   try {
-    return await compareVisual(fileA, fileB);
+    return await compareVisual(fileA, fileB, brands);
   } catch (error) {
     console.warn('[labelComparisonWorkflowService] Visual comparison did not complete — omitting the Logo/Design row.', error);
     return undefined;
@@ -139,7 +143,7 @@ async function tryCompareVisual(fileA: File | undefined, fileB: File | undefined
 async function resolveCandidateText(
   subjectExtraction: LabelExtractionApiResult,
   candidate: CrossCompanyCandidate
-): Promise<{ entry: CrossCompanyResultEntry; candidateFile: File | undefined }> {
+): Promise<{ entry: CrossCompanyResultEntry; candidateFile: File | undefined; candidateBrand?: string }> {
   const base = {
     candidateProductId: candidate.productId,
     candidateProductName: candidate.productName,
@@ -156,7 +160,7 @@ async function resolveCandidateText(
   if (!candidateFile) return { entry: { ...base, outcome: { status: 'file_unavailable' } }, candidateFile: undefined };
   const candidateExtraction = await extractLabel(candidateFile);
   const result = await compareExtractedLabels(subjectExtraction, candidateExtraction, 'cross_company');
-  return { entry: { ...base, outcome: { status: 'success', result } }, candidateFile };
+  return { entry: { ...base, outcome: { status: 'success', result } }, candidateFile, candidateBrand: candidateExtraction.brand };
 }
 
 // Attaches Artwork Similarity to every successfully-text-compared
@@ -168,16 +172,21 @@ async function resolveCandidateText(
 // tryCompareVisual elsewhere in this module.
 async function attachVisualComparisons(
   subjectFile: File | undefined,
-  resolved: { entry: CrossCompanyResultEntry; candidateFile: File | undefined }[]
+  subjectBrand: string | undefined,
+  resolved: { entry: CrossCompanyResultEntry; candidateFile: File | undefined; candidateBrand?: string }[]
 ): Promise<CrossCompanyResultEntry[]> {
   const withFile = resolved.filter(
-    (item): item is { entry: CrossCompanyResultEntry; candidateFile: File } => !!item.candidateFile
+    (item): item is { entry: CrossCompanyResultEntry; candidateFile: File; candidateBrand?: string } => !!item.candidateFile
   );
   if (!subjectFile || withFile.length === 0) return resolved.map((item) => item.entry);
 
   let visualResults: ArtworkVisualComparison[];
   try {
-    visualResults = await compareVisualBatch(subjectFile, withFile.map((item) => item.candidateFile));
+    visualResults = await compareVisualBatch(
+      subjectFile,
+      withFile.map((item) => item.candidateFile),
+      { brandSubject: subjectBrand, brandCandidates: withFile.map((item) => item.candidateBrand ?? '') }
+    );
   } catch (error) {
     console.warn('[labelComparisonWorkflowService] Batch visual comparison did not complete — omitting Artwork Similarity for this run.', error);
     return resolved.map((item) => item.entry);
@@ -235,7 +244,7 @@ export async function runComparisonWorkflow(plan: ComparisonPlan, actor: string)
     const approvedExtraction = await extractLabel(approvedFile);
     const [result, visualComparison] = await Promise.all([
       compareExtractedLabels(candidateExtraction, approvedExtraction, 'same_company'),
-      tryCompareVisual(candidateFile, approvedFile)
+      tryCompareVisual(candidateFile, approvedFile, { brandA: candidateExtraction.brand, brandB: approvedExtraction.brand })
     ]);
     versionComparison = {
       candidateArtworkId: candidateArtwork.id,
@@ -252,11 +261,11 @@ export async function runComparisonWorkflow(plan: ComparisonPlan, actor: string)
   }
 
   const candidates = await getCrossCompanyCandidates(plan.product.id);
-  const resolvedCandidates: { entry: CrossCompanyResultEntry; candidateFile: File | undefined }[] = [];
+  const resolvedCandidates: { entry: CrossCompanyResultEntry; candidateFile: File | undefined; candidateBrand?: string }[] = [];
   for (const candidate of candidates) {
     resolvedCandidates.push(await resolveCandidateText(candidateExtraction, candidate));
   }
-  const crossCompanyResults = await attachVisualComparisons(candidateFile, resolvedCandidates);
+  const crossCompanyResults = await attachVisualComparisons(candidateFile, candidateExtraction.brand, resolvedCandidates);
 
   const run = saveLabelComparisonRun({
     productId: plan.product.id,
