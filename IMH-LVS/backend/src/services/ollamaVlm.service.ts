@@ -105,9 +105,12 @@ export async function askJson(
       signal: controller.signal
     });
 
-    // Non-2xx responses are a service error, not a resolver failure.
+    // Non-2xx responses are a service error, not a resolver failure. Ollama
+    // puts the reason in the body ({"error":"model 'x' not found"}) — surface
+    // it, because a bare 404 hides which model the operator has to pull.
     if (!response.ok) {
-      console.warn(`[ollamaVlm] HTTP ${response.status}`);
+      const detail = await response.text().catch(() => '');
+      console.warn(`[ollamaVlm] HTTP ${response.status} from ${env.ollamaUrl} (model ${env.ollamaVlmModel})${detail ? `: ${detail.slice(0, 200)}` : ''}`);
       return null;
     }
 
