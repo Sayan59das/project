@@ -6,6 +6,9 @@ import sharp from 'sharp';
 import { collapseRepeatedPhrase, recognizeLines } from '../services/paddleOcr.service';
 import { rasterizePdfPages } from '../services/pdf.service';
 
+// Shared across tests to verify singleton behavior
+let unicarePage: Buffer | undefined;
+
 test('collapseRepeatedPhrase: Homeo-Vita Homeo-Vita Homeo-Vita → Homeo-Vita', () => {
   assert.equal(collapseRepeatedPhrase('Homeo-Vita Homeo-Vita Homeo-Vita'), 'Homeo-Vita');
 });
@@ -51,13 +54,15 @@ test('recognizeLines: white 4×4 PNG → empty array (no throw)', async () => {
   assert.equal(lines.length, 0);
 });
 
-test('recognizeLines: real PDF fixture → lines with expected content', async () => {
+test('recognizeLines: real PDF fixture → lines with expected content', { timeout: 120_000 }, async () => {
   // First engine call takes ~10s, total test needs ~2 min
 
   const [page] = await rasterizePdfPages(
     readFileSync('M:/New Drive/Desktop/bot/project/IMH-LVS/Dataset_Example/Unicare MV IRN219-2 (1).pdf'),
     { maxPages: 1 }
   );
+
+  unicarePage = page;
 
   const lines = await recognizeLines(page);
 
@@ -79,4 +84,28 @@ test('recognizeLines: real PDF fixture → lines with expected content', async (
     assert(line.box.y1 > line.box.y0, `Expected y1 (${line.box.y1}) > y0 (${line.box.y0})`);
     assert(line.confidence >= 0 && line.confidence <= 1, `Expected confidence in [0, 1], got ${line.confidence}`);
   }
+});
+
+test('recognizeLines reuses one engine across calls', async () => {
+  // Create a small white PNG image for fast detection
+  const whitePng = await sharp({
+    create: { width: 4, height: 4, channels: 3, background: { r: 255, g: 255, b: 255 } }
+  }).png().toBuffer();
+
+  // First call (engine already loaded from earlier tests)
+  const start1 = Date.now();
+  const lines1 = await recognizeLines(whitePng);
+  const elapsed1 = Date.now() - start1;
+
+  // Second call must reuse the same engine and complete very fast (< 2000ms)
+  const start2 = Date.now();
+  const lines2 = await recognizeLines(whitePng);
+  const elapsed2 = Date.now() - start2;
+
+  // Both calls should return empty arrays (no text in white PNG)
+  assert.equal(lines1.length, 0, 'First call should return empty array');
+  assert.equal(lines2.length, 0, 'Second call should return empty array');
+
+  // Second call must be fast (< 2000ms) because it reuses the engine
+  assert(elapsed2 < 2000, `Second call took ${elapsed2}ms, expected < 2000ms (engine not reused?)`);
 });

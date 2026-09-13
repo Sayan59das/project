@@ -54,36 +54,20 @@ export function collapseRepeatedPhrase(text: string): string {
   return tokens.join(' ');
 }
 
-let moduleCached: any | undefined;
-let moduleLoadFailed = false;
+let enginePromise: Promise<any | null> | undefined;
 
-async function getEngine(): Promise<any | null> {
-  // If we've already tried and failed, never retry
-  if (moduleLoadFailed) {
-    return null;
+function getEngine(): Promise<any | null> {
+  if (!enginePromise) {
+    enginePromise = importEsm('@gutenye/ocr-node')
+      .then((m) => m.default.create())
+      .catch((error: unknown) => {
+        // One warning per process: the models are missing or the native runtime failed to load;
+        // every later call must stay silent and just skip display-text recovery.
+        console.warn(`[paddleOcr] engine unavailable — display-text recovery disabled: ${error instanceof Error ? error.message : String(error)}`);
+        return null;
+      });
   }
-
-  // If we've already loaded the module successfully, use it
-  if (moduleCached) {
-    try {
-      return await moduleCached.default.create();
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      console.warn(`[paddleOcr] recognition failed: ${message}`);
-      return null;
-    }
-  }
-
-  // First time: try to load the module
-  try {
-    moduleCached = await importEsm('@gutenye/ocr-node');
-    return await moduleCached.default.create();
-  } catch (err) {
-    moduleLoadFailed = true;
-    const message = err instanceof Error ? err.message : String(err);
-    console.warn(`[paddleOcr] engine unavailable — display-text recovery disabled: ${message}`);
-    return null;
-  }
+  return enginePromise;
 }
 
 /**
