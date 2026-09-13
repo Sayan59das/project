@@ -9,7 +9,9 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { compareArtworkImages } from '../services/imageSimilarity.service';
+import { compareFingerprints, fingerprintArtworkImage, compareHashes } from '../services/imageSimilarity.service';
+import type { OcrLine } from '../services/paddleOcr.service';
+import type { VlmImage, VlmClient } from '../services/ollamaVlm.service';
 
 const FIXTURES_DIR = path.join(__dirname, 'fixtures');
 
@@ -19,10 +21,9 @@ function fixture(name: string): Buffer {
 
 test('The same real label image compared against itself reports MATCH at ~100% for both signals', async () => {
   const buffer = fixture('jpg-label.jpg');
-  const result = await compareArtworkImages(
-    { buffer, mimeType: 'image/jpeg' },
-    { buffer, mimeType: 'image/jpeg' }
-  );
+  const fpA = await fingerprintArtworkImage({ buffer, mimeType: 'image/jpeg' });
+  const fpB = await fingerprintArtworkImage({ buffer, mimeType: 'image/jpeg' });
+  const result = compareFingerprints(fpA, fpB);
   assert.equal(result.artworkSimilarity.status, 'MATCH');
   assert.ok(result.artworkSimilarity.similarityPercentage! >= 95, `expected near-100% structural similarity, got ${result.artworkSimilarity.similarityPercentage}`);
   assert.equal(result.colourSimilarity.status, 'MATCH');
@@ -31,19 +32,17 @@ test('The same real label image compared against itself reports MATCH at ~100% f
 
 test('The same real label PDF rasterized twice compares as MATCH on both signals — rasterization itself is deterministic', async () => {
   const buffer = fixture('apple-cider-vinegar-gummy.pdf');
-  const result = await compareArtworkImages(
-    { buffer, mimeType: 'application/pdf' },
-    { buffer, mimeType: 'application/pdf' }
-  );
+  const fpA = await fingerprintArtworkImage({ buffer, mimeType: 'application/pdf' });
+  const fpB = await fingerprintArtworkImage({ buffer, mimeType: 'application/pdf' });
+  const result = compareFingerprints(fpA, fpB);
   assert.equal(result.artworkSimilarity.status, 'MATCH');
   assert.equal(result.colourSimilarity.status, 'MATCH');
 });
 
 test('Two genuinely different real label PDFs report CONFLICT on structural similarity, not a false MATCH', async () => {
-  const result = await compareArtworkImages(
-    { buffer: fixture('apple-cider-vinegar-gummy.pdf'), mimeType: 'application/pdf' },
-    { buffer: fixture('chyawanprash-gummies.pdf'), mimeType: 'application/pdf' }
-  );
+  const fpA = await fingerprintArtworkImage({ buffer: fixture('apple-cider-vinegar-gummy.pdf'), mimeType: 'application/pdf' });
+  const fpB = await fingerprintArtworkImage({ buffer: fixture('chyawanprash-gummies.pdf'), mimeType: 'application/pdf' });
+  const result = compareFingerprints(fpA, fpB);
   assert.equal(result.artworkSimilarity.status, 'CONFLICT');
   assert.ok(result.artworkSimilarity.similarityPercentage! < 80);
 });
@@ -52,19 +51,17 @@ test('A corrupt/unreadable file on either side reports MISSING for both signals,
   const good = fixture('jpg-label.jpg');
   const corrupt = fixture('corrupt.jpg');
 
-  const oneSideCorrupt = await compareArtworkImages(
-    { buffer: good, mimeType: 'image/jpeg' },
-    { buffer: corrupt, mimeType: 'image/jpeg' }
-  );
+  const goodFp = await fingerprintArtworkImage({ buffer: good, mimeType: 'image/jpeg' });
+  const corruptFp = await fingerprintArtworkImage({ buffer: corrupt, mimeType: 'image/jpeg' });
+  const oneSideCorrupt = compareFingerprints(goodFp, corruptFp);
   assert.equal(oneSideCorrupt.artworkSimilarity.status, 'MISSING');
   assert.equal(oneSideCorrupt.artworkSimilarity.similarityPercentage, undefined);
   assert.equal(oneSideCorrupt.colourSimilarity.status, 'MISSING');
   assert.equal(oneSideCorrupt.colourSimilarity.similarityPercentage, undefined);
 
-  const bothCorrupt = await compareArtworkImages(
-    { buffer: corrupt, mimeType: 'image/jpeg' },
-    { buffer: fixture('corrupt.pdf'), mimeType: 'application/pdf' }
-  );
+  const corruptFp2 = await fingerprintArtworkImage({ buffer: corrupt, mimeType: 'image/jpeg' });
+  const corruptPdfFp = await fingerprintArtworkImage({ buffer: fixture('corrupt.pdf'), mimeType: 'application/pdf' });
+  const bothCorrupt = compareFingerprints(corruptFp2, corruptPdfFp);
   assert.equal(bothCorrupt.artworkSimilarity.status, 'MISSING');
   assert.equal(bothCorrupt.colourSimilarity.status, 'MISSING');
 });
@@ -73,10 +70,9 @@ test('A cross-format comparison (PDF vs JPG of a real label) still produces real
   // Different file formats of conceptually-comparable artwork must still
   // resolve to a plain raster image on both sides rather than the format
   // mismatch itself causing a failure.
-  const result = await compareArtworkImages(
-    { buffer: fixture('jpg-label.jpg'), mimeType: 'image/jpeg' },
-    { buffer: fixture('text-label.pdf'), mimeType: 'application/pdf' }
-  );
+  const fpA = await fingerprintArtworkImage({ buffer: fixture('jpg-label.jpg'), mimeType: 'image/jpeg' });
+  const fpB = await fingerprintArtworkImage({ buffer: fixture('text-label.pdf'), mimeType: 'application/pdf' });
+  const result = compareFingerprints(fpA, fpB);
   assert.ok(['MATCH', 'SIMILAR', 'CONFLICT'].includes(result.artworkSimilarity.status));
   assert.equal(typeof result.artworkSimilarity.similarityPercentage, 'number');
   assert.ok(['MATCH', 'SIMILAR', 'CONFLICT'].includes(result.colourSimilarity.status));
@@ -91,14 +87,143 @@ test('A cross-format comparison (PDF vs JPG of a real label) still produces real
 // real labels (different layout AND colour), both signals should be able
 // to disagree with each other in principle, i.e. neither is redundant.
 test('Colour similarity and structural similarity are independent measurements, not the same number twice', async () => {
-  const result = await compareArtworkImages(
-    { buffer: fixture('apple-cider-vinegar-gummy.pdf'), mimeType: 'application/pdf' },
-    { buffer: fixture('sharp-mind-plus-gummies.pdf'), mimeType: 'application/pdf' }
-  );
+  const fpA = await fingerprintArtworkImage({ buffer: fixture('apple-cider-vinegar-gummy.pdf'), mimeType: 'application/pdf' });
+  const fpB = await fingerprintArtworkImage({ buffer: fixture('sharp-mind-plus-gummies.pdf'), mimeType: 'application/pdf' });
+  const result = compareFingerprints(fpA, fpB);
   // Not asserting a specific relationship (that would assume knowledge of
   // these two fixtures' actual colour palettes) — only that the two
   // percentages are computed independently, i.e. not literally the same
   // value reported twice under different keys.
   assert.notEqual(result.artworkSimilarity.similarityPercentage, undefined);
   assert.notEqual(result.colourSimilarity.similarityPercentage, undefined);
+});
+
+// Unit tests for logo similarity feature
+test('compareFingerprints with both logoHash equal reports logoSimilarity MATCH', async () => {
+  const logoHash = 0x12345678n;
+  const fpA = {
+    hash: 0x1234567890abcdefn,
+    colourHistogram: new Array(216).fill(0.01),
+    logoHash,
+    logoSource: 'vlm' as const
+  };
+  const fpB = {
+    hash: 0x1234567890abcdefn,
+    colourHistogram: new Array(216).fill(0.01),
+    logoHash,
+    logoSource: 'vlm' as const
+  };
+  const result = compareFingerprints(fpA, fpB);
+  assert.ok(result.logoSimilarity, 'logoSimilarity should be present');
+  assert.equal(result.logoSimilarity!.status, 'MATCH');
+});
+
+test('compareFingerprints with one null logoHash reports logoSimilarity MISSING', async () => {
+  const fpA = {
+    hash: 0x1234567890abcdefn,
+    colourHistogram: new Array(216).fill(0.01),
+    logoHash: 0x12345678n,
+    logoSource: 'vlm' as const
+  };
+  const fpB = {
+    hash: 0x1234567890abcdefn,
+    colourHistogram: new Array(216).fill(0.01),
+    logoHash: null,
+    logoSource: null
+  };
+  const result = compareFingerprints(fpA, fpB);
+  assert.ok(result.logoSimilarity, 'logoSimilarity should be present');
+  assert.equal(result.logoSimilarity!.status, 'MISSING');
+});
+
+test('compareFingerprints with both logoHash undefined excludes logoSimilarity key', async () => {
+  const fpA: any = {
+    hash: 0x1234567890abcdefn,
+    colourHistogram: new Array(216).fill(0.01),
+    logoHash: undefined,
+    logoSource: undefined
+  };
+  const fpB: any = {
+    hash: 0x1234567890abcdefn,
+    colourHistogram: new Array(216).fill(0.01),
+    logoHash: undefined,
+    logoSource: undefined
+  };
+  const result = compareFingerprints(fpA, fpB);
+  assert.equal(result.logoSimilarity, undefined, 'logoSimilarity should be absent when logo pass did not run');
+});
+
+test('Cache: two fingerprintArtworkImage calls on identical bytes call recognizeLines once', async () => {
+  let recognizeLinesCalls = 0;
+  const mockRecognizeLines = async (image: Buffer): Promise<OcrLine[]> => {
+    recognizeLinesCalls++;
+    return [];
+  };
+  const mockLocateLogo = async (
+    pageImage: { width: number; height: number },
+    vlmImage: VlmImage | null,
+    ocrLines: readonly OcrLine[],
+    brandText: string,
+    client: VlmClient
+  ) => {
+    return null;
+  };
+
+  const buffer = fixture('jpg-label.jpg');
+  const deps = { recognizeLines: mockRecognizeLines, locateLogo: mockLocateLogo };
+
+  // First call
+  await fingerprintArtworkImage({ buffer, mimeType: 'image/jpeg' }, { brandText: 'Unicare', deps });
+  assert.equal(recognizeLinesCalls, 1, 'recognizeLines should be called once on first fingerprint');
+
+  // Second call with same bytes and brandText — should use cache
+  await fingerprintArtworkImage({ buffer, mimeType: 'image/jpeg' }, { brandText: 'Unicare', deps });
+  assert.equal(recognizeLinesCalls, 1, 'recognizeLines should NOT be called again (cached)');
+
+  // Third call with same bytes but different brandText — should NOT use cache
+  await fingerprintArtworkImage({ buffer, mimeType: 'image/jpeg' }, { brandText: 'Different', deps });
+  assert.equal(recognizeLinesCalls, 2, 'recognizeLines should be called for different brandText');
+});
+
+test('Live (OLLAMA_URL set): Unicare PDF vs itself with VLM logo detection enabled', { skip: !process.env.OLLAMA_URL, timeout: 180000 }, async () => {
+  // This test only runs when OLLAMA_URL is set. It verifies that:
+  // 1. The logo pass ran (logoHash and logoSource are defined, not undefined)
+  // 2. When the same file is compared to itself, if logos were detected, they MATCH
+  const buffer = fixture('apple-cider-vinegar-gummy.pdf');
+  const fpA = await fingerprintArtworkImage({ buffer, mimeType: 'application/pdf' }, { brandText: 'Unicare' });
+  const fpB = await fingerprintArtworkImage({ buffer, mimeType: 'application/pdf' }, { brandText: 'Unicare' });
+
+  assert.ok(fpA, 'fpA should not be null');
+  assert.ok(fpB, 'fpB should not be null');
+
+  // The logo pass should have run (logoHash and logoSource should be defined, not undefined)
+  assert.notEqual(fpA!.logoHash, undefined, 'fpA logoHash should be defined (logo pass ran)');
+  assert.notEqual(fpB!.logoHash, undefined, 'fpB logoHash should be defined (logo pass ran)');
+  assert.notEqual(fpA!.logoSource, undefined, 'fpA logoSource should be defined (logo pass ran)');
+  assert.notEqual(fpB!.logoSource, undefined, 'fpB logoSource should be defined (logo pass ran)');
+
+  // If both logos were found, they should match
+  const result = compareFingerprints(fpA, fpB);
+  assert.ok(result.logoSimilarity, 'logoSimilarity should be present');
+
+  if (fpA!.logoHash !== null && fpB!.logoHash !== null) {
+    assert.equal(result.logoSimilarity!.status, 'MATCH', `Expected MATCH for same file, but got ${result.logoSimilarity!.status}`);
+  }
+});
+
+test('Live (OLLAMA_URL set): Unicare PDF vs She-Arise PDF shows different logo similarity', { skip: !process.env.OLLAMA_URL, timeout: 180000 }, async () => {
+  // This test only runs when OLLAMA_URL is set
+  const fpUnicare = await fingerprintArtworkImage({ buffer: fixture('apple-cider-vinegar-gummy.pdf'), mimeType: 'application/pdf' }, { brandText: 'Unicare' });
+  const fpSheArise = await fingerprintArtworkImage({ buffer: fixture('chyawanprash-gummies.pdf'), mimeType: 'application/pdf' }, { brandText: 'She Arise' });
+
+  assert.ok(fpUnicare, 'fpUnicare should not be null');
+  assert.ok(fpSheArise, 'fpSheArise should not be null');
+
+  const result = compareFingerprints(fpUnicare, fpSheArise);
+  assert.ok(result.logoSimilarity, 'logoSimilarity should be present (logo pass ran)');
+
+  // Different labels should not have MATCH logoSimilarity (if both logos were found)
+  if (fpUnicare!.logoHash !== null && fpSheArise!.logoHash !== null) {
+    assert.notEqual(result.logoSimilarity!.status, 'MATCH', 'Different labels should not have MATCH logoSimilarity');
+  }
 });

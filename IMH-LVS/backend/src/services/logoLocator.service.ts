@@ -1,22 +1,7 @@
 import { coverageFraction, type OcrLineLike } from './outlinedText.service';
 import type { Rectangle } from './tesseract.service';
 import type { OcrLine } from './paddleOcr.service';
-
-/**
- * Local type copies for VlmImage and VlmClient from Task 1.
- * TODO(E): import from ./ollamaVlm.service once merged
- */
-export type VlmImage = {
-  base64: string;
-  sentWidth: number;
-  sentHeight: number;
-  originalWidth: number;
-  originalHeight: number;
-};
-
-export type VlmClient = {
-  askJson: (image: VlmImage, prompt: string, schema: object) => Promise<unknown | null>;
-};
+import type { VlmImage, VlmClient } from './ollamaVlm.service';
 
 export type LogoBox = { x0: number; y0: number; x1: number; y1: number };
 
