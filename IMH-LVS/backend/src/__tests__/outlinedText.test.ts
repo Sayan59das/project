@@ -205,7 +205,7 @@ test('findOutlinedLines: with custom options and empty spanRects', () => {
   // B: 'GUMMIES' h=69, conf=0.99 -> keep
   // C: 'NUTRITIONAL INFORMATION' h=60, conf=0.95 -> keep (now uncovered)
   // D: 'Faint' h=80, conf=0.4 -> filtered (conf < 0.6)
-  // E: 'tiny' h=10, conf=0.99 -> keep (minHeightPx=10)
+  // E: 'tiny' h=20 px, conf=0.99 -> passes minHeightPx=10
   // F: 'gummies' h=50, conf=0.9 -> deduped with B
 
   // Sort by height desc: A(137), D(80), B(69), C(60), F(50), E(10)
