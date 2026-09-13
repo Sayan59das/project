@@ -51,6 +51,7 @@ function extraction(overrides: Partial<Record<string, string>> = {}) {
     ingredients: 'Apple Cider Vinegar, Pectin, Sugar',
     nutritionTableFormat: 'Standard (per 2 gummies)',
     nutritionTable: '',
+    displayTextCandidates: '',
     ...overrides
   };
 }

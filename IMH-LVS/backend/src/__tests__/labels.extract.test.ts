@@ -77,7 +77,11 @@ const RESPONSE_FIELD_KEYS = [
   // The nutrition panel's actual rows (JSON-encoded) — only ever populated
   // via the AI backend's vision-model fallback, '' from Tesseract alone,
   // same as every other key here when nothing was read.
-  'nutritionTable'
+  'nutritionTable',
+  // Ranked display-text candidates (brand names, product titles) recovered from
+  // the rasterized page when the text layer is incomplete. JSON array or ''
+  // when none are recovered, same absence-is-blank convention as every other key.
+  'displayTextCandidates'
 ];
 
 function assertWellFormedSuccessResponse(body: any) {
@@ -379,6 +383,62 @@ test('Real label PDF (She-Arise Gummies): front count badge recovered via spatia
   // marketing company itself already resolves correctly for this artwork,
   // unlike Sharp Mind Plus's.
   assert.equal(body.data.address, 'M-17, Pharma Tower, First Floor, Badli Industrial, Area, New Delhi 110042 (INDIA)');
+
+  // This PDF's text layer is complete so no rasterization occurred (fast path).
+  // displayTextCandidates is '' when the text-layer fast path skips OCR.
+  assert.equal(body.data.displayTextCandidates, '');
+});
+
+test('Real label PDF (Unicare Homeo-Vita, fully outlined display text): display-text candidates recovered, no field fabricated', { skip: SKIP }, async () => {
+  const { status, body } = await postLabel('unicare-homeo-vita-gummies.pdf', 'application/pdf');
+  assert.equal(status, 200);
+  assertWellFormedSuccessResponse(body);
+
+  const candidates = JSON.parse(body.data.displayTextCandidates);
+  assert.ok(Array.isArray(candidates), 'displayTextCandidates must parse as an array');
+  assert.ok(candidates.length > 0, 'displayTextCandidates array must not be empty');
+
+  // Verify key display-text elements were recovered
+  assert.ok(
+    candidates.some((c) => c.text === 'Homeo-Vita'),
+    'displayTextCandidates must include "Homeo-Vita"'
+  );
+  assert.ok(
+    candidates.some((c) => /GUMMIES/i.test(c.text)),
+    'displayTextCandidates must include text matching GUMMIES'
+  );
+
+  // Verify array is ordered by heightPx (tallest first)
+  for (let i = 0; i < candidates.length - 1; i++) {
+    assert.ok(
+      candidates[i].heightPx >= candidates[i + 1].heightPx,
+      'displayTextCandidates must be ordered tallest-first by heightPx'
+    );
+  }
+
+  // Verify candidate text shapes make sense: heightPx is a number, confidence is [0,1]
+  for (const candidate of candidates) {
+    assert.equal(typeof candidate.text, 'string', 'candidate text must be a string');
+    assert.equal(typeof candidate.heightPx, 'number', 'candidate heightPx must be a number');
+    assert.ok(candidate.heightPx > 0, 'candidate heightPx must be positive');
+    assert.equal(typeof candidate.confidence, 'number', 'candidate confidence must be a number');
+    assert.ok(candidate.confidence >= 0 && candidate.confidence <= 1, 'candidate confidence must be in [0,1]');
+  }
+
+  // Verify that brand/productName fields are either blank or one of the candidates
+  // (never fabricated from a different source)
+  if (body.data.brand !== '') {
+    assert.ok(
+      candidates.some((c) => c.text === body.data.brand),
+      'brand must be blank or one of the displayTextCandidates'
+    );
+  }
+  if (body.data.productName !== '') {
+    assert.ok(
+      candidates.some((c) => c.text === body.data.productName),
+      'productName must be blank or one of the displayTextCandidates'
+    );
+  }
 });
 
 // Reproduces the same real-label pattern above (two FSSAI numbers, a

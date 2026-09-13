@@ -78,6 +78,9 @@ export const env = {
   // deployment handling real uploads for longer than a debugging session,
   // since it logs label file content.
   labelExtractionDebug: process.env.LABEL_EXTRACTION_DEBUG === 'true',
+  // PP-OCR ONNX-based line recognition for outlined display text where
+  // Tesseract fails. ON by default; set PADDLE_OCR_ENABLED=false to disable.
+  paddleOcrEnabled: parseBoolean(process.env.PADDLE_OCR_ENABLED, true),
 
   // The on-prem vision-model service (ai_backend/, FastAPI + Qwen2-VL) that
   // fills in fields Tesseract could not read. OFF unless a URL is set: the
