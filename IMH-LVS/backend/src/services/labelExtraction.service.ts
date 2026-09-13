@@ -57,6 +57,8 @@ import {
 } from './labelSemanticExtractor.service';
 import { segmentPanels, toReadingOrderText, extractNutritionTableFromPanels } from './textLayerGeometry.service';
 import { projectSpanToPixels, findOutlinedLines } from './outlinedText.service';
+import { isVlmEnabled, prepareImage, ollamaClient, type VlmImage, type VlmClient } from './ollamaVlm.service';
+import { resolveDisplayRoles, type DisplayCandidateIn } from './displayRoleResolver.service';
 
 setLabelFieldExtractorDebug(env.labelExtractionDebug);
 
@@ -111,6 +113,7 @@ export type DisplayTextCandidate = {
   text: string;
   heightPx: number;
   confidence: number;
+  topPx: number;
 };
 
 /**
@@ -491,7 +494,8 @@ async function recoverDisplayTextCandidates(
     return outlined.slice(0, 8).map((l) => ({
       text: l.text,
       heightPx: Math.round(l.box.y1 - l.box.y0),
-      confidence: Math.round(l.confidence * 100) / 100
+      confidence: Math.round(l.confidence * 100) / 100,
+      topPx: Math.round(l.box.y0)
     }));
   } catch (error) {
     console.warn(
@@ -499,6 +503,41 @@ async function recoverDisplayTextCandidates(
         (error instanceof Error ? error.message : String(error))
     );
     return [];
+  }
+}
+
+// Resolve blank brand/productName fields using VLM classification of display-text candidates.
+// Returns the fields unchanged if VLM is disabled, no candidates, or both fields already filled.
+// If resolution succeeds with confidence >= 0.6, fills blanks using fillBlanks;
+// otherwise returns fields unchanged. Wrapped in try/catch for fail-soft extraction.
+async function resolveBlankDisplayRoles(
+  fields: ExtractedLabelFields,
+  pageImage: Buffer,
+  candidates: DisplayTextCandidate[]
+): Promise<ExtractedLabelFields> {
+  // Early return if VLM disabled, no candidates, or both fields already filled
+  if (!isVlmEnabled() || candidates.length === 0 || (fields.brand && fields.productName)) {
+    return fields;
+  }
+
+  try {
+    const image = await prepareImage(pageImage);
+    const roles = await resolveDisplayRoles(image, candidates, ollamaClient);
+
+    // No roles or confidence below threshold — return unchanged
+    if (!roles || roles.confidence < 0.6) {
+      return fields;
+    }
+
+    // Fill blanks with resolved brand/productName, ignoring empty patch values
+    return fillBlanks(fields, { brand: roles.brand, productName: roles.productName });
+  } catch (error) {
+    console.warn(
+      '[labelExtraction] VLM display-role resolution failed: ' +
+        (error instanceof Error ? error.message : String(error))
+    );
+    // Fail-soft: return fields unchanged
+    return fields;
   }
 }
 
@@ -566,13 +605,17 @@ async function extractFieldsFromPdf(pdfBuffer: Buffer, knownFlavours: readonly s
   let displayTextCandidates: DisplayTextCandidate[] | undefined;
   if ((!fields.brand || !fields.productName) && pageImages.length > 0) {
     displayTextCandidates = await recoverDisplayTextCandidates(pageImages[0], spans, env.pdfRasterDpi);
+    // Resolve blank display roles using VLM classification if available
+    if (displayTextCandidates) {
+      fields = await resolveBlankDisplayRoles(fields, pageImages[0], displayTextCandidates);
+    }
   }
 
   return { fields, text: finalText, pageImages, nutritionTable, displayTextCandidates };
 }
 
 async function extractFieldsFromImage(imageBuffer: Buffer, knownFlavours: readonly string[]): Promise<FieldPass> {
-  const { text, fields } = await ocrImageWithEnhancement(imageBuffer, '', knownFlavours);
+  let { text, fields } = await ocrImageWithEnhancement(imageBuffer, '', knownFlavours);
   debugLog(`OCR text (${text.length} chars):\n${text}`);
   // The upload IS the page image, so colour reads straight off it.
 
@@ -581,6 +624,10 @@ async function extractFieldsFromImage(imageBuffer: Buffer, knownFlavours: readon
   let displayTextCandidates: DisplayTextCandidate[] | undefined;
   if (!fields.brand || !fields.productName) {
     displayTextCandidates = await recoverDisplayTextCandidates(imageBuffer, [], env.pdfRasterDpi);
+    // Resolve blank display roles using VLM classification if available
+    if (displayTextCandidates) {
+      fields = await resolveBlankDisplayRoles(fields, imageBuffer, displayTextCandidates);
+    }
   }
 
   return { fields, text, pageImages: [imageBuffer], displayTextCandidates };

@@ -439,6 +439,12 @@ test('Real label PDF (Unicare Homeo-Vita, fully outlined display text): display-
       'productName must be blank or one of the displayTextCandidates'
     );
   }
+
+  // When VLM is enabled, verify that blank brand/productName are resolved from candidates
+  if (process.env.OLLAMA_URL) {
+    assert.equal(body.data.brand, 'Homeo-Vita');
+    assert.match(body.data.productName, /MULTIVITAMIN/);
+  }
 });
 
 // Reproduces the same real-label pattern above (two FSSAI numbers, a
