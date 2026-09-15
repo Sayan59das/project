@@ -15,7 +15,7 @@ import json
 import pytest
 
 import score
-from score import aggregate, load_ground_truth, merge_label_pages, normalize, score_field, write_results_md, run_textlayer_mode
+from score import aggregate, load_ground_truth, merge_label_pages, normalize, score_field, write_results_md, run_textlayer_mode, run_pipeline_mode
 
 
 class TestNormalize:
@@ -328,6 +328,39 @@ class TestRunTextlayerMode:
         # Verify ground truth is returned as-is.
         assert ground_truth == stub_ground_truth
 
+    def test_reads_the_node_cli_subprocess_output_as_utf8(self, tmp_path, monkeypatch):
+        # Windows' default console encoding (cp1252) cannot decode every
+        # byte a real label's extracted text can contain (confirmed live:
+        # UnicodeDecodeError on byte 0x81, from a real address field, when
+        # subprocess.run relied on the platform-default text encoding
+        # instead of asking for UTF-8 explicitly) — silently crashing the
+        # background reader thread and leaving `result.stdout` as None,
+        # which then failed with a confusing "must be str... not NoneType"
+        # error two lines later instead of the real cause.
+        stub_ground_truth = {"A.pdf": ({"brand_name": "X"}, [("a_p1", 1)], [])}
+        monkeypatch.setattr(score, "load_ground_truth", lambda: stub_ground_truth)
+
+        pdf_dir = tmp_path / "pdfs"
+        pdf_dir.mkdir()
+        (pdf_dir / "A.pdf").touch()
+        monkeypatch.setenv("EVAL_LABEL_PDF_DIR", str(pdf_dir))
+
+        canned_output = json.dumps([{
+            "source_file": "A.pdf", "brand_name": "X", "product_name": None, "nutrition_table": None,
+            "flavour": None, "fssai_number": None, "marketing_company": None, "address": None,
+            "customer_care_number": None, "customer_care_email": None, "package_size": None,
+            "manufacturing_company": None, "claims": [], "ingredients": [], "colour_theme": None,
+            "logo": None, "layout": None,
+        }])
+        mock_subprocess = Mock()
+        mock_subprocess.run = Mock(return_value=Mock(stdout=canned_output, returncode=0))
+        monkeypatch.setattr(score, "subprocess", mock_subprocess)
+
+        run_textlayer_mode()
+
+        _args, kwargs = mock_subprocess.run.call_args
+        assert kwargs.get("encoding") == "utf-8"
+
     def test_raises_system_exit_when_no_pdfs_found(self, tmp_path, monkeypatch):
         # Mock load_ground_truth to return ground truth.
         stub_ground_truth = {
@@ -346,3 +379,93 @@ class TestRunTextlayerMode:
             run_textlayer_mode()
 
         assert str(pdf_dir) in str(exc_info.value)
+
+
+class TestRunPipelineMode:
+    """Mirrors TestRunTextlayerMode — run_pipeline_mode() shares the same PDF
+    collection and JSON-record parsing, just against a different Node CLI
+    script (extract-pipeline.ts, the full text-layer+OCR+VLM pipeline)."""
+
+    def test_extracts_and_returns_predictions_with_normalized_nutrition_table(self, tmp_path, monkeypatch):
+        stub_ground_truth = {
+            "A.pdf": ({"brand_name": "X"}, [("a_p1", 1)], []),
+            "B.pdf": ({"brand_name": "Y"}, [("b_p1", 1)], []),
+        }
+        monkeypatch.setattr(score, "load_ground_truth", lambda: stub_ground_truth)
+
+        pdf_dir = tmp_path / "pdfs"
+        pdf_dir.mkdir()
+        (pdf_dir / "A.pdf").touch()
+        (pdf_dir / "B.pdf").touch()
+        monkeypatch.setenv("EVAL_LABEL_PDF_DIR", str(pdf_dir))
+
+        canned_output = json.dumps([
+            {
+                "source_file": "A.pdf", "brand_name": "X", "product_name": "Product A", "nutrition_table": None,
+                "flavour": None, "fssai_number": None, "marketing_company": None, "address": None,
+                "customer_care_number": None, "customer_care_email": None, "package_size": None,
+                "manufacturing_company": None, "claims": [], "ingredients": [], "colour_theme": ["Blue"],
+                "logo": None, "layout": None,
+            },
+            {
+                "source_file": "B.pdf", "brand_name": "Y", "product_name": "Product B",
+                "nutrition_table": {"Calories": "100 kcal"},
+                "flavour": None, "fssai_number": None, "marketing_company": None, "address": None,
+                "customer_care_number": None, "customer_care_email": None, "package_size": None,
+                "manufacturing_company": None, "claims": [], "ingredients": [], "colour_theme": None,
+                "logo": None, "layout": None,
+            }
+        ])
+        mock_subprocess = Mock()
+        mock_subprocess.run = Mock(return_value=Mock(stdout=canned_output, returncode=0))
+        monkeypatch.setattr(score, "subprocess", mock_subprocess)
+
+        predictions, ground_truth = run_pipeline_mode()
+
+        assert predictions["A.pdf"]["nutrition_table"] == {}
+        assert predictions["A.pdf"]["colour_theme"] == ["Blue"]
+        assert predictions["B.pdf"]["nutrition_table"] == {"Calories": "100 kcal"}
+        assert ground_truth == stub_ground_truth
+
+        # Confirms this really does invoke the full-pipeline CLI, not the
+        # text-layer-only one — the whole point of this mode being separate.
+        cmd = mock_subprocess.run.call_args[0][0]
+        assert "scripts/extract-pipeline.ts" in cmd
+
+    def test_raises_system_exit_when_no_pdfs_found(self, tmp_path, monkeypatch):
+        stub_ground_truth = {"A.pdf": ({"brand_name": "X"}, [("a_p1", 1)], [])}
+        monkeypatch.setattr(score, "load_ground_truth", lambda: stub_ground_truth)
+
+        pdf_dir = tmp_path / "empty_pdfs"
+        pdf_dir.mkdir()
+        monkeypatch.setenv("EVAL_LABEL_PDF_DIR", str(pdf_dir))
+
+        with pytest.raises(SystemExit) as exc_info:
+            run_pipeline_mode()
+
+        assert str(pdf_dir) in str(exc_info.value)
+
+    def test_reads_the_node_cli_subprocess_output_as_utf8(self, tmp_path, monkeypatch):
+        stub_ground_truth = {"A.pdf": ({"brand_name": "X"}, [("a_p1", 1)], [])}
+        monkeypatch.setattr(score, "load_ground_truth", lambda: stub_ground_truth)
+
+        pdf_dir = tmp_path / "pdfs"
+        pdf_dir.mkdir()
+        (pdf_dir / "A.pdf").touch()
+        monkeypatch.setenv("EVAL_LABEL_PDF_DIR", str(pdf_dir))
+
+        canned_output = json.dumps([{
+            "source_file": "A.pdf", "brand_name": "X", "product_name": None, "nutrition_table": None,
+            "flavour": None, "fssai_number": None, "marketing_company": None, "address": None,
+            "customer_care_number": None, "customer_care_email": None, "package_size": None,
+            "manufacturing_company": None, "claims": [], "ingredients": [], "colour_theme": None,
+            "logo": None, "layout": None,
+        }])
+        mock_subprocess = Mock()
+        mock_subprocess.run = Mock(return_value=Mock(stdout=canned_output, returncode=0))
+        monkeypatch.setattr(score, "subprocess", mock_subprocess)
+
+        run_pipeline_mode()
+
+        _args, kwargs = mock_subprocess.run.call_args
+        assert kwargs.get("encoding") == "utf-8"

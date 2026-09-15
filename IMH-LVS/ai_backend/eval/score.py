@@ -24,17 +24,21 @@ Collapsing them into one "wrong" bucket hides which failure mode is
 actually happening.
 
 Modes:
-    python eval/score.py --mode ai          # today's one-shot Qwen2-VL-2B pipeline
-    python eval/score.py --mode textlayer   # Phase C's PDF-text-layer extraction
-    python eval/score.py --mode pipeline    # the full new pipeline (Phase C+D+E)
-textlayer/pipeline are wired into the CLI now but raise a clear error until
-those phases exist — see run_textlayer_mode/run_pipeline_mode below.
+    python eval/score.py --mode ai          # the old one-shot Qwen2-VL-2B pipeline
+    python eval/score.py --mode textlayer   # Phase C alone: PDF-text-layer extraction only
+    python eval/score.py --mode pipeline    # Phases C+D+E combined: text layer, then OCR
+                                             # (with outlined-text detection), then Ollama
+                                             # VLM role-resolution for whatever's still blank
 
-Run from ai_backend/: `python eval/score.py --mode ai`
+Run from ai_backend/: `python eval/score.py --mode pipeline`
 
 Environment variables:
-    EVAL_LABEL_PDF_DIR      Directory containing source PDF files for textlayer mode
-                            (default: ai_backend/finetune/source_labels)
+    EVAL_LABEL_PDF_DIR      Directory containing source PDF files for textlayer/pipeline
+                            mode (default: ai_backend/finetune/source_labels)
+    OLLAMA_URL              Read by the Node CLI (backend/src/config/env.ts), not this
+                            script — must be set (e.g. http://127.0.0.1:11434) for
+                            --mode pipeline's VLM role-resolution step to actually run.
+                            Without it, pipeline mode still runs text layer + OCR.
 """
 import argparse
 import json
@@ -281,22 +285,11 @@ def run_ai_mode():
     return predictions_by_source, ground_truth
 
 
-def run_textlayer_mode():
-    """Runs the text-layer-only extraction pipeline (Node CLI via
-    backend/scripts/extract-textlayer.ts) over every ground-truth label's PDF,
-    merging predictions per sourceFile the same way merge_label_pages()
-    combines ground truth, so the comparison is apples-to-apples.
-
-    PDFs are read from EVAL_LABEL_PDF_DIR, which defaults to ai_backend's
+def _collect_ground_truth_pdfs(ground_truth):
+    """PDFs are read from EVAL_LABEL_PDF_DIR, which defaults to ai_backend's
     finetune/source_labels directory but can be overridden via the
-    EVAL_LABEL_PDF_DIR environment variable. The CLI is invoked ONCE with
-    all available PDFs and returns a JSON array of extraction results."""
-    ground_truth = load_ground_truth()
-
-    # Determine PDF directory from environment or default.
+    EVAL_LABEL_PDF_DIR environment variable."""
     label_pdf_dir = Path(os.environ.get("EVAL_LABEL_PDF_DIR", AI_BACKEND_DIR / "finetune" / "source_labels"))
-
-    # Collect PDFs that exist for labels in ground truth.
     pdf_paths = []
     for source_file in ground_truth.keys():
         pdf_path = label_pdf_dir / source_file
@@ -304,45 +297,75 @@ def run_textlayer_mode():
             pdf_paths.append(pdf_path)
         else:
             print(f"  WARNING: no PDF for {source_file}, skipping", file=sys.stderr)
-
     if not pdf_paths:
         raise SystemExit(f"No PDFs found in {label_pdf_dir} — please check the directory exists and contains PDFs")
+    return pdf_paths
 
-    # Run the Node CLI subprocess to extract text layer data.
-    # Derive backend directory from ai_backend's parent.
+
+def _run_node_extraction_cli(script_name, pdf_paths, mode_label):
+    """Runs a backend/scripts/*.ts CLI (extract-textlayer.ts or
+    extract-pipeline.ts — both accept the same <pdf>... argv and print the
+    same JSON-array-of-records shape) and returns predictions keyed by
+    source file, ready to hand to score_labels() alongside ground truth."""
     backend_dir = AI_BACKEND_DIR.parent / "backend"
-    cmd = ["node", "-r", "tsx/cjs", "scripts/extract-textlayer.ts", *[str(p) for p in pdf_paths]]
+    cmd = ["node", "-r", "tsx/cjs", f"scripts/{script_name}", *[str(p) for p in pdf_paths]]
 
     try:
-        result = subprocess.run(cmd, cwd=backend_dir, capture_output=True, text=True, check=True)
+        # encoding="utf-8" explicitly: on Windows, text=True alone decodes
+        # with the console's default codepage (cp1252), which cannot
+        # represent every byte a real label's extracted text can contain
+        # (confirmed live — a real address field crashed this with
+        # UnicodeDecodeError on a single non-cp1252 byte) and fails
+        # silently in a background reader thread, leaving `result.stdout`
+        # as None rather than raising here.
+        result = subprocess.run(cmd, cwd=backend_dir, capture_output=True, text=True, encoding="utf-8", check=True)
     except subprocess.CalledProcessError as e:
-        raise SystemExit(f"Text layer extraction failed: {e.stderr}")
+        raise SystemExit(f"{mode_label} extraction failed: {e.stderr}")
 
-    # Parse the JSON array and build predictions by source file.
     try:
         records = json.loads(result.stdout)
     except json.JSONDecodeError as e:
-        raise SystemExit(f"Failed to parse extraction output as JSON: {e}")
+        raise SystemExit(f"Failed to parse {mode_label} extraction output as JSON: {e}")
 
     predictions_by_source = {}
     for record in records:
-        # Pop source_file since it's a key, not a field in the prediction dict.
         source_file = record.pop("source_file")
-
         # Normalize nutrition_table to empty dict when null (so score_field sees a dict).
         if record.get("nutrition_table") is None:
             record["nutrition_table"] = {}
-
         predictions_by_source[source_file] = record
 
+    return predictions_by_source
+
+
+def run_textlayer_mode():
+    """Runs the text-layer-only extraction pipeline (Node CLI via
+    backend/scripts/extract-textlayer.ts) over every ground-truth label's PDF,
+    merging predictions per sourceFile the same way merge_label_pages()
+    combines ground truth, so the comparison is apples-to-apples. The CLI is
+    invoked ONCE with all available PDFs and returns a JSON array of
+    extraction results."""
+    ground_truth = load_ground_truth()
+    pdf_paths = _collect_ground_truth_pdfs(ground_truth)
+    predictions_by_source = _run_node_extraction_cli("extract-textlayer.ts", pdf_paths, "Text layer")
     return predictions_by_source, ground_truth
 
 
 def run_pipeline_mode():
-    raise NotImplementedError(
-        "pipeline mode needs Phases C, D and E of the extraction rebuild plan "
-        "(see README.md) — not built yet."
-    )
+    """Runs the FULL pipeline (Node CLI via backend/scripts/extract-pipeline.ts:
+    text layer, then OCR with outlined-text detection, then Ollama VLM
+    role-resolution for whatever is still blank — Phases C+D+E combined)
+    over every ground-truth label's PDF. Same PDF collection and JSON-record
+    handling as run_textlayer_mode(), against the full-pipeline CLI instead
+    of the text-layer-only one.
+
+    Needs OLLAMA_URL set (and the model it names pulled) for the VLM step to
+    actually run — without it this still measures text-layer + OCR, just
+    without the role-resolution fallback; the CLI never throws either way."""
+    ground_truth = load_ground_truth()
+    pdf_paths = _collect_ground_truth_pdfs(ground_truth)
+    predictions_by_source = _run_node_extraction_cli("extract-pipeline.ts", pdf_paths, "Full pipeline")
+    return predictions_by_source, ground_truth
 
 
 def _git_sha():
