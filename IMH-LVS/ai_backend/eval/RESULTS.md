@@ -38,3 +38,40 @@ The only source of truth for extraction accuracy numbers on this project. Every 
 - `LXIR Shilajit gummy VF IRN18-1.pdf` — layout: ['Bottle label (wraparound + cap circles)', 'Blank die-line/dimension template']
 - `LXIR Shilajit STICK VF IRN19-1.pdf` — layout: ['Sachet/stick box label (wraparound + cap circles)', 'Blank die-line/dimension template']
 - `PMS VF IRN71-1.pdf` — layout: ['Bottle label (jar cap circles + wraparound body label)', 'UV varnish separation proof']
+
+## 2026-09-15 04:31 UTC — mode `textlayer` — 94fda2a
+
+**45 labels, 2187 fields scored.** Overall accuracy: **21.9%** (478 correct / 446 wrong / 1263 missing)
+
+| field | correct | wrong | missing | accuracy |
+|---|---|---|---|---|
+| brand_name | 0 | 21 | 24 | 0.0% |
+| product_name | 0 | 22 | 23 | 0.0% |
+| colour_theme | 0 | 0 | 87 | 0.0% |
+| flavour | 17 | 15 | 13 | 37.8% |
+| claims | 16 | 17 | 335 | 4.3% |
+| logo | 15 | 0 | 30 | 33.3% |
+| layout | 0 | 0 | 45 | 0.0% |
+| nutrition_table | 112 | 194 | 226 | 21.1% |
+| fssai_number | 25 | 2 | 18 | 55.6% |
+| ingredients | 192 | 127 | 341 | 29.1% |
+| marketing_company | 11 | 8 | 26 | 24.4% |
+| address | 5 | 14 | 26 | 11.1% |
+| customer_care_number | 18 | 2 | 25 | 40.0% |
+| customer_care_email | 22 | 0 | 23 | 48.9% |
+| package_size | 1 | 23 | 21 | 2.2% |
+| manufacturing_company | 44 | 1 | 0 | 97.8% |
+
+**Ground-truth conflicts found** (a field printed differently on two pages of the same label — resolved by keeping the first page's value; worth a human look):
+- `AM7 GUMMIES - ORANGE  FLAVOUR (2).pdf` — product_name: ['Eye Multivitamin Gummies for Kids & Adults', 'AM7 Gummies']
+- `AM7 GUMMIES - ORANGE  FLAVOUR (2).pdf` — layout: ['Carton (flattened, front and back content together)', 'Circular cap face']
+- `Chawan VF IRN138-1 (1).pdf` — layout: ['Carton', 'Carton (spot-UV/foil separation proof)']
+- `Chawan VF IRN138-1 (1).pdf` — logo: ['Small orange leaf icon above the Chewvit wordmark', 'Small leaf icon above the Chewvit wordmark']
+- `Dr. Chewitals Vision IRN13-1.pdf` — layout: ['Wraparound bottle/pouch label', 'Circular cap face (top); blank base template']
+- `Final New-Calcimax 30 Pack 16.02.26  .pdf` — layout: ['Carton (flattened die-line proof, front + side + back panels)', 'Carton (die-line/emboss proof)', 'Carton (spot-UV proof)']
+- `Final New-Calcimax 6 Pack 16.02.26  .pdf` — layout: ['Carton (flattened die-line proof, front + side + back panels)', 'Carton (die-line/emboss proof)', 'Carton (spot-UV proof)']
+- `HSN VF IRN75-1.pdf` — layout: ['Bottle label (jar cap circles + wraparound body label)', 'UV varnish separation proof']
+- `Iron VF IRN74-1.pdf` — layout: ['Bottle label (jar cap circles + wraparound body label)', 'UV varnish separation proof']
+- `LXIR Shilajit gummy VF IRN18-1.pdf` — layout: ['Bottle label (wraparound + cap circles)', 'Blank die-line/dimension template']
+- `LXIR Shilajit STICK VF IRN19-1.pdf` — layout: ['Sachet/stick box label (wraparound + cap circles)', 'Blank die-line/dimension template']
+- `PMS VF IRN71-1.pdf` — layout: ['Bottle label (jar cap circles + wraparound body label)', 'UV varnish separation proof']
