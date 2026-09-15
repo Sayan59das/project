@@ -190,6 +190,21 @@ export function findNearbyNumber(words: OcrWord[], formWord: OcrWord): string | 
   return clusters[0].digits;
 }
 
+// Step 5.4 (accuracy plan): a bare digit string ("30") was the dominant
+// real wrong-answer pattern for this field — the ground truth always
+// carries the unit word too ("30 Gummies"). Combines the recovered count
+// with the prominent form word it was found next to, Title-Cased
+// regardless of the badge's own printed casing (front-of-pack badges are
+// commonly all-caps display type), matching the shape extractPackageSize
+// (labelFieldExtractor.service.ts) already produces for a text-declared
+// count, so a badge-recovered one isn't silently a different shape.
+export function formatPackageSizeWithUnit(digits: string, formWord: OcrWord): string {
+  const cleaned = formWord.text.replace(/[^a-zA-Z]/g, '');
+  if (!cleaned) return digits;
+  const titleCased = `${cleaned[0].toUpperCase()}${cleaned.slice(1).toLowerCase()}`;
+  return `${digits} ${titleCased}`;
+}
+
 // Builds a crop rectangle around the form-word (in the SAME image's pixel
 // space its bounding box was reported in) to re-OCR for a digit — sized
 // from the form-word's own text height, exactly as regionOcr.service.ts
@@ -269,12 +284,13 @@ async function recoverPackageSizeFromBadgeSource(imageBuffer: Buffer, words: Ocr
       const crop = await preprocessBadgeCrop(imageBuffer, rectangle, threshold);
       for (const psm of BADGE_PSM_MODES) {
         const digits = await recognizeDigits(crop, psm);
-        if (/^\d{1,4}$/.test(digits)) return digits;
+        if (/^\d{1,4}$/.test(digits)) return formatPackageSizeWithUnit(digits, formWord);
       }
     }
   }
 
-  return findNearbyNumber(words, formWord) ?? '';
+  const nearby = findNearbyNumber(words, formWord);
+  return nearby ? formatPackageSizeWithUnit(nearby, formWord) : '';
 }
 
 // Tries every available OCR pass's image/words in turn (the prominent

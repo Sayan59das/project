@@ -447,7 +447,7 @@ function extractFssaiNumber(text: string): string {
 // single source of truth for "words that name a product's physical form
 // rather than its identity", across every place that needs to recognize
 // one.
-export const PRODUCT_FORM_WORDS = 'gummies|gummy|capsules?|tablets?|softgels?|sachets?|pieces?|units?|count|ct\\.?';
+export const PRODUCT_FORM_WORDS = 'gummies|gummy|capsules?|tablets?|softgels?|sachets?|sticks?|pieces?|units?|count|ct\\.?';
 const PACKAGE_SIZE_PATTERN = new RegExp(`\\b(\\d{1,4})\\s*(${PRODUCT_FORM_WORDS})\\b`, 'gi');
 // Anything indicating the number is a per-serving amount, not the total
 // pack count — "Serving Size: 1 Gummy" must never be read as packageSize.
@@ -501,15 +501,23 @@ function isFollowedByDosageWording(text: string, matchEndIndex: number): boolean
 // weight and must not be read as a pack of 100. Only counting units match, so
 // a mass or volume declaration is simply not a candidate.
 const NET_CONTENT_COUNT_PATTERN =
-  /\bnet\s*(?:content|qty|quantity)\s*[:\-]?\s*(\d{1,4})\s*(?:n|nos?|no\.?|units?|pieces?|gummies|gummy|tablets?|capsules?)\b/i;
+  /\bnet\s*(?:content|qty|quantity)\s*[:\-]?\s*(\d{1,4})\s*(n|nos?|no\.?|units?|pieces?|gummies|gummy|tablets?|capsules?)\b/i;
 
 function extractPackageSize(text: string): string {
   // Tried before the '<number> Gummies' wording below because it is an explicit
   // declaration of the pack count rather than a phrase that usually means one.
   const netContent = text.match(NET_CONTENT_COUNT_PATTERN);
   if (netContent) {
-    debugLog(`packageSize: matched "${netContent[1]}" from the Net Content declaration "${netContent[0].trim()}".`);
-    return netContent[1];
+    // Step 5.1 (accuracy plan): the number ALONE, not "30 N"/"30 Gummies",
+    // was the dominant real wrong-answer pattern (35 of 40 in Step 1.2's
+    // sample) — the ground truth always carries the unit token too, so a
+    // bare digit string reads as a different value even when the count
+    // itself was read correctly. netContent[2] is whichever unit word the
+    // pattern actually matched ("N", "Nos", "gummies", ...), kept exactly
+    // as printed rather than normalized to a canonical spelling.
+    const value = `${netContent[1]} ${netContent[2]}`;
+    debugLog(`packageSize: matched "${value}" from the Net Content declaration "${netContent[0].trim()}".`);
+    return value;
   }
 
   const re = new RegExp(PACKAGE_SIZE_PATTERN);
@@ -523,8 +531,12 @@ function extractPackageSize(text: string): string {
       debugLog(`packageSize: rejected "${match[1]}" from "${match[0].trim()}" — followed by dosage wording ("daily"/"per day"/...), a per-day dose, not the total pack count.`);
       continue;
     }
-    debugLog(`packageSize: matched "${match[1]}" from "${match[0].trim()}".`);
-    return match[1];
+    // Reconstructed as "<number> <unit>" rather than returning match[0]
+    // verbatim, so irregular OCR spacing ("30Gummies", "30  Gummies")
+    // still normalizes to one space, the same shape the ground truth uses.
+    const value = `${match[1]} ${match[2]}`;
+    debugLog(`packageSize: matched "${value}" from "${match[0].trim()}".`);
+    return value;
   }
 
   debugLog('packageSize: no confident "<number> Gummies/Count/..." wording found — leaving blank.');

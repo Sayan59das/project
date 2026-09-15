@@ -7,7 +7,7 @@
 // spatial logic itself against the specific layouts it needs to handle.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { findNearbyNumber, findProminentProductFormWord } from '../services/packageSizeOcr.service';
+import { findNearbyNumber, findProminentProductFormWord, formatPackageSizeWithUnit } from '../services/packageSizeOcr.service';
 import type { OcrWord } from '../services/tesseract.service';
 
 function word(text: string, box: { x0: number; y0: number; x1: number; y1: number }, confidence = 90): OcrWord {
@@ -98,4 +98,26 @@ test('findNearbyNumber (Layout F: no reliable evidence) returns null rather than
   ];
 
   assert.equal(findNearbyNumber(words, formWord), null);
+});
+
+// Step 5.4 (accuracy plan): a badge-recovered count used to be returned as
+// a bare digit string ("30"), the dominant real wrong-answer pattern for
+// this field (35 of 40 in Step 1.2's sample) — the ground truth always
+// carries the unit word too. formatPackageSizeWithUnit combines the
+// recovered digits with the prominent form word they were found next to,
+// the same shape extractPackageSize (labelFieldExtractor.service.ts)
+// already produces for a text-declared count.
+test('formatPackageSizeWithUnit combines the digits with the badge\'s own form word, Title-Cased', () => {
+  const formWord = word('GUMMIES', { x0: 300, y0: 800, x1: 420, y1: 840 });
+  assert.equal(formatPackageSizeWithUnit('30', formWord), '30 Gummies');
+});
+
+test('formatPackageSizeWithUnit Title-Cases regardless of how the badge itself was printed', () => {
+  const formWord = word('tablets', { x0: 300, y0: 800, x1: 420, y1: 840 });
+  assert.equal(formatPackageSizeWithUnit('60', formWord), '60 Tablets');
+});
+
+test('formatPackageSizeWithUnit strips OCR noise characters from the form word before Title-Casing', () => {
+  const formWord = word('GUMM1ES', { x0: 300, y0: 800, x1: 420, y1: 840 });
+  assert.equal(formatPackageSizeWithUnit('30', formWord), '30 Gummes');
 });

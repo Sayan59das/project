@@ -217,7 +217,7 @@ test('Real label PDF (Apple Cider Vinegar Gummy): reliable fields correct, targe
   // limitation of the extractor rather than a fact about the label; the
   // serving-size guards below still hold, so "Serving Size: 1 Gummy" and
   // "No. of Serving: ... 30" are still not mistaken for the pack.
-  assert.equal(body.data.packageSize, '30');
+  assert.equal(body.data.packageSize, '30 N');
 });
 
 // A second real label from the same manufacturer/marketing company family
@@ -281,7 +281,7 @@ test('Real label PDF (Chyawanprash Gummies): same manufacturer, different produc
   // "Net Content: 30 N" declaration that does state the pack count. Still not
   // derived from "Serving Size: 1 Gummy" or "No. of Serving: per container 30"
   // — those guards are unchanged.
-  assert.equal(body.data.packageSize, '30');
+  assert.equal(body.data.packageSize, '30 N');
 });
 
 // Reproduces a real user-reported extraction failure: a label whose front
@@ -328,7 +328,7 @@ test('Real label PDF (Sharp Mind Plus Gummies): three-tier title (brand/name/for
   // be shadowed by an earlier, unrelated "1 Gummy daily" dosage
   // instruction ("Recommended Usage: 1 Gummy daily or as suggested by
   // your dietitian.") being mistaken for the pack count instead.
-  assert.equal(body.data.packageSize, '30');
+  assert.equal(body.data.packageSize, '30 Gummies');
 
   // This artwork's own printed license number ("Lic. No. T-2304/Ayur") is
   // the MANUFACTURER's Ayurvedic/AYUSH license, not a 14-digit FSSAI
@@ -379,7 +379,7 @@ test('Real label PDF (She-Arise Gummies): front count badge recovered via spatia
   // OCR pass's word positions and re-reading just the region above it
   // with a digit-only character whitelist. Never a guess: this is the
   // actual printed front-of-pack count.
-  assert.equal(body.data.packageSize, '30');
+  assert.equal(body.data.packageSize, '30 N');
 
   // The label states "Strawberry & Mint Flavour" split across two lines
   // joined by "&". This is proof the compound-flavour mechanism is
@@ -483,7 +483,7 @@ test('Real-world label pattern (JPG, via OCR): every field recovered, none guess
   // "30 Gummies" (front-label count) must win over "Serving Size: 1
   // Gummy" and "No. of Serving: per container 30" — neither of which is
   // the total pack count.
-  assert.equal(body.data.packageSize, '30');
+  assert.equal(body.data.packageSize, '30 Gummies');
 });
 
 test('Unsupported file type is rejected with a controlled 400', { skip: SKIP }, async () => {
