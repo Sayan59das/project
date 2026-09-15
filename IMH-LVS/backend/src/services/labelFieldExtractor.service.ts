@@ -241,6 +241,35 @@ function normalizeCompanySuffix(value: string): string {
   return value;
 }
 
+// Step 5.5 (accuracy plan): some labels print the company name and its
+// full address BEFORE the "Marketed By:" anchor line, using the anchor
+// only as a trailing attribution — the line right after it is a licence/
+// registration number, not the company name. Real pattern (Step 1.2's
+// "Riomedica template" finding, confirmed by dumping the actual PDF text
+// layer): "RIOMEDICA HEALTHCARE PVT. LTD. ... 654, Arjun Nagar... Marketed
+// By: LIC. NO. 10824999000328" — the ordinary same-line/next-line read
+// returns the licence number here, wrong on both marketing_company AND
+// address (extractAddress starts collecting from the company name's own
+// line index).
+const LICENCE_OR_REG_LINE = /^(lic\.?\s*no\.?|fssai(\s*lic\.?(ence|ense)?\s*no\.?)?|reg(istration)?\.?\s*no\.?|license\s*no\.?)\s*[:\-]?\s*\d/i;
+const COMPANY_SUFFIX_LINE = /\b(pvt\.?\s*ltd\.?|private\s*limited|ltd\.?|limited|llp|inc\.?)\.?\s*$/i;
+const COMPANY_LOOKBACK_LINES = 8;
+
+// Searches backward from the anchor for the nearest line that reads like
+// a company name (ends in a Ltd/Pvt Ltd/LLP/Inc-style suffix) — only
+// tried when the anchor's own next line failed to look like one, so this
+// never overrides the ordinary same-line/next-line reads that already work.
+function findCompanyNameBefore(lines: string[], anchorIndex: number): { value: string; lineIndex: number } | null {
+  const floor = Math.max(0, anchorIndex - COMPANY_LOOKBACK_LINES);
+  for (let i = anchorIndex - 1; i >= floor; i--) {
+    const line = lines[i];
+    if (!COMPANY_SUFFIX_LINE.test(line)) continue;
+    const sanitized = sanitizeCandidateLine(line, 60);
+    if (sanitized) return { value: normalizeCompanySuffix(sanitized.value), lineIndex: i };
+  }
+  return null;
+}
+
 function extractMarketingCompany(lines: string[]): { value: string; lineIndex: number } {
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
@@ -269,6 +298,23 @@ function extractMarketingCompany(lines: string[]): { value: string; lineIndex: n
     // company name on the next line — common when a design's stacked
     // text gets OCR'd or extracted as separate lines.
     const nextLine = lines[i + 1];
+
+    // But when that next line reads as a licence/registration number
+    // instead, the company name (and its address) was very likely
+    // already printed above this anchor — see findCompanyNameBefore's
+    // own comment. Tried before the ordinary next-line read below, only
+    // when that read would otherwise return the wrong thing.
+    if (nextLine && LICENCE_OR_REG_LINE.test(nextLine)) {
+      const before = findCompanyNameBefore(lines, i);
+      if (before) {
+        debugLog(
+          `marketingCompany: matched "${before.value}" by looking above anchor "${line}" — ` +
+            `the next line "${nextLine}" reads as a licence/registration number, not a company name.`
+        );
+        return before;
+      }
+    }
+
     if (nextLine && !MANUFACTURING_KEYWORDS.test(nextLine)) {
       const sanitized = sanitizeCandidateLine(nextLine, 60);
       if (sanitized) {
@@ -339,12 +385,22 @@ function extractAddress(lines: string[], emailPattern: RegExp, marketingCompanyL
       const line = lines[i];
       if (ADDRESS_STOP_LINE.test(line) || emailPattern.test(line) || MANUFACTURING_KEYWORDS.test(line)) break;
 
+      // A pure parenthetical aside ("(An ISO 9001:2015 Certified
+      // Company)") is never address content on any label — skipped, not
+      // collected and not treated as a stop signal, so real address lines
+      // on either side of it still join into one block.
+      if (/^\(.*\)$/.test(line.trim())) continue;
+
       const sanitized = sanitizeCandidateLine(line, 80);
       if (!sanitized) {
         debugLog(`address: stopped collecting at line "${line}" — fails the noise/length sanity gate.`);
         break;
       }
-      collected.push(sanitized.value);
+      // Trailing comma is just the line-wrap the label's own layout left
+      // behind ("654, Arjun Nagar, Nanhera Road," continues on the next
+      // line) — stripped so joining collected lines with ", " doesn't
+      // double up into "Road,, Ambala".
+      collected.push(sanitized.value.replace(/,\s*$/, ''));
       // A line that had to be truncated (real noise or unrelated content
       // followed the clean part, as opposed to just trailing punctuation
       // being trimmed) marks the end of the address section — don't keep
