@@ -3,12 +3,12 @@
   "sourceFile": "AM7 GUMMIES - ORANGE  FLAVOUR (2).pdf",
   "page": 1,
   "reviewed": true,
-  "reviewedAt": 1789132800001,
+  "reviewedAt": 1789496617317,
   "isFront": true,
-  "aiReviewNotes": "Two possible brand/company readings: the small 'GUERISON' wordmark+icon and the large 'AM7 gummies' wordmark both appear on-package. Set brand_name=AM7 (the prominent display name) and marketing_company=Guerison Infusions Private Limited, matching the pattern used for sibling Riomedica-marketed products, but this should be confirmed. This image is a single flattened full carton (front marketing panel + nutrition/ingredients together), not a separate front-only page.",
+  "aiReviewNotes": "Two possible brand/company readings: the small 'GUERISON' wordmark+icon and the large 'AM7 gummies' wordmark both appear on-package. Set brand_name=AM7 (the prominent display name) and marketing_company=Guerison Infusions Private Limited, matching the pattern used for sibling Riomedica-marketed products, but this should be confirmed. This image is a single flattened full carton (front marketing panel + nutrition/ingredients together), not a separate front-only page. [2026-09-15 correction: product_name changed from the descriptor line (\"Eye Multivitamin Gummies for Kids & Adults\") to the wordmark (\"AM7 Gummies\"), per the client's own answer to the Step 4.1 definition question recorded in ai_backend/eval/RESULTS.md -- product_name is the brand wordmark, not the descriptor. This also resolves the page1/page2 product_name conflict listed in RESULTS.md, since page 2 already had \"AM7 Gummies\".]",
   "label": {
     "brand_name": "AM7",
-    "product_name": "Eye Multivitamin Gummies for Kids & Adults",
+    "product_name": "AM7 Gummies",
     "colour_theme": [
       "Orange"
     ],
