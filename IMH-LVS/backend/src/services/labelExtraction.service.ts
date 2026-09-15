@@ -118,6 +118,23 @@ export type DisplayTextCandidate = {
 };
 
 /**
+ * Phase F: marks a field as INFERRED rather than read, so a reviewer knows
+ * to double-check it before trusting it the way a directly-read value can
+ * be. Every field NOT in this map was read straight off the label (text
+ * layer or OCR) — absence is the normal case and needs no entry, the same
+ * "blank/absent means nothing to report" convention this file already uses
+ * for discardedFields/unknownClaims. A field present here was answered by a
+ * model, not read, even though the value itself may well be correct.
+ */
+export type FieldMeta = {
+  /** Which resolver produced this value. */
+  source: 'vlm-role-resolution' | 'vlm-fallback';
+  /** 0-1 when the resolver reports one (vlm-role-resolution always does); omitted for vlm-fallback, which has none today. */
+  confidence?: number;
+  needsReview: true;
+};
+
+/**
  * Claims found on the label that the Claims master has no record of.
  *
  * Returned alongside the result rather than folded into it: they ARE stored in
@@ -145,6 +162,14 @@ export type LabelExtractionReport = {
    * no explanation.
    */
   discardedFields: string[];
+
+  /**
+   * Phase F: which fields (keyed by their LabelExtractionResult name, e.g.
+   * 'brand', 'productName') were inferred by a model rather than read off
+   * the label, and so need a human's confirmation before being trusted.
+   * See FieldMeta's own doc comment for the absence convention.
+   */
+  fieldMeta: Record<string, FieldMeta>;
 };
 
 export function buildPlaceholderExtraction(): LabelExtractionResult {
@@ -454,6 +479,8 @@ type FieldPass = {
   nutritionTable?: Record<string, string>;
   /** Display-text candidates recovered from rasterized page or image when text layer is incomplete. Empty on the text-layer fast path. */
   displayTextCandidates?: DisplayTextCandidate[];
+  /** Phase F: fields this pass filled via VLM role-resolution rather than a direct read. Undefined when that step never ran. */
+  fieldMeta?: Record<string, FieldMeta>;
 };
 
 // Recovery helper for display-text candidates: outlined text detected on the
@@ -616,7 +643,7 @@ async function resolveBlankDisplayRoles(
   fields: ExtractedLabelFields,
   pageImage: Buffer,
   candidates: DisplayTextCandidate[]
-): Promise<ExtractedLabelFields> {
+): Promise<{ fields: ExtractedLabelFields; fieldMeta: Record<string, FieldMeta> }> {
   // A field holding OCR debris ("Mc Mc Mg") is blank for our purposes: the
   // report stage scrubs it anyway (looksLikeOcrGarbage), and if it is still
   // there when fillBlanks runs, the model's grounded answer is thrown away
@@ -624,7 +651,7 @@ async function resolveBlankDisplayRoles(
   const brandMissing = nameFieldMissing(fields.brand);
   const productMissing = nameFieldMissing(fields.productName);
   if (!isVlmEnabled() || candidates.length === 0 || (!brandMissing && !productMissing)) {
-    return fields;
+    return { fields, fieldMeta: {} };
   }
 
   try {
@@ -635,7 +662,7 @@ async function resolveBlankDisplayRoles(
 
     // No roles or confidence below threshold — return unchanged
     if (!roles || roles.confidence < 0.6) {
-      return fields;
+      return { fields, fieldMeta: {} };
     }
 
     // Fill blanks with resolved brand/productName, ignoring empty patch values.
@@ -645,14 +672,27 @@ async function resolveBlankDisplayRoles(
       brand: brandMissing ? '' : fields.brand,
       productName: productMissing ? '' : fields.productName
     };
-    return fillBlanks(base, { brand: roles.brand, productName: roles.productName });
+    const filled = fillBlanks(base, { brand: roles.brand, productName: roles.productName });
+
+    // Phase F: an inferred value, however confident, is not the same trust
+    // level as a value read straight off the label — only flag the fields
+    // fillBlanks actually changed (base was blank, filled is not), not
+    // every field this resolver was allowed to touch.
+    const fieldMeta: Record<string, FieldMeta> = {};
+    for (const field of ['brand', 'productName'] as const) {
+      if (!base[field] && filled[field]) {
+        fieldMeta[field] = { source: 'vlm-role-resolution', confidence: roles.confidence, needsReview: true };
+      }
+    }
+
+    return { fields: filled, fieldMeta };
   } catch (error) {
     console.warn(
       '[labelExtraction] VLM display-role resolution failed: ' +
         (error instanceof Error ? error.message : String(error))
     );
     // Fail-soft: return fields unchanged
-    return fields;
+    return { fields, fieldMeta: {} };
   }
 }
 
@@ -718,15 +758,18 @@ async function extractFieldsFromPdf(pdfBuffer: Buffer, knownFlavours: readonly s
   // candidates from the first rasterized page to surface candidate brand/product titles
   // that OCR couldn't reliably extract but are visibly rendered.
   let displayTextCandidates: DisplayTextCandidate[] | undefined;
+  let fieldMeta: Record<string, FieldMeta> = {};
   if ((nameFieldMissing(fields.brand) || nameFieldMissing(fields.productName)) && pageImages.length > 0) {
     displayTextCandidates = await recoverDisplayTextCandidates(pageImages[0], spans, env.pdfRasterDpi);
     // Resolve blank display roles using VLM classification if available
     if (displayTextCandidates) {
-      fields = await resolveBlankDisplayRoles(fields, pageImages[0], displayTextCandidates);
+      const resolved = await resolveBlankDisplayRoles(fields, pageImages[0], displayTextCandidates);
+      fields = resolved.fields;
+      fieldMeta = resolved.fieldMeta;
     }
   }
 
-  return { fields, text: finalText, pageImages, nutritionTable, displayTextCandidates };
+  return { fields, text: finalText, pageImages, nutritionTable, displayTextCandidates, fieldMeta };
 }
 
 async function extractFieldsFromImage(imageBuffer: Buffer, knownFlavours: readonly string[]): Promise<FieldPass> {
@@ -737,15 +780,18 @@ async function extractFieldsFromImage(imageBuffer: Buffer, knownFlavours: readon
   // For image uploads, if brand or product name are still missing after OCR,
   // recover display-text candidates. No spans from text layer, so pass empty array.
   let displayTextCandidates: DisplayTextCandidate[] | undefined;
+  let fieldMeta: Record<string, FieldMeta> = {};
   if (nameFieldMissing(fields.brand) || nameFieldMissing(fields.productName)) {
     displayTextCandidates = await recoverDisplayTextCandidates(imageBuffer, [], env.pdfRasterDpi);
     // Resolve blank display roles using VLM classification if available
     if (displayTextCandidates) {
-      fields = await resolveBlankDisplayRoles(fields, imageBuffer, displayTextCandidates);
+      const resolved = await resolveBlankDisplayRoles(fields, imageBuffer, displayTextCandidates);
+      fields = resolved.fields;
+      fieldMeta = resolved.fieldMeta;
     }
   }
 
-  return { fields, text, pageImages: [imageBuffer], displayTextCandidates };
+  return { fields, text, pageImages: [imageBuffer], displayTextCandidates, fieldMeta };
 }
 
 // Shared post-processing for extraction results: placeholder scrubbing, garbage
@@ -757,7 +803,7 @@ async function postProcessExtractionResult(
   fileBuffer: Buffer,
   mimeType: string,
   isPdf: boolean
-): Promise<{ result: LabelExtractionResult; discardedFields: string[] }> {
+): Promise<{ result: LabelExtractionResult; discardedFields: string[]; fieldMeta: Record<string, FieldMeta> }> {
   // Placeholder scrubbing is first, over the raw result, so it applies uniformly
   // across all sources.
   const { fields: scrubbed, blanked } = scrubPlaceholders(result);
@@ -798,7 +844,16 @@ async function postProcessExtractionResult(
     );
   }
 
-  return { result: ai.result, discardedFields: blanked };
+  // Phase F: every field the legacy vision-model fallback filled is an
+  // inference, not a read, same as a VLM role-resolution fill — flag it the
+  // same way. This fallback has no per-field confidence to report (unlike
+  // resolveDisplayRoles), so confidence is simply omitted here.
+  const aiFieldMeta: Record<string, FieldMeta> = {};
+  for (const field of ai.filled) {
+    aiFieldMeta[field] = { source: 'vlm-fallback', needsReview: true };
+  }
+
+  return { result: ai.result, discardedFields: blanked, fieldMeta: aiFieldMeta };
 }
 
 /**
@@ -931,16 +986,26 @@ export async function extractLabelReportFromFile(
     const result = toResult(pass.fields, extended);
 
     // Post-process the result: placeholder scrubbing, garbage detection, AI fallback
-    const { result: postProcessed, discardedFields } = await postProcessExtractionResult(
+    const { result: postProcessed, discardedFields, fieldMeta: aiFieldMeta } = await postProcessExtractionResult(
       result,
       fileBuffer,
       mimeType,
       isPdf
     );
 
-    return { result: postProcessed, unknownClaims: extended.unknownClaims, discardedFields };
+    // Merge Phase F provenance from both sources: the VLM role-resolution
+    // step (pass.fieldMeta, set while brand/productName were still being
+    // located) and the legacy vision-fallback (aiFieldMeta, set just above,
+    // covering whichever fields IT filled — a disjoint field set from the
+    // role resolver in practice, but a discarded-then-refilled field could
+    // in principle appear in both; the fallback runs last, so its entry
+    // wins for such a field, matching which value actually ended up in the
+    // result.
+    const fieldMeta: Record<string, FieldMeta> = { ...pass.fieldMeta, ...aiFieldMeta };
+
+    return { result: postProcessed, unknownClaims: extended.unknownClaims, discardedFields, fieldMeta };
   } catch (error) {
     console.error('[labelExtraction] Unexpected error during label extraction:', error instanceof Error ? error.message : error);
-    return { result: buildPlaceholderExtraction(), unknownClaims: [], discardedFields: [] };
+    return { result: buildPlaceholderExtraction(), unknownClaims: [], discardedFields: [], fieldMeta: {} };
   }
 }

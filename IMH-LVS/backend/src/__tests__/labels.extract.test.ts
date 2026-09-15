@@ -110,6 +110,12 @@ test('PDF with a selectable text layer: extracts fields without OCR', { skip: SK
   assert.equal(body.data.marketingCompany, 'ABC Healthcare Pvt Ltd');
   assert.equal(body.data.fssaiNumber, '10023045009876');
   assert.equal(body.data.email, 'support@abchealthcaretest.com');
+  // Phase F: every field here was read straight off the text layer, on the
+  // fast path that never rasterizes or calls a model — fieldMeta must come
+  // back present but empty, not merely absent from the response, so a
+  // frontend that always reads response.fieldMeta never has to guard
+  // against it being undefined.
+  assert.deepEqual(body.fieldMeta, {});
 });
 
 test('Scanned/image-only PDF: rasterizes and extracts via OCR (pdftoppm is installed in this environment)', { skip: SKIP }, async () => {

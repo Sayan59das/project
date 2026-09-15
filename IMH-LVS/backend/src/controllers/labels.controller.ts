@@ -1,6 +1,6 @@
 import fs from 'fs';
 import { Request, Response } from 'express';
-import { buildPlaceholderExtraction, extractLabelFromFile, LabelExtractionResult } from '../services/labelExtraction.service';
+import { buildPlaceholderExtraction, extractLabelFromFile, extractLabelReportFromFile, LabelExtractionResult } from '../services/labelExtraction.service';
 import { compareLabels as compareLabelData, ComparisonStage } from '../services/labelComparison.service';
 import { compareFingerprints, fingerprintArtworkImage, type ArtworkVisualComparison } from '../services/imageSimilarity.service';
 import { identifyProduct as identifyProductWithAi, ProductIdentificationInput } from '../services/productIdentification.service';
@@ -119,11 +119,16 @@ export async function extractLabel(req: Request, res: Response) {
 
   try {
     const { knownClaims, knownFlavours } = await loadKnownMasterNames();
-    const data = await extractLabelFromFile(file.path, file.mimetype, knownClaims, knownFlavours);
-    res.status(200).json({ success: true, data });
+    const { result: data, fieldMeta } = await extractLabelReportFromFile(file.path, file.mimetype, knownClaims, knownFlavours);
+    // fieldMeta (Phase F): which fields, if any, were inferred by a model
+    // rather than read off the label, so the intake form can flag them for
+    // human confirmation instead of presenting every field with equal
+    // trust. Additive to the existing `data` contract — a caller that
+    // ignores this key sees exactly the same response as before.
+    res.status(200).json({ success: true, data, fieldMeta });
   } catch (error) {
     console.error('[labels.controller] Unexpected failure building the extraction result:', error instanceof Error ? error.message : error);
-    res.status(200).json({ success: true, data: buildPlaceholderExtraction() });
+    res.status(200).json({ success: true, data: buildPlaceholderExtraction(), fieldMeta: {} });
   } finally {
     removeTempFile(file);
   }

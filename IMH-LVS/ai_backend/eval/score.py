@@ -39,6 +39,11 @@ Environment variables:
                             script — must be set (e.g. http://127.0.0.1:11434) for
                             --mode pipeline's VLM role-resolution step to actually run.
                             Without it, pipeline mode still runs text layer + OCR.
+    EVAL_PIPELINE_BATCH_SIZE  How many PDFs --mode pipeline sends to one Node subprocess
+                            at a time (default: 5). Lower this on a memory-constrained
+                            machine — a single process holding Ollama and the OCR engine
+                            resident for every label at once has been observed getting
+                            killed by the OS for running out of memory.
 """
 import argparse
 import json
@@ -302,12 +307,9 @@ def _collect_ground_truth_pdfs(ground_truth):
     return pdf_paths
 
 
-def _run_node_extraction_cli(script_name, pdf_paths, mode_label):
-    """Runs a backend/scripts/*.ts CLI (extract-textlayer.ts or
-    extract-pipeline.ts — both accept the same <pdf>... argv and print the
-    same JSON-array-of-records shape) and returns predictions keyed by
-    source file, ready to hand to score_labels() alongside ground truth."""
-    backend_dir = AI_BACKEND_DIR.parent / "backend"
+def _run_node_extraction_cli_once(script_name, pdf_paths, mode_label, backend_dir):
+    """One subprocess invocation of a backend/scripts/*.ts CLI over however
+    many PDFs are passed. Returns predictions keyed by source file."""
     cmd = ["node", "-r", "tsx/cjs", f"scripts/{script_name}", *[str(p) for p in pdf_paths]]
 
     try:
@@ -338,6 +340,33 @@ def _run_node_extraction_cli(script_name, pdf_paths, mode_label):
     return predictions_by_source
 
 
+def _run_node_extraction_cli(script_name, pdf_paths, mode_label, batch_size=None):
+    """Runs a backend/scripts/*.ts CLI (extract-textlayer.ts or
+    extract-pipeline.ts — both accept the same <pdf>... argv and print the
+    same JSON-array-of-records shape) and returns predictions keyed by
+    source file, ready to hand to score_labels() alongside ground truth.
+
+    batch_size splits pdf_paths across multiple subprocess calls instead of
+    one process holding all of them — real finding, not a hypothetical one:
+    a single Node process keeping Ollama and the OCR engine resident for
+    every label in one run was killed by the OS for running this
+    development machine (16GB total RAM, shared with everything else
+    already open) out of memory partway through a 45-label run. Each batch's
+    process exits and releases its memory before the next one starts, so
+    the footprint stays bounded by one batch's worth of work rather than
+    growing for the whole run. None (the default) keeps the old
+    one-process-for-everything behavior — used by run_textlayer_mode, which
+    has no model/engine memory of its own to worry about."""
+    backend_dir = AI_BACKEND_DIR.parent / "backend"
+    batch_size = batch_size or len(pdf_paths)
+
+    predictions_by_source = {}
+    for start in range(0, len(pdf_paths), batch_size):
+        batch = pdf_paths[start : start + batch_size]
+        predictions_by_source.update(_run_node_extraction_cli_once(script_name, batch, mode_label, backend_dir))
+    return predictions_by_source
+
+
 def run_textlayer_mode():
     """Runs the text-layer-only extraction pipeline (Node CLI via
     backend/scripts/extract-textlayer.ts) over every ground-truth label's PDF,
@@ -361,10 +390,15 @@ def run_pipeline_mode():
 
     Needs OLLAMA_URL set (and the model it names pulled) for the VLM step to
     actually run — without it this still measures text-layer + OCR, just
-    without the role-resolution fallback; the CLI never throws either way."""
+    without the role-resolution fallback; the CLI never throws either way.
+
+    Runs in small batches (see _run_node_extraction_cli's own docstring) —
+    this mode is the one that keeps Ollama and the OCR engine loaded, so
+    it's the one that actually needs the memory headroom batching buys."""
     ground_truth = load_ground_truth()
     pdf_paths = _collect_ground_truth_pdfs(ground_truth)
-    predictions_by_source = _run_node_extraction_cli("extract-pipeline.ts", pdf_paths, "Full pipeline")
+    batch_size = int(os.environ.get("EVAL_PIPELINE_BATCH_SIZE", "5"))
+    predictions_by_source = _run_node_extraction_cli("extract-pipeline.ts", pdf_paths, "Full pipeline", batch_size=batch_size)
     return predictions_by_source, ground_truth
 
 

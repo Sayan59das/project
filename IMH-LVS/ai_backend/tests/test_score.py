@@ -469,3 +469,49 @@ class TestRunPipelineMode:
 
         _args, kwargs = mock_subprocess.run.call_args
         assert kwargs.get("encoding") == "utf-8"
+
+    def test_processes_pdfs_in_small_batches_not_one_giant_process(self, tmp_path, monkeypatch):
+        # Real finding: one Node process holding Ollama + the OCR engine
+        # resident for all 45 labels at once got killed by the OS for
+        # running this machine (16GB total RAM, shared with everything else
+        # already open) out of memory. Batching means each subprocess exits
+        # and releases its memory before the next batch starts, instead of
+        # one process's footprint growing for the whole run.
+        n = 12
+        stub_ground_truth = {f"{i}.pdf": ({"brand_name": "X"}, [(f"p{i}", 1)], []) for i in range(n)}
+        monkeypatch.setattr(score, "load_ground_truth", lambda: stub_ground_truth)
+
+        pdf_dir = tmp_path / "pdfs"
+        pdf_dir.mkdir()
+        for i in range(n):
+            (pdf_dir / f"{i}.pdf").touch()
+        monkeypatch.setenv("EVAL_LABEL_PDF_DIR", str(pdf_dir))
+
+        batch_sizes_seen = []
+
+        def fake_run(cmd, **_kwargs):
+            # Everything from argv index 4 onward (after node/-r/tsx-cjs/script) is a PDF path.
+            pdf_args = cmd[4:]
+            batch_sizes_seen.append(len(pdf_args))
+            records = [{
+                "source_file": Path(p).name, "brand_name": "X", "product_name": None, "nutrition_table": None,
+                "flavour": None, "fssai_number": None, "marketing_company": None, "address": None,
+                "customer_care_number": None, "customer_care_email": None, "package_size": None,
+                "manufacturing_company": None, "claims": [], "ingredients": [], "colour_theme": None,
+                "logo": None, "layout": None,
+            } for p in pdf_args]
+            return Mock(stdout=json.dumps(records), returncode=0)
+
+        mock_subprocess = Mock()
+        mock_subprocess.run = Mock(side_effect=fake_run)
+        monkeypatch.setattr(score, "subprocess", mock_subprocess)
+
+        predictions, _ = run_pipeline_mode()
+
+        assert len(predictions) == n
+        # More than one call, and no single call got every PDF at once —
+        # confirms batching actually happened, not just that predictions
+        # for all 12 eventually came back.
+        assert mock_subprocess.run.call_count > 1
+        assert all(size < n for size in batch_sizes_seen)
+        assert sum(batch_sizes_seen) == n
