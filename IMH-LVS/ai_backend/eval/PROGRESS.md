@@ -101,11 +101,93 @@ Will get the real number as soon as the measurement tool can complete a
 full run, likely either later tonight if memory recovers on its own, or
 in the final whole-project test pass at the end.
 
+### 5.5 — marketing_company / address: **fix done and committed, real number pending**
+
+Same "no scoring number yet" situation as 5.4, same reason (the
+measurement tool would not complete tonight — see below for the full
+picture). Confirmed correct by testing directly on two real labels from
+the affected family: both now correctly read the real company name and
+address instead of a licence number and an unrelated disclaimer sentence.
+
+Found by reading the actual real label's text directly (not guessing):
+one whole family of ~8 labels prints the company name and its address
+BEFORE the "Marketed by" line, with the line right after "Marketed by"
+being a licence number, not the company name — the code was always
+reading the line right after that phrase, so it grabbed the licence
+number every time. Fixed to look above the phrase for the real company
+name when the line below it doesn't look like one. Fixing marketing
+company this way fixed address too, for free — it starts reading from
+wherever the company name was found, so once that's right, the address
+right after it is too.
+
+### 5.6 — brand/product name: **investigated, real fix intentionally not made yet**
+
+This is the field the plan itself says needs the most care, and it's the
+last one before Step 6. What was found, from reading a real label's
+actual text directly on two different labels tonight (not guessing):
+
+For several labels, the real brand name ("Calrio", "Sleeprio", ...) is
+never printed as ordinary readable text at all — it only exists as a
+styled picture/logo, the kind of text a computer can't read directly
+from the file, only by looking at the image. Meanwhile, the tool that
+reads ordinary text is still trying to guess a brand/product name from
+whatever real words ARE nearby, and on these labels that means it picks
+something else nearby ("Relax", "Gummies For Adults Strawberry Flavour
+Gluten Free Gelatin Free") and is confident about it. Earlier
+measurement already showed this same pattern in numbers: on every one
+of the 45 labels, whenever the plain-text-reading method produced a
+brand name, it was wrong — not most of the time, literally every single
+time (0 right out of 17 tried). Confirmed twice more tonight by reading
+two more real labels directly.
+
+Two things make this worse together: the AI model IS good at this exact
+job (found right back in an earlier step — 91% correct when it gets to
+run) — but the plain-text method runs first, and once it's filled
+something in, even wrongly, nothing else is allowed to overwrite it. So
+the guess isn't just wrong: it's actively blocking the one thing that's
+good at this from ever being tried on 17+ labels.
+
+The obvious next fix — stop letting the plain-text method guess a
+brand/product name at all, and let the AI model (or the picture-reading
+method) take over that job entirely — is not being made tonight,
+on purpose. It's a bigger, more sweeping change than tonight's other
+fixes (it touches how EVERY label is read, not one template family), and
+it cannot be safety-checked without a full run through the measurement
+tool, which could not complete tonight (see below). Given the plan's own
+explicit instruction to be extra careful with this exact field, that
+verification gap is a real reason to wait, not something to push past.
+This is written up here as a concrete, ready-to-do next step, backed by
+real numbers and two fresh real-label checks — not a guess still waiting
+to be tested.
+
+## Tonight's memory trouble, in plain terms
+
+From partway through Step 5.4 onward, the measurement tool (which reads
+all 45 labels at once and needs real memory to do it) stopped being able
+to finish — killed by Windows for running low on memory, over and over,
+even after trying smaller batches (5 labels at a time, then 3, then 2,
+then 1 label at a time — all failed the same way). Checked honestly
+rather than guessing: freeing up memory by stopping the database program
+was tried once (it isn't needed for this kind of check), but that
+backfired — the database program restarted itself several times on its
+own and ended up using MORE memory than before, so that approach was
+abandoned rather than made worse a second time. This looks like a wider
+overnight slowdown on this machine (possibly Windows doing its own
+background maintenance), not something wrong with the project's own
+code or tools.
+
+Worked around it by checking each fix a different, lighter way instead:
+automated tests (which don't need much memory) plus reading real labels
+one at a time directly (much lighter than all 45 at once) rather than
+the full official measurement. Every fix tonight passed both of those
+checks. The official percentage for 5.4 and 5.5 will still need a real
+full run once memory allows — either later tonight if it recovers on its
+own, or in the final whole-project pass.
+
 ## What's next
 
-5.5 (address / marketing company) → 5.6 (brand/product name, blocked on
-your review pass being done first for the brand/product part
-specifically). Then Step 6 only if needed, then Step 7. Once memory
-allows, a full pipeline run to confirm 5.4's real number and catch it up
-in `RESULTS.md`. A full, final test of the whole project and a final
-results write-up come once all of that is done, as asked.
+Try the full measurement again if memory allows, to catch up 5.4/5.5's
+real numbers. The concrete, ready-to-do brand/product name fix above,
+once it can be safety-checked properly. Then Step 6 only if needed, then
+Step 7. A full, final test of the whole project and a final results
+write-up come once all of that is done, as asked.
