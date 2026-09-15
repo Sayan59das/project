@@ -15,7 +15,18 @@ import json
 import pytest
 
 import score
-from score import aggregate, load_ground_truth, merge_label_pages, normalize, score_field, write_results_md, run_textlayer_mode, run_pipeline_mode
+from score import (
+    aggregate,
+    load_ground_truth,
+    merge_label_pages,
+    normalize,
+    score_field,
+    score_field_detail,
+    score_labels,
+    write_results_md,
+    run_textlayer_mode,
+    run_pipeline_mode,
+)
 
 
 class TestNormalize:
@@ -100,6 +111,120 @@ class TestScoreFieldNutritionTable:
     def test_a_hallucinated_extra_row_is_wrong(self):
         result = score_field("nutrition_table", {"Calories": "12 kcal", "Fake Row": "5 mg"}, {"Calories": "12 kcal"})
         assert result == {"correct": 1, "wrong": 1, "missing": 0}
+
+
+def _tally(details):
+    """Collapses a score_field_detail() list back down to the same shape
+    score_field() returns, for the cross-check that the two never drift
+    apart — see TestScoreFieldDetailMatchesScoreField below."""
+    counts = {"correct": 0, "wrong": 0, "missing": 0}
+    for d in details:
+        counts[d["verdict"]] += 1
+    return counts
+
+
+class TestScoreFieldDetail:
+    """score_field_detail() is score_field()'s sibling — same comparison,
+    but returns the per-item/per-row detail behind the tally (what the
+    predicted and expected values actually WERE) instead of just counts.
+    Step 1 of the accuracy-improvement plan: nobody could see what the 42
+    wrong product names actually were before this existed."""
+
+    def test_a_correct_scalar_carries_both_values(self):
+        details = score_field_detail("brand_name", "ChewNectar", "ChewNectar")
+        assert details == [{"item": None, "predicted": "ChewNectar", "expected": "ChewNectar", "verdict": "correct"}]
+
+    def test_a_wrong_scalar_carries_the_original_unnormalized_values(self):
+        # Original casing/whitespace preserved -- normalize() is for
+        # deciding the verdict, not for what gets shown to a human reading
+        # the diff.
+        details = score_field_detail("brand_name", "  Wrong Brand ", "ChewNectar")
+        assert details == [{"item": None, "predicted": "  Wrong Brand ", "expected": "ChewNectar", "verdict": "wrong"}]
+
+    def test_a_missing_scalar_has_no_predicted_value(self):
+        details = score_field_detail("brand_name", None, "ChewNectar")
+        assert details == [{"item": None, "predicted": None, "expected": "ChewNectar", "verdict": "missing"}]
+
+    def test_a_hallucinated_scalar_has_no_expected_value(self):
+        details = score_field_detail("brand_name", "Made Up", None)
+        assert details == [{"item": None, "predicted": "Made Up", "expected": None, "verdict": "wrong"}]
+
+    def test_both_blank_scalar_is_one_correct_row_not_zero_rows(self):
+        # Matches aggregate()'s existing "both absent counts as 1 correct"
+        # rule -- a diff reader must see this label accounted for, not
+        # silently skipped.
+        details = score_field_detail("brand_name", None, None)
+        assert details == [{"item": None, "predicted": None, "expected": None, "verdict": "correct"}]
+
+    def test_list_field_expands_one_row_per_item_not_one_row_per_field(self):
+        details = score_field_detail("ingredients", ["Sugar", "Made Up"], ["Sugar", "Water"])
+        by_verdict = {d["verdict"]: d for d in details}
+        assert by_verdict["correct"] == {"item": "Sugar", "predicted": "Sugar", "expected": "Sugar", "verdict": "correct"}
+        assert by_verdict["missing"] == {"item": "Water", "predicted": None, "expected": "Water", "verdict": "missing"}
+        assert by_verdict["wrong"] == {"item": "Made Up", "predicted": "Made Up", "expected": None, "verdict": "wrong"}
+
+    def test_nutrition_table_expands_one_row_per_nutrient_with_both_values(self):
+        details = score_field_detail(
+            "nutrition_table",
+            {"Calories": "99 kcal", "Fake Row": "5 mg"},
+            {"Calories": "12 kcal", "Sodium": "4 mg"},
+        )
+        by_item = {d["item"]: d for d in details}
+        assert by_item["Calories"] == {"item": "Calories", "predicted": "99 kcal", "expected": "12 kcal", "verdict": "wrong"}
+        assert by_item["Sodium"] == {"item": "Sodium", "predicted": None, "expected": "4 mg", "verdict": "missing"}
+        assert by_item["Fake Row"] == {"item": "Fake Row", "predicted": "5 mg", "expected": None, "verdict": "wrong"}
+
+
+class TestScoreFieldDetailMatchesScoreField:
+    """score_field() and score_field_detail() must never silently drift
+    apart -- the tally from one has to equal the tally from the other for
+    the same inputs, on every field-type shape, or the strict RESULTS.md
+    numbers and the diff tool would be describing two different scorers."""
+
+    @pytest.mark.parametrize(
+        "field,predicted,expected",
+        [
+            ("brand_name", "ChewNectar", "ChewNectar"),
+            ("brand_name", "Wrong", "ChewNectar"),
+            ("brand_name", None, "ChewNectar"),
+            ("brand_name", "Made Up", None),
+            ("brand_name", None, None),
+            ("logo", "leaf icon", "a green leaf icon above the wordmark"),
+            ("ingredients", ["Sugar", "Made Up"], ["Sugar", "Water"]),
+            ("ingredients", None, None),
+            ("nutrition_table", {"Calories": "99 kcal", "Fake Row": "5 mg"}, {"Calories": "12 kcal", "Sodium": "4 mg"}),
+            ("nutrition_table", None, None),
+        ],
+    )
+    def test_tallied_detail_equals_score_field(self, field, predicted, expected):
+        assert _tally(score_field_detail(field, predicted, expected)) == score_field(field, predicted, expected)
+
+
+class TestScoreLabelsDetail:
+    def test_returns_a_third_element_with_per_label_per_field_detail(self, monkeypatch):
+        ground_truth = {
+            "A.pdf": ({"brand_name": "X"}, [("a_p1", 1)], []),
+        }
+        predictions = {"A.pdf": {"brand_name": "X"}}
+        field_results, conflicts, details = score_labels(predictions, ground_truth)
+
+        assert conflicts == []
+        brand_rows = [d for d in details if d["field"] == "brand_name" and d["source_file"] == "A.pdf"]
+        assert brand_rows == [{
+            "source_file": "A.pdf", "field": "brand_name",
+            "item": None, "predicted": "X", "expected": "X", "verdict": "correct",
+        }]
+
+    def test_every_field_for_every_label_is_represented_in_details(self):
+        ground_truth = {
+            "A.pdf": ({"brand_name": "X"}, [("a_p1", 1)], []),
+            "B.pdf": ({"brand_name": "Y"}, [("b_p1", 1)], []),
+        }
+        predictions = {"A.pdf": {"brand_name": "X"}, "B.pdf": {}}
+        _fr, _c, details = score_labels(predictions, ground_truth)
+
+        sources_seen = {d["source_file"] for d in details}
+        assert sources_seen == {"A.pdf", "B.pdf"}
 
 
 class TestMergeLabelPages:

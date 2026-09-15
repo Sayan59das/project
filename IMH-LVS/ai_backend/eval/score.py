@@ -143,6 +143,76 @@ def score_field(field, predicted, expected):
     return {"correct": 1, "wrong": 0, "missing": 0} if match else {"correct": 0, "wrong": 1, "missing": 0}
 
 
+def score_field_detail(field, predicted, expected):
+    """score_field()'s sibling: the same comparison, but returns the
+    per-item/per-row detail BEHIND the tally instead of just counting it —
+    what the predicted and expected values actually were, not just how many
+    were right. One dict per scalar field, or one per list item / nutrition
+    row for those field types: {'item', 'predicted', 'expected', 'verdict'}
+    ('item' is None for a scalar field; the list item's own text, or the
+    nutrition row's key, otherwise — always the EXPECTED side's original
+    text when there is one, so a near-miss is easy to spot by eye, falling
+    back to the predicted side's text only for a pure hallucination with no
+    expected counterpart). Values are the original, non-normalized text —
+    normalize() decides the verdict, not what a human reviewing the diff
+    sees. See TestScoreFieldDetailMatchesScoreField: this must never
+    silently drift from score_field()'s own tally for the same inputs."""
+    if field in LIST_FIELDS:
+        expected_list = expected or []
+        predicted_list = predicted or []
+        if not expected_list and not predicted_list:
+            return [{"item": None, "predicted": None, "expected": None, "verdict": "correct"}]
+        want_norm = {normalize(str(item)): item for item in expected_list}
+        got_norm = {normalize(str(item)): item for item in predicted_list}
+        details = []
+        for key, original in want_norm.items():
+            if key in got_norm:
+                details.append({"item": original, "predicted": got_norm[key], "expected": original, "verdict": "correct"})
+            else:
+                details.append({"item": original, "predicted": None, "expected": original, "verdict": "missing"})
+        for key, original in got_norm.items():
+            if key not in want_norm:
+                details.append({"item": original, "predicted": original, "expected": None, "verdict": "wrong"})
+        return details
+
+    if field == "nutrition_table":
+        want = expected or {}
+        got = predicted or {}
+        if not want and not got:
+            return [{"item": None, "predicted": None, "expected": None, "verdict": "correct"}]
+        want_norm = {normalize(str(k)): (k, v) for k, v in want.items()}
+        got_norm = {normalize(str(k)): (k, v) for k, v in got.items()}
+        details = []
+        for norm_key, (orig_key, orig_val) in want_norm.items():
+            if norm_key in got_norm:
+                _got_key, got_val = got_norm[norm_key]
+                verdict = "correct" if normalize(str(orig_val)) == normalize(str(got_val)) else "wrong"
+                details.append({"item": orig_key, "predicted": got_val, "expected": orig_val, "verdict": verdict})
+            else:
+                details.append({"item": orig_key, "predicted": None, "expected": orig_val, "verdict": "missing"})
+        for norm_key, (orig_key, orig_val) in got_norm.items():
+            if norm_key not in want_norm:
+                details.append({"item": orig_key, "predicted": orig_val, "expected": None, "verdict": "wrong"})
+        return details
+
+    # Scalar (EXACT_FIELDS or FUZZY_FIELDS) — mirrors score_field()'s own branch exactly.
+    predicted_n, expected_n = normalize(predicted), normalize(expected)
+
+    if expected_n is None:
+        if predicted_n is None:
+            return [{"item": None, "predicted": None, "expected": None, "verdict": "correct"}]
+        return [{"item": None, "predicted": predicted, "expected": None, "verdict": "wrong"}]
+    if predicted_n is None:
+        return [{"item": None, "predicted": None, "expected": expected, "verdict": "missing"}]
+
+    if field in FUZZY_FIELDS:
+        match = predicted_n in expected_n or expected_n in predicted_n
+    else:
+        match = predicted_n == expected_n
+
+    return [{"item": None, "predicted": predicted, "expected": expected, "verdict": "correct" if match else "wrong"}]
+
+
 def _record_conflict(conflicts, key, first_value, new_value):
     existing = next((c for c in conflicts if c[0] == key), None)
     if existing:
@@ -250,15 +320,27 @@ def load_ground_truth():
 
 def score_labels(predictions_by_source, ground_truth):
     """predictions_by_source: {sourceFile: merged_predicted_label_dict}.
-    Returns (field_results, conflicts_seen) for aggregate()."""
+    Returns (field_results, conflicts_seen, details) for aggregate() and
+    eval/diff.py — details is the flat list of every score_field_detail()
+    row, across every label and field, each tagged with its source_file and
+    field so eval/diff.py can filter/group them without recomputing
+    anything."""
     field_results = []
     all_conflicts = []
+    all_details = []
     for source_file, (expected, _pages, conflicts) in ground_truth.items():
         if conflicts:
             all_conflicts.append((source_file, conflicts))
         predicted = predictions_by_source.get(source_file, {})
-        field_results.append({field: score_field(field, predicted.get(field), expected.get(field)) for field in FIELDS})
-    return field_results, all_conflicts
+        record = {}
+        for field in FIELDS:
+            predicted_value = predicted.get(field)
+            expected_value = expected.get(field)
+            record[field] = score_field(field, predicted_value, expected_value)
+            for detail in score_field_detail(field, predicted_value, expected_value):
+                all_details.append({"source_file": source_file, "field": field, **detail})
+        field_results.append(record)
+    return field_results, all_conflicts, all_details
 
 
 def run_ai_mode():
@@ -458,7 +540,7 @@ def main():
     else:
         predictions_by_source, ground_truth = run_pipeline_mode()
 
-    field_results, conflicts = score_labels(predictions_by_source, ground_truth)
+    field_results, conflicts, details = score_labels(predictions_by_source, ground_truth)
     summary = aggregate(field_results)
 
     RUNS_DIR.mkdir(parents=True, exist_ok=True)
@@ -467,6 +549,7 @@ def main():
         "mode": args.mode,
         "summary": summary,
         "conflicts": conflicts,
+        "details": details,
     }, indent=2, ensure_ascii=False), encoding="utf-8")
 
     write_results_md(args.mode, summary, conflicts, label_count=len(ground_truth))
