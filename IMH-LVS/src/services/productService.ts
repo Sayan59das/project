@@ -32,15 +32,20 @@ export function getProductById(id: string): Promise<Product | undefined> {
  * than adding a second product for the same label. Not a constraint — two
  * companies legitimately market products of the same name — so it answers with
  * the match rather than refusing, and the endpoint returns null for no match.
+ *
+ * The FSSAI licence, when the label carried one, lets the server accept a
+ * marketing-company string OCR garbled: the licence identifies the company.
+ * It never substitutes for the product name (see the server's own comment).
  */
 export async function findPossibleDuplicate(
-  input: Pick<ProductInput, 'productName' | 'brandName' | 'marketingCompany'>
+  input: Pick<ProductInput, 'productName' | 'brandName' | 'marketingCompany'> & { fssaiNumber?: string }
 ): Promise<Product | undefined> {
   const match = await apiRequest<Product | null>('/products/possible-duplicate', {
     query: {
       productName: input.productName,
       brandName: input.brandName,
-      marketingCompany: input.marketingCompany
+      marketingCompany: input.marketingCompany,
+      fssaiNumber: input.fssaiNumber?.trim() || undefined
     }
   });
   return match ?? undefined;

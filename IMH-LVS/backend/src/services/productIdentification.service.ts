@@ -1,15 +1,17 @@
 // Product/Version Identification, AI module brief Step 2: given a label's
 // already-extracted identity fields, asks ai_backend/ whether they match an
-// existing Product — by FSSAI number (a government-issued, effectively
-// unique ID) or by (Product Name + Marketing Company) — via its
-// POST /api/v1/identify-product endpoint (ai_backend/app/api/v1/endpoints.py).
+// existing Product — Product Name plus either the Marketing Company or the
+// FSSAI licence — via its POST /api/v1/identify-product endpoint
+// (ai_backend/app/services/identification.py holds the rule).
+//
+// An FSSAI licence is issued to the food business operator, not the product:
+// one licence sits on every product a company markets, so it can vouch for
+// the COMPANY when OCR garbled that string, but never for the product name.
 //
 // This is a SEPARATE, ADDITIONAL check from productService's
-// findPossibleDuplicate/findExactProductMatch (the SQL-based check the
-// intake form already runs on every keystroke): that one only ever matches
-// on name/brand/company text. This one also catches a label whose product
-// name was misread by OCR but whose FSSAI number still matches an existing
-// product — a signal the SQL-based check has no way to use. See
+// findPossibleDuplicate (the SQL-based check, which applies the same rule
+// but also requires the brand string to match): this one drops the brand
+// requirement, so it can still rescue a label whose brand OCR misread. See
 // labelIntakeService.ts's submitLabelIntake for where this is consulted, as
 // a last-resort check before a genuinely new product gets created.
 //

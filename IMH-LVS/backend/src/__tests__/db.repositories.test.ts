@@ -150,6 +150,41 @@ describe('seed data as the repositories read it', { skip: SKIP }, () => {
     assert.equal(found?.id, 'PRD-0001');
   });
 
+  // An FSSAI licence belongs to the food business operator, not the product —
+  // one licence legitimately sits on every product a company markets. So it
+  // can stand in for a marketing-company string OCR garbled, but never for
+  // the product name: matching on the licence alone would file a brand-new
+  // product as a new version of an unrelated sibling.
+  it('rescues a possible duplicate whose marketing company was misread, via the FSSAI licence', async () => {
+    const found = await findPossibleDuplicate({
+      productName: 'Vitamin C Gummies',
+      brandName: 'VitaFit',
+      marketingCompany: 'ABC Healthcare Pvt Ltd',
+      fssaiNumber: '10023045001234'
+    });
+    assert.equal(found?.id, 'PRD-0001');
+  });
+
+  it('never matches a different product on the FSSAI licence alone', async () => {
+    const found = await findPossibleDuplicate({
+      productName: 'Zinc Gummies',
+      brandName: 'VitaFit',
+      marketingCompany: 'ABC Healthcare',
+      fssaiNumber: '10023045001234'
+    });
+    assert.equal(found, undefined);
+  });
+
+  it('ignores a blank FSSAI licence rather than matching every blank one', async () => {
+    const found = await findPossibleDuplicate({
+      productName: 'Vitamin C Gummies',
+      brandName: 'VitaFit',
+      marketingCompany: 'Somebody Else',
+      fssaiNumber: '   '
+    });
+    assert.equal(found, undefined);
+  });
+
   it('finds every product for a brand and marketing company', async () => {
     const found = await getProductsByBrandAndCompany('VitaFit', 'ABC Healthcare');
     assert.deepEqual(
