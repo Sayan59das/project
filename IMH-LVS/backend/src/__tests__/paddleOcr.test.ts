@@ -2,6 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import path from 'node:path';
 import sharp from 'sharp';
 import { collapseRepeatedPhrase, recognizeLines } from '../services/paddleOcr.service';
 import { rasterizePdfPages } from '../services/pdf.service';
@@ -58,7 +59,7 @@ test('recognizeLines: real PDF fixture → lines with expected content', { timeo
   // First engine call takes ~10s, total test needs ~2 min
 
   const [page] = await rasterizePdfPages(
-    readFileSync('M:/New Drive/Desktop/bot/project/IMH-LVS/Dataset_Example/Unicare MV IRN219-2 (1).pdf'),
+    readFileSync(path.join(__dirname, 'fixtures', 'unicare-homeo-vita-gummies.pdf')),
     { maxPages: 1 }
   );
 
