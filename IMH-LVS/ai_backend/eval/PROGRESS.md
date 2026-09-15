@@ -35,7 +35,7 @@ The goal: `python eval/score.py --mode pipeline` at 80%+ on the client's
   blocking the rest of the work, per your choice to keep going in the
   meantime.
 
-## What's happening now: Step 5 — the actual fix loop
+## Step 5 — the actual fix loop
 
 Going field by field, in order of how many cells each field has (biggest
 first), since that's what moves the overall number most. Each fix: find
@@ -45,37 +45,67 @@ must work on a label the code has never seen), confirm the test passes,
 then re-run the real 45-label pipeline to confirm the number actually
 moved before calling it done.
 
-### 5.1 — nutrition_table (532 cells, was 21.1% strict / 44.6% fair)
+### 5.1 — nutrition_table: **done**, real number confirmed
 
-**Status: first fix landed, verifying with a real run next.**
+95 of 194 wrong answers were the pipeline mistaking a nearby sentence — a
+"based on a 2000kcal diet" disclaimer, a dosage instruction, a storage
+note, an RDA-guideline citation — for an actual nutrient row, just because
+that sentence happened to start with a number. Fixed by teaching the code
+what a real nutrient row looks like (short, number+unit shaped) versus a
+sentence (long, reads like English prose). Also fixed a second bug found
+along the way: the cleanup step for stray %RDA columns was accidentally
+deleting real "Kids vs. Adults" dose breakdowns too.
+**Real result: 21.1% → 23.4% strict, 194 wrong → 133 wrong.**
 
-Found: 95 of 194 wrong answers were the pipeline mistaking a nearby
-sentence — a "based on a 2000kcal diet" disclaimer, a dosage instruction,
-a storage note, an RDA-guideline citation — for an actual nutrient row,
-just because that sentence happened to start with a number. Fixed by
-teaching the code what a real nutrient row looks like (short, number+unit
-shaped) versus a sentence (long, reads like English prose) — a generic
-shape rule, not anything specific to one label's wording. Along the way,
-found and fixed a second bug: the existing cleanup step for stripping
-stray %RDA columns was also accidentally deleting real "how much for
-kids vs. adults" breakdowns that happened to contain a % sign.
+### 5.2 — ingredients: **done**, real number confirmed
 
-Tests: 4 new ones added, all using real wrong-answer examples pulled
-straight from the tool's own diff output, not made up. 32/33 relevant
-tests passing (the 1 failure is a pre-existing, already-documented missing
-test file unrelated to this).
+The list-splitting logic cut on every comma, including ones inside a food
+additive's own code list — "Gelling Agents (INS 440, 418, 407)" became
+three broken fragments instead of one ingredient. Fixed with a
+parentheses/brackets-aware split.
+**Real result: 30.9% → 41.1%, 170 wrong → 75 wrong, 217 correct → 250 correct.**
 
-Not yet fixed in nutrition_table (left for a later pass on this same
-field, per the plan's "two or three passes per field"): a smaller pattern
-where a two-population label (e.g. "Kids" vs "Adults" get different
-amounts) only captures one of the two numbers; a handful of short
-fragments that aren't sentences but also aren't real values.
+### 5.3 — claims: **done**, real number confirmed
+
+Claims were barely found (327 of 383 missing) partly because the
+allergen-detection list only recognised 2 specific "X Free" claims
+(gluten, sugar) out of the many real ones on these labels (Gelatin Free,
+Milk Free, Nut Free, Peanut Free, Soy Free — all real, all missed).
+Generalised to the shape "any word + Free" instead of a fixed list.
+**Real result: 6.3% → 16.6% strict (24 correct → 72 correct), fabrication
+rate unchanged at 0%.** (Wrong count also rose — expected, not a
+regression: most of claims' "wrong" is really the answer key not having
+caught up yet, same finding as before.)
+
+### 5.4 — package_size: **fix done and committed, real number pending**
+
+The dominant wrong-answer pattern (35 of 40) was the same everywhere: the
+right number, unit word dropped ("30" instead of "30 Gummies"). Found and
+fixed in all three places that read a pack count (the "Net Content:"
+line, the general "<number> Gummies/Tablets/..." text match, and the
+front-of-pack badge photo-reading path) — all three were silently
+throwing away the unit word. Confirmed working correctly by reading two
+real labels directly (not through the full scoring tool, see below) —
+both now come back with the unit word attached, matching the answer key.
+
+**Why no real scoring number yet**: the full 45-label measurement tool
+would not finish tonight — 5 attempts in a row, at shrinking batch sizes,
+all got shut down by Windows for running low on memory. Tried freeing
+memory by stopping the database program (not needed for this measurement)
+but that backtracked — it restarted itself multiple times and left LESS
+memory free than before, so that was undone and not attempted again.
+Confirmed the fix genuinely works by testing it directly on two real
+labels instead (much lighter than the full 45-label run), which is solid
+evidence the code is correct — just not yet the full official percentage.
+Will get the real number as soon as the measurement tool can complete a
+full run, likely either later tonight if memory recovers on its own, or
+in the final whole-project test pass at the end.
 
 ## What's next
 
-5.1 verification run → 5.2 (ingredients) → 5.3 (claims, likely blocked
-mostly on your review pass since its real problem is missing answer-key
-entries) → 5.4 (package size) → 5.5 (address / marketing company) → 5.6
-(brand/product name). Then Step 6 only if needed, then Step 7. A full,
-final test of the whole project and a final results write-up come once
-all of that is done, as asked.
+5.5 (address / marketing company) → 5.6 (brand/product name, blocked on
+your review pass being done first for the brand/product part
+specifically). Then Step 6 only if needed, then Step 7. Once memory
+allows, a full pipeline run to confirm 5.4's real number and catch it up
+in `RESULTS.md`. A full, final test of the whole project and a final
+results write-up come once all of that is done, as asked.
