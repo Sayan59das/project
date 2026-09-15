@@ -110,8 +110,6 @@ export function splitIngredientsList(declaration: string): string[] {
 // them cover — and because a claim present on the label but absent from the
 // stored value is how two different labels compare as a MATCH.
 const CLAIM_BADGES: readonly { pattern: RegExp; claim: string }[] = [
-  { pattern: /\bgluten[\s-]?free\b/i, claim: 'Gluten Free' },
-  { pattern: /\bsugar[\s-]?free\b/i, claim: 'Sugar Free' },
   { pattern: /\bno\s+added\s+sugar\b/i, claim: 'No Added Sugar' },
   { pattern: /\bnatural\s+colou?rs?\s*(&|and)\s*flavou?rs?\b/i, claim: 'Natural Colours & Flavours' },
   { pattern: /\bno\s+(added\s+)?preservatives?\b/i, claim: 'No Added Preservatives' },
@@ -186,6 +184,27 @@ export function extractClaims(text: string, knownClaims: readonly string[] = [])
       (claim) => claim.toLowerCase() === badge.claim.toLowerCase()
     );
     if (!alreadyKnown) found.set(badge.claim, isKnown(badge.claim, knownClaims));
+  }
+
+  // Step 5.3 (accuracy plan): claims were barely being found at all (327 of
+  // 383 ground-truth claim cells missing) because the fixed badge list only
+  // recognised two specific "X Free" claims (gluten, sugar) while the real
+  // dataset's ground truth has Gelatin Free, Milk Free, Nut Free, Peanut
+  // Free, Soy Free and more — a closed list can never keep up with every
+  // allergen a label might declare. Matches the SHAPE instead: any single
+  // word immediately followed by "free" (badge-style, not "carefree" or
+  // "toll free" — see the exclusion below, a real risk on these labels'
+  // customer-care sections, not a guess). Reported in the printed casing,
+  // Title-Cased for a consistent canonical form the way every other badge
+  // claim already is.
+  const FREE_CLAIM = /\b([A-Za-z]+)[\s-]free\b/gi;
+  const FREE_CLAIM_EXCLUSIONS = new Set(['toll', 'carefree', 'care', 'hands', 'hassle', 'worry']);
+  for (const match of flat.matchAll(FREE_CLAIM)) {
+    const word = match[1];
+    if (FREE_CLAIM_EXCLUSIONS.has(word.toLowerCase())) continue;
+    const claim = `${word[0].toUpperCase()}${word.slice(1).toLowerCase()} Free`;
+    const alreadyKnown = [...found.keys()].some((existing) => existing.toLowerCase() === claim.toLowerCase());
+    if (!alreadyKnown) found.set(claim, isKnown(claim, knownClaims));
   }
 
   const claims = [...found.keys()];

@@ -116,6 +116,34 @@ test('reports badge claims present on the label', () => {
   ]);
 });
 
+// Step 5.3 (accuracy plan): claims are barely found at all (327 of 383
+// ground-truth claim cells missing) because the badge list only recognised
+// two specific "X Free" claims (gluten, sugar) out of the many real ones on
+// the actual dataset — Gelatin Free, Milk Free, Nut Free, Peanut Free, Soy
+// Free are all real claims from the ground truth annotations
+// (finetune/reviewed/annotations), not invented. Generalised to the SHAPE
+// (any short word immediately followed by "free"), per the directive's own
+// "... free" pattern, rather than hardcoding each allergen name.
+test('reports the generic "X Free" claim shape for allergens the fixed badge list never had', () => {
+  const text = 'Gelatin Free. Milk Free. Nut Free. Peanut Free. Soy Free.';
+  const result = extractClaims(text);
+  assert.deepEqual(result.claims.split(' | ').sort(), ['Gelatin Free', 'Milk Free', 'Nut Free', 'Peanut Free', 'Soy Free']);
+});
+
+test('"X Free" claim shape is case-insensitive and normalises to Title Case', () => {
+  const result = extractClaims('DAIRY FREE');
+  assert.deepEqual(result.claims.split(' | '), ['Dairy Free']);
+});
+
+test('does not report "Toll Free" as a claim near a customer care number', () => {
+  // Real risk on this label family: "Toll Free: 1800-555-1234" appears in
+  // the customer-care section of several real labels, right next to
+  // genuine claims text -- structurally identical to "Nut Free" otherwise.
+  const result = extractClaims('Gluten Free. Customer Care Toll Free: 1800-555-1234');
+  assert.equal(result.claims.includes('Toll Free'), false);
+  assert.ok(result.claims.includes('Gluten Free'));
+});
+
 // A claim on the label with no master record is still stored — omitting it
 // would let two differently-claiming labels compare as a MATCH — but it is
 // reported separately so a Manager knows what the Claims master is missing.
