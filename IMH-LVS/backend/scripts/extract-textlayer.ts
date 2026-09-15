@@ -10,10 +10,10 @@
 import fs from 'fs';
 import path from 'path';
 import { extractLabelFromTextLayerOnly } from '../src/services/labelExtraction.service';
+import { splitIngredientsList } from '../src/services/labelSemanticExtractor.service';
 
-// The delimiter used by labelSemanticExtractor.service to join claims/ingredients.
+// The delimiter used by labelSemanticExtractor.service to join claims.
 const CLAIM_DELIMITER = ' | ';
-const INGREDIENT_DELIMITER = ','; // comma used to split ingredients in extractIngredients
 
 interface OutputRecord {
   source_file: string;
@@ -46,12 +46,6 @@ function parseClaims(delimitedClaims: string): string[] {
   return delimitedClaims.split(CLAIM_DELIMITER).map(c => c.trim()).filter(c => c.length > 0);
 }
 
-// Parse ingredients from the delimited string (split on ',').
-function parseIngredients(delimitedIngredients: string): string[] {
-  if (!delimitedIngredients) return [];
-  return delimitedIngredients.split(INGREDIENT_DELIMITER).map(i => i.trim()).filter(i => i.length > 0);
-}
-
 // Parse nutrition table from JSON string; return null if blank or invalid.
 function parseNutritionTable(jsonString: string): Record<string, string> | null {
   if (!jsonString) return null;
@@ -78,7 +72,7 @@ function toOutputRecord(filePath: string, extractionResult: any): OutputRecord {
     package_size: blankToNull(extractionResult.packageSize),
     manufacturing_company: blankToNull(extractionResult.manufacturingCompany),
     claims: parseClaims(extractionResult.claims),
-    ingredients: parseIngredients(extractionResult.ingredients),
+    ingredients: splitIngredientsList(extractionResult.ingredients),
     nutrition_table: parseNutritionTable(extractionResult.nutritionTable),
     colour_theme: null,
     logo: null,

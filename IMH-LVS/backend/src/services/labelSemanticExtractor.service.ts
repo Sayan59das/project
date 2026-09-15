@@ -66,6 +66,40 @@ export function extractIngredients(text: string): string {
   return declaration;
 }
 
+/**
+ * Splits an ingredients declaration into its individual items on commas —
+ * but not a comma that falls inside parentheses or brackets, so a food
+ * additive's own code list ("Gelling Agents (INS 440, 418, 407)") stays one
+ * item instead of breaking into "Gelling Agents (INS 440", "418", "407)".
+ * This was the dominant real bug in eval/diff.py's wrong-ingredients sample
+ * (Step 5.2, accuracy plan) — a naive `.split(',')` doesn't know a comma
+ * inside "(...)"/"[...]" isn't a list separator. Generic (works on any
+ * bracketed code list, not a specific one); trims and drops empty items,
+ * same as the plain split it replaces.
+ */
+export function splitIngredientsList(declaration: string): string[] {
+  if (!declaration) return [];
+
+  const items: string[] = [];
+  let current = '';
+  let depth = 0;
+
+  for (const char of declaration) {
+    if (char === '(' || char === '[') depth++;
+    else if (char === ')' || char === ']') depth = Math.max(0, depth - 1);
+
+    if (char === ',' && depth === 0) {
+      items.push(current);
+      current = '';
+    } else {
+      current += char;
+    }
+  }
+  items.push(current);
+
+  return items.map((item) => item.trim()).filter((item) => item.length > 0);
+}
+
 // ---------------------------------------------------------------------
 // Claims
 // ---------------------------------------------------------------------

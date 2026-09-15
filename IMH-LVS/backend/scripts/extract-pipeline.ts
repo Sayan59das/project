@@ -16,10 +16,10 @@
 import fs from 'fs';
 import path from 'path';
 import { extractLabelReportFromFile } from '../src/services/labelExtraction.service';
+import { splitIngredientsList } from '../src/services/labelSemanticExtractor.service';
 
-// The delimiter used by labelSemanticExtractor.service to join claims/ingredients.
+// The delimiter used by labelSemanticExtractor.service to join claims.
 const CLAIM_DELIMITER = ' | ';
-const INGREDIENT_DELIMITER = ',';
 const COLOUR_DELIMITER = ' & '; // colourTheme.service's own join delimiter
 
 interface OutputRecord {
@@ -135,7 +135,7 @@ function toOutputRecord(filePath: string, extractionResult: any, fieldMeta: Reco
     package_size: blankToNull(extractionResult.packageSize),
     manufacturing_company: blankToNull(extractionResult.manufacturingCompany),
     claims: parseDelimited(extractionResult.claims, CLAIM_DELIMITER),
-    ingredients: parseDelimited(extractionResult.ingredients, INGREDIENT_DELIMITER),
+    ingredients: splitIngredientsList(extractionResult.ingredients),
     nutrition_table: parseNutritionTable(extractionResult.nutritionTable),
     colour_theme: extractionResult.colourTheme ? parseDelimited(extractionResult.colourTheme, COLOUR_DELIMITER) : null,
     logo: null,

@@ -10,7 +10,8 @@ import assert from 'node:assert/strict';
 import {
   extractClaims,
   extractIngredients,
-  extractNutritionTableFormat
+  extractNutritionTableFormat,
+  splitIngredientsList
 } from '../services/labelSemanticExtractor.service';
 
 const MASTER_CLAIMS = ['Supports Immunity', 'Sugar Free', 'High in Vitamin C', 'No Added Preservatives'];
@@ -38,6 +39,49 @@ test('treats a label with no ingredients declaration as absent, not empty-ish', 
 
 test('does not mistake a cross-reference for a declaration', () => {
   assert.equal(extractIngredients('For allergens see ingredients: overleaf.'), '');
+});
+
+// Step 5.2 (accuracy plan): splitting an ingredients declaration into
+// discrete items on every comma breaks any item whose own name contains a
+// comma inside parentheses/brackets -- an INS food-additive code list being
+// the single dominant real-world case (Step 1.2's diff sample: ~83% of
+// wrong ingredients items were exactly this). Real examples below are from
+// this file's own NUTRIBEARS_INGREDIENTS fixture and from a real
+// eval/diff.py --field ingredients run (see STEP1_FAILURE_ANALYSIS.md /
+// STEP5 report), not invented.
+test('splitIngredientsList: a comma inside parentheses does not split the item', () => {
+  const items = splitIngredientsList('Gelling Agent (INS 440), Acidity Regulator (INS 330 & 331iii)');
+  assert.deepEqual(items, ['Gelling Agent (INS 440)', 'Acidity Regulator (INS 330 & 331iii)']);
+});
+
+test('splitIngredientsList: real multi-code INS list from a diff stays one item, not three fragments', () => {
+  // Real wrong-answer fragments from eval/diff.py: predicted 'Gelling
+  // Agents (INS 440', '418', '407)' as three separate items instead of one.
+  const items = splitIngredientsList('Corn Syrup, Gelling Agents (INS 440, 418, 407), Sugar');
+  assert.deepEqual(items, ['Corn Syrup', 'Gelling Agents (INS 440, 418, 407)', 'Sugar']);
+});
+
+test('splitIngredientsList: the full NUTRIBEARS fixture splits into exactly its real ingredients, no INS fragments', () => {
+  const declaration = extractIngredients(NUTRIBEARS_INGREDIENTS);
+  const items = splitIngredientsList(declaration);
+  assert.ok(items.includes('Gelling Agent (INS 440)'));
+  assert.ok(items.includes('Acidity Regulator (INS 330 & 331iii)'));
+  assert.ok(items.includes('Food Colour: Black Carrot Concentrate (INS 163) & Paprika (INS 160c)'));
+  // None of the parenthetical INS numbers leaked out as their own item.
+  assert.equal(items.some((item) => /^\d+\)?$/.test(item.trim())), false);
+});
+
+test('splitIngredientsList: an item with brackets instead of parentheses is also kept whole', () => {
+  const items = splitIngredientsList('Vitamin C [as Ascorbic Acid, 40 mg], Zinc');
+  assert.deepEqual(items, ['Vitamin C [as Ascorbic Acid, 40 mg]', 'Zinc']);
+});
+
+test('splitIngredientsList: plain comma-separated items with no parentheses split as before', () => {
+  assert.deepEqual(splitIngredientsList('Sugar, Water, Gelatin'), ['Sugar', 'Water', 'Gelatin']);
+});
+
+test('splitIngredientsList: blank input returns an empty list', () => {
+  assert.deepEqual(splitIngredientsList(''), []);
 });
 
 // THE REGRESSION THIS FILE EXISTS FOR.
