@@ -48,11 +48,14 @@ Environment variables:
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
+
+from rapidfuzz import fuzz
 
 EVAL_DIR = Path(__file__).resolve().parent
 AI_BACKEND_DIR = EVAL_DIR.parent
@@ -82,6 +85,17 @@ FUZZY_FIELDS = {"logo", "layout", "address"}
 # Set-of-items fields — scored item by item, not as one all-or-nothing unit.
 LIST_FIELDS = {"colour_theme", "claims", "ingredients"}
 # nutrition_table is the only dict field; handled by its own branch below.
+
+# Step 3 (accuracy plan): logo/layout/colour_theme are genuinely visual —
+# the brief (§9) compares logo and layout as IMAGES, not text descriptions;
+# the CLI emits layout: null for every label by construction (never a text
+# value anywhere in this pipeline, see extract-pipeline.ts's own comment),
+# so it contributes 45 forced "missing" that have nothing to do with text
+# extraction quality; and colour_theme/logo are free-text descriptions with
+# no single right wording. The 80% target applies to the 13 TEXT_FIELDS;
+# these three get their own "visual" block instead (see aggregate_new_metric).
+VISUAL_FIELDS = {"logo", "layout", "colour_theme"}
+TEXT_FIELDS = [f for f in FIELDS if f not in VISUAL_FIELDS]
 
 # Step 2 (accuracy plan): the nine scalar fields that go through the Node
 # extraction pipeline's fillBlanks cascade (backend/src/services/
@@ -226,6 +240,248 @@ def score_field_detail(field, predicted, expected):
     return [{"item": None, "predicted": predicted, "expected": expected, "verdict": "correct" if match else "wrong"}]
 
 
+# ============================================================
+# Step 3 (accuracy plan) — a metric a client would sign
+# ============================================================
+# normalize() above is whitespace+case only. normalize_value() adds
+# unit-level normalization on top, for nutrition_table values, package_size,
+# and list-field items — fields where the same real-world value legitimately
+# gets printed/OCR'd in slightly different but equivalent forms. Every rule
+# here is grounded in a real pair from a Step 1 `eval/diff.py` run (see the
+# tests, and STEP1_FAILURE_ANALYSIS.md), not invented.
+_DECIMAL_COMMA = re.compile(r"(?<=\d),(?=\d)")
+_UNIT_NO_SPACE = re.compile(r"(\d)\s*(mcg|µg|μg|kcal|mg|iu|g)\b")
+_TRAILING_PARENTHETICAL = re.compile(r"\s*\([^)]*\)\s*$")
+_TRAILING_PERCENT_RDA = re.compile(r"\s*%\s*rda\s*$")
+_TRAILING_BARE_PERCENT = re.compile(r"(?<=\d)\s*%$")
+
+
+def normalize_value(field, value, strip_parenthetical=True):
+    """Value-level normalization beyond normalize()'s whitespace+case.
+
+    strip_parenthetical defaults to True (nutrition_table values,
+    package_size) but is turned off for list-field items (ingredients,
+    claims): a nutrition value's trailing parenthetical is almost always a
+    %DV/RDA annotation safe to drop symmetrically from both sides ('12
+    kcal' vs '12 kcal (<0.6% DV)' — the headline number+unit is what's
+    being compared, not the annotation). An ingredient's parenthetical is
+    often its main distinguishing content ('Vitamin C (Ascorbic acid)') —
+    stripping it there would throw away exactly what the token-set list
+    matcher (score_list_field_fuzzy) is designed to use instead."""
+    n = normalize(value)
+    if n is None:
+        return None
+    n = _DECIMAL_COMMA.sub(".", n)
+    n = _UNIT_NO_SPACE.sub(lambda m: f"{m.group(1)} {'mcg' if m.group(2) in ('µg', 'μg') else m.group(2)}", n)
+    if strip_parenthetical:
+        n = _TRAILING_PARENTHETICAL.sub("", n)
+    n = _TRAILING_PERCENT_RDA.sub("", n)
+    n = _TRAILING_BARE_PERCENT.sub("", n)
+    n = n.rstrip(" .,;:")
+    return n or None
+
+
+def normalize_nutrition_key(key):
+    """Nutrition row KEYS get their own normalization: strip a parenthetical
+    unit ('Energy (kcal)' -> 'energy'), then compare by TOKEN SET so word
+    order and connecting punctuation don't matter ('Total Fat' and
+    'Fat, total' both become the same {'total', 'fat'})."""
+    n = normalize(key)
+    if n is None:
+        return None
+    n = re.sub(r"\([^)]*\)", " ", n)
+    n = re.sub(r"[,:]", " ", n)
+    tokens = frozenset(n.split())
+    return tokens if tokens else None
+
+
+def _is_fuzzy_match(predicted_n, expected_n):
+    """Levenshtein ratio >= 0.85, OR one side contains the other with the
+    shorter side at least 4 characters (so a 2-character fragment like "IN"
+    can't trivially "match" by being a substring of "INDIA")."""
+    if predicted_n is None or expected_n is None:
+        return False
+    if predicted_n == expected_n:
+        return True
+    if predicted_n in expected_n or expected_n in predicted_n:
+        if min(len(predicted_n), len(expected_n)) >= 4:
+            return True
+    return (fuzz.ratio(predicted_n, expected_n) / 100.0) >= 0.85
+
+
+def score_field_fuzzy(field, predicted, expected):
+    """New-metric sibling of score_field() for a SCALAR field (EXACT_FIELDS
+    or FUZZY_FIELDS): same correct/missing handling, but a strict WRONG is
+    given a second chance via normalize_value() + _is_fuzzy_match(). Returns
+    {'correct_strict','correct_fuzzy','wrong','missing'} — correct_strict's
+    count is always <= correct_fuzzy's (a strict match is trivially also a
+    fuzzy one), so correct_fuzzy is the headline and correct_strict stays
+    visible in the same row for comparison, per the directive."""
+    strict = score_field(field, predicted, expected)
+    if strict["wrong"] == 0:
+        return {**strict, "correct_strict": strict["correct"], "correct_fuzzy": strict["correct"]}
+    predicted_n = normalize_value(field, predicted)
+    expected_n = normalize_value(field, expected)
+    if _is_fuzzy_match(predicted_n, expected_n):
+        return {"correct_strict": 0, "correct_fuzzy": 1, "wrong": 0, "missing": 0}
+    return {"correct_strict": 0, "correct_fuzzy": 0, "wrong": 1, "missing": 0}
+
+
+def score_list_field_fuzzy(field, predicted, expected):
+    """New-metric sibling of score_field() for a list field (claims,
+    ingredients — NOT colour_theme, which Step 3.4 moves to the visual
+    block entirely). Each expected item is matched against the single best
+    still-unclaimed predicted item by rapidfuzz's token-set ratio (handles
+    a parenthetical clarification like 'Vitamin C (Ascorbic acid)' matching
+    the simpler 'Vitamin C', since token-set ratio scores on token overlap
+    rather than full-string equality) — >= 0.85 counts as a match; matched
+    pairs are removed from the pool so one predicted item can't satisfy two
+    different expected items."""
+    strict = score_field(field, predicted, expected)
+    expected_list = list(expected or [])
+    predicted_list = list(predicted or [])
+    if not expected_list and not predicted_list:
+        return {"correct_strict": 1, "correct_fuzzy": 1, "wrong": 0, "missing": 0}
+
+    got_norm = [normalize_value(field, item, strip_parenthetical=False) for item in predicted_list]
+    unclaimed = {i for i, n in enumerate(got_norm) if n is not None}
+
+    correct_fuzzy = 0
+    for want_item in expected_list:
+        want_n = normalize_value(field, want_item, strip_parenthetical=False)
+        if want_n is None:
+            continue
+        best_idx, best_score = None, 0.0
+        for i in unclaimed:
+            s = fuzz.token_set_ratio(want_n, got_norm[i]) / 100.0
+            if s > best_score:
+                best_score, best_idx = s, i
+        if best_idx is not None and best_score >= 0.85:
+            correct_fuzzy += 1
+            unclaimed.discard(best_idx)
+
+    missing = len(expected_list) - correct_fuzzy
+    wrong = len(unclaimed)  # predicted items that matched nothing — hallucinated / unmatched
+    return {"correct_strict": strict["correct"], "correct_fuzzy": correct_fuzzy, "wrong": wrong, "missing": missing}
+
+
+def score_nutrition_table_fuzzy(predicted, expected):
+    """New-metric sibling of score_field()'s nutrition_table branch: rows
+    are matched by normalize_nutrition_key() (token-set equality) instead
+    of exact key text, and a matched row's values are compared via
+    normalize_value() + _is_fuzzy_match() instead of exact/normalized
+    string equality."""
+    strict = score_field("nutrition_table", predicted, expected)
+    want = expected or {}
+    got = predicted or {}
+    if not want and not got:
+        return {"correct_strict": 1, "correct_fuzzy": 1, "wrong": 0, "missing": 0}
+
+    want_keyed = {}
+    for k, v in want.items():
+        nk = normalize_nutrition_key(k)
+        if nk is not None:
+            want_keyed[nk] = v
+    got_keyed = {}
+    for k, v in got.items():
+        nk = normalize_nutrition_key(k)
+        if nk is not None:
+            got_keyed[nk] = v
+
+    correct_fuzzy = 0
+    wrong = 0
+    for nk, want_v in want_keyed.items():
+        if nk in got_keyed:
+            if _is_fuzzy_match(normalize_value("nutrition_table", got_keyed[nk]), normalize_value("nutrition_table", want_v)):
+                correct_fuzzy += 1
+            else:
+                wrong += 1
+    missing = len(want_keyed) - correct_fuzzy - wrong
+    wrong += sum(1 for nk in got_keyed if nk not in want_keyed)  # hallucinated rows
+    return {"correct_strict": strict["correct"], "correct_fuzzy": correct_fuzzy, "wrong": wrong, "missing": missing}
+
+
+def score_field_new_metric(field, predicted, expected):
+    """The new metric's per-field score — dispatches by field type exactly
+    like score_field(), but every branch adds a correct_fuzzy count
+    alongside correct_strict/wrong/missing. Visual fields (logo, layout,
+    colour_theme) get the strict result unchanged in both columns — they
+    don't participate in the fuzzy text metric at all; see aggregate_new_
+    metric for where they go instead."""
+    if field in VISUAL_FIELDS:
+        strict = score_field(field, predicted, expected)
+        return {**strict, "correct_strict": strict["correct"], "correct_fuzzy": strict["correct"]}
+    if field in LIST_FIELDS:
+        return score_list_field_fuzzy(field, predicted, expected)
+    if field == "nutrition_table":
+        return score_nutrition_table_fuzzy(predicted, expected)
+    return score_field_fuzzy(field, predicted, expected)
+
+
+def aggregate_new_metric(field_results):
+    """field_results: a list of {field: {'correct_strict','correct_fuzzy',
+    'wrong','missing'}} dicts, one per scored label (score_field_new_
+    metric's shape, not score_field's). Returns {'text': {...}, 'visual':
+    {...}} — text is every TEXT_FIELDS field aggregated with correct_fuzzy
+    as the headline accuracy (strict_accuracy kept alongside for
+    comparison); visual is the three VISUAL_FIELDS aggregated by their
+    strict count only, fuzzy matching not being meaningful for a free-text
+    visual description."""
+    per_field = defaultdict(lambda: {"correct_strict": 0, "correct_fuzzy": 0, "wrong": 0, "missing": 0})
+    for record in field_results:
+        for field, counts in record.items():
+            per_field[field]["correct_strict"] += counts["correct_strict"]
+            per_field[field]["correct_fuzzy"] += counts["correct_fuzzy"]
+            per_field[field]["wrong"] += counts["wrong"]
+            per_field[field]["missing"] += counts["missing"]
+
+    def _block(fields):
+        out = {}
+        overall = {"correct_strict": 0, "correct_fuzzy": 0, "wrong": 0, "missing": 0}
+        for field in fields:
+            counts = per_field.get(field, {"correct_strict": 0, "correct_fuzzy": 0, "wrong": 0, "missing": 0})
+            total = counts["correct_fuzzy"] + counts["wrong"] + counts["missing"]
+            out[field] = {**counts, "total": total}
+            for key in overall:
+                overall[key] += counts[key]
+        overall_total = overall["correct_fuzzy"] + overall["wrong"] + overall["missing"]
+        overall["total"] = overall_total
+        overall["accuracy"] = (overall["correct_fuzzy"] / overall_total) if overall_total else 0.0
+        overall["strict_accuracy"] = (overall["correct_strict"] / overall_total) if overall_total else 0.0
+        return {"per_field": out, "overall": overall}
+
+    return {"text": _block(TEXT_FIELDS), "visual": _block(VISUAL_FIELDS)}
+
+
+def compute_fabrication(predictions_by_source, ground_truth):
+    """Step 3.5: how often does the pipeline confidently produce a value for
+    a field the label genuinely doesn't have one for? Worse than a MISSING
+    cell (an honest "I don't know") because a fabricated value looks like a
+    real answer. Tallied per field as a count and a rate — out of every
+    label where the field is genuinely blank, the only labels a fabrication
+    could happen on ("opportunities"). This must never go up in exchange
+    for accuracy (the directive's own words)."""
+    fabricated = defaultdict(int)
+    opportunities = defaultdict(int)
+    for source_file, (expected, _pages, _conflicts) in ground_truth.items():
+        predicted = predictions_by_source.get(source_file) or {}
+        for field in FIELDS:
+            if not _empty(expected.get(field)):
+                continue
+            opportunities[field] += 1
+            if not _empty(predicted.get(field)):
+                fabricated[field] += 1
+    return {
+        field: {
+            "fabricated": fabricated[field],
+            "opportunities": opportunities[field],
+            "rate": (fabricated[field] / opportunities[field]) if opportunities[field] else 0.0,
+        }
+        for field in FIELDS
+        if opportunities[field] > 0
+    }
+
+
 def _record_conflict(conflicts, key, first_value, new_value):
     existing = next((c for c in conflicts if c[0] == key), None)
     if existing:
@@ -354,6 +610,26 @@ def score_labels(predictions_by_source, ground_truth):
                 all_details.append({"source_file": source_file, "field": field, **detail})
         field_results.append(record)
     return field_results, all_conflicts, all_details
+
+
+def score_labels_new_metric(predictions_by_source, ground_truth):
+    """Step 3's sibling of score_labels(): same per-label, per-field loop,
+    scored with score_field_new_metric() instead of score_field(). Kept as
+    a separate pass rather than folded into score_labels() itself so the
+    strict metric's own numbers (and eval/diff.py, which reads score_field_
+    detail's strict verdicts) are never at risk of drifting because of a
+    Step 3 change — the directive is explicit that the strict row keeps
+    being written unchanged. Returns a list of {field: {'correct_strict',
+    'correct_fuzzy','wrong','missing'}} dicts, one per label, ready for
+    aggregate_new_metric()."""
+    field_results = []
+    for source_file, (expected, _pages, _conflicts) in ground_truth.items():
+        predicted = predictions_by_source.get(source_file, {})
+        record = {}
+        for field in FIELDS:
+            record[field] = score_field_new_metric(field, predicted.get(field), expected.get(field))
+        field_results.append(record)
+    return field_results
 
 
 def compute_by_source_table(predictions_by_source, ground_truth):
@@ -583,7 +859,61 @@ def _git_sha():
         return "unknown"
 
 
-def write_results_md(mode_label, summary, conflicts, label_count, by_source=None):
+def format_new_metric_block(new_metric):
+    """Renders aggregate_new_metric()'s {'text','visual'} output as markdown:
+    the 13 TEXT_FIELDS' headline (correct_fuzzy accuracy, with strict shown
+    alongside for comparison — this is the number the 80% target applies
+    to), then the 3 VISUAL_FIELDS as their own block, scored strictly only
+    (fuzzy text-matching isn't meaningful for a free-text visual
+    description). Empty/missing input produces no lines."""
+    if not new_metric or not new_metric.get("text"):
+        return []
+    text, visual = new_metric["text"], new_metric["visual"]
+    lines = [
+        f"\n**New metric — text fields only** ({len(TEXT_FIELDS)} fields; logo/layout/colour_theme are "
+        "scored separately below, per the brief comparing them as images, not text). "
+        f"Accuracy: **{text['overall']['accuracy']:.1%}** (fuzzy/normalized — the 80% target) "
+        f"/ {text['overall']['strict_accuracy']:.1%} (strict, for comparison to the row above)\n",
+        "| field | correct (strict) | correct (fuzzy) | wrong | missing | accuracy (fuzzy) |",
+        "|---|---|---|---|---|---|",
+    ]
+    for field in TEXT_FIELDS:
+        c = text["per_field"].get(field, {"correct_strict": 0, "correct_fuzzy": 0, "wrong": 0, "missing": 0, "total": 0})
+        acc = (c["correct_fuzzy"] / c["total"]) if c["total"] else 0.0
+        lines.append(f"| {field} | {c['correct_strict']} | {c['correct_fuzzy']} | {c['wrong']} | {c['missing']} | {acc:.1%} |")
+
+    lines.append(
+        f"\n**Visual fields** (logo, layout, colour_theme — compared as images per the brief §9, "
+        f"not part of the 80% text target; strict matching only): {visual['overall']['strict_accuracy']:.1%}\n"
+    )
+    lines.append("| field | correct | wrong | missing | accuracy |")
+    lines.append("|---|---|---|---|---|")
+    for field in VISUAL_FIELDS:
+        c = visual["per_field"].get(field, {"correct_strict": 0, "wrong": 0, "missing": 0, "total": 0})
+        acc = (c["correct_strict"] / c["total"]) if c["total"] else 0.0
+        lines.append(f"| {field} | {c['correct_strict']} | {c['wrong']} | {c['missing']} | {acc:.1%} |")
+    return lines
+
+
+def format_fabrication_table(fabrication):
+    """Renders compute_fabrication()'s output as markdown. Sorted by rate
+    descending (worst first — this is a line a client reads to ask "what
+    does it make up," so the worst offender belongs at the top). Empty
+    input produces no lines."""
+    if not fabrication:
+        return []
+    lines = [
+        "\n**Fabrication rate** (predicted a value for a field the label genuinely doesn't have one for — "
+        "must never go up in exchange for accuracy):",
+        "| field | fabricated | opportunities | rate |",
+        "|---|---|---|---|",
+    ]
+    for field, counts in sorted(fabrication.items(), key=lambda kv: kv[1]["rate"], reverse=True):
+        lines.append(f"| {field} | {counts['fabricated']} | {counts['opportunities']} | {counts['rate']:.1%} |")
+    return lines
+
+
+def write_results_md(mode_label, summary, conflicts, label_count, by_source=None, new_metric=None, fabrication=None):
     """mode_label is the text shown in the row's own header — plain
     "pipeline" for textlayer/ai, or "pipeline (vlm on)"/"pipeline (vlm off)"
     for a pipeline run, so both sit side by side in the file distinguishable
@@ -616,6 +946,8 @@ def write_results_md(mode_label, summary, conflicts, label_count, by_source=None
         lines.append(f"| {field} | {counts['correct']} | {counts['wrong']} | {counts['missing']} | {acc:.1%} |")
 
     lines.extend(format_by_source_table(by_source or {}))
+    lines.extend(format_new_metric_block(new_metric))
+    lines.extend(format_fabrication_table(fabrication))
 
     if conflicts:
         lines.append("\n**Ground-truth conflicts found** (a field printed differently on two pages "
@@ -654,6 +986,15 @@ def main():
     summary = aggregate(field_results)
     by_source = compute_by_source_table(predictions_by_source, ground_truth) if args.mode == "pipeline" else {}
 
+    # Step 3: the new metric and fabrication rate are computed on every
+    # mode's run (not just pipeline) — the directive keeps the strict row
+    # comparable across ai/textlayer/pipeline, and the new metric should be
+    # too, so a client can see the same two numbers move together on any
+    # of the three baselines, not just the current pipeline.
+    new_metric_results = score_labels_new_metric(predictions_by_source, ground_truth)
+    new_metric = aggregate_new_metric(new_metric_results)
+    fabrication = compute_fabrication(predictions_by_source, ground_truth)
+
     # A pipeline run's own run file is suffixed by its --vlm value so an
     # "off" run never clobbers the "on" run's file (or vice versa) — both
     # need to survive on disk for eval/diff.py to compare them. "on" keeps
@@ -669,11 +1010,20 @@ def main():
         "conflicts": conflicts,
         "details": details,
         "by_source": {f"{field}|{source}": counts for (field, source), counts in by_source.items()},
+        "new_metric": new_metric,
+        "fabrication": fabrication,
     }, indent=2, ensure_ascii=False), encoding="utf-8")
 
     mode_label = f"{args.mode} (vlm {args.vlm})" if args.mode == "pipeline" else args.mode
-    write_results_md(mode_label, summary, conflicts, label_count=len(ground_truth), by_source=by_source)
-    print(f"{args.mode}: overall {summary['overall']['accuracy']:.1%} across {len(ground_truth)} labels")
+    write_results_md(
+        mode_label, summary, conflicts, label_count=len(ground_truth),
+        by_source=by_source, new_metric=new_metric, fabrication=fabrication
+    )
+    print(
+        f"{args.mode}: overall {summary['overall']['accuracy']:.1%} strict "
+        f"/ {new_metric['text']['overall']['accuracy']:.1%} new-metric (text fields) "
+        f"across {len(ground_truth)} labels"
+    )
 
 
 if __name__ == "__main__":

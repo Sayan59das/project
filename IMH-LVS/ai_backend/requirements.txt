@@ -18,3 +18,4 @@ pytest
 peft
 bitsandbytes
 datasets
+rapidfuzz
