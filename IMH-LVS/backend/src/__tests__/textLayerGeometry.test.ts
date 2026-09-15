@@ -377,6 +377,92 @@ test('extractNutritionTableFromPanels: repeated name keeps first value', () => {
   });
 });
 
+// Step 5.1 (accuracy plan): the dominant real bug found in
+// STEP1_FAILURE_ANALYSIS.md's nutrition_table sample — a footnote/dosage/
+// storage sentence elsewhere in the panel, which happens to start with a
+// digit, gets captured as if it were a nutrient row's value. Real examples
+// below are taken directly from eval/diff.py --field nutrition_table
+// output, not invented (see the comment on each).
+test('extractNutritionTableFromPanels: a footnote sentence starting with a digit is not captured as a value', () => {
+  // Real value from Calrio/CALRIO Gummies' wrong nutrition_table cells —
+  // a "based on a 2000kcal diet" disclaimer line, not a nutrient.
+  const allSpans = [
+    span({ text: 'Nutritional Information', x: 0, y: 200, width: 300, fontSize: 8 }),
+    span({ text: 'Energy', x: 0, y: 188, width: 50, fontSize: 8 }),
+    span({ text: '12 kcal', x: 200, y: 188, width: 50, fontSize: 8 }),
+    span({
+      text: '2,000 kcal energy per day, however, calorie needs may vary.',
+      x: 0,
+      y: 176,
+      width: 300,
+      fontSize: 8
+    })
+  ];
+  const panels = segmentPanels(allSpans);
+  const result = extractNutritionTableFromPanels(panels);
+
+  assert.deepEqual(result, { Energy: '12 kcal' });
+});
+
+test('extractNutritionTableFromPanels: an RDA-guideline sentence starting with a year is not captured', () => {
+  // Real value from several labels' wrong nutrition_table cells — "2020
+  // guidelines for Children 5-17years & ..." is a citation for where the
+  // %RDA figures come from, not itself a row.
+  const allSpans = [
+    span({ text: 'Nutrition Facts', x: 0, y: 200, width: 300, fontSize: 8 }),
+    span({ text: 'Protein', x: 0, y: 188, width: 50, fontSize: 8 }),
+    span({ text: '0.5 g', x: 200, y: 188, width: 50, fontSize: 8 }),
+    span({ text: '2020 guidelines for Children 5-17years &', x: 0, y: 176, width: 300, fontSize: 8 })
+  ];
+  const panels = segmentPanels(allSpans);
+  const result = extractNutritionTableFromPanels(panels);
+
+  assert.deepEqual(result, { Protein: '0.5 g' });
+});
+
+test('extractNutritionTableFromPanels: a dosage sentence with a short parenthetical but more prose after it is not captured', () => {
+  // Real value from Calcimax's wrong nutrition_table cells — the
+  // parenthetical ("approx. 3g") is short like a real DV annotation, but
+  // there's meaningful text after it closes, which a real value never has.
+  const allSpans = [
+    span({ text: 'Nutrition Information', x: 0, y: 200, width: 300, fontSize: 8 }),
+    span({ text: 'Energy', x: 0, y: 188, width: 50, fontSize: 8 }),
+    span({ text: '12 kcal', x: 200, y: 188, width: 50, fontSize: 8 }),
+    span({
+      text: '1 gummy (approx. 3g) for kids & 2 gummies for adults.',
+      x: 0,
+      y: 176,
+      width: 300,
+      fontSize: 8
+    })
+  ];
+  const panels = segmentPanels(allSpans);
+  const result = extractNutritionTableFromPanels(panels);
+
+  assert.deepEqual(result, { Energy: '12 kcal' });
+});
+
+test('extractNutritionTableFromPanels: a real DV/RDA parenthetical breakdown is still captured, even though it is wordy', () => {
+  // Real CORRECT value shape (Step 1.2/Step 3's near-miss pattern) — must
+  // not be broken by the footnote-rejection rule above just because it has
+  // several words inside its parenthetical.
+  const allSpans = [
+    span({ text: 'Nutrition Facts', x: 0, y: 200, width: 300, fontSize: 8 }),
+    span({ text: 'Iron', x: 0, y: 188, width: 50, fontSize: 8 }),
+    span({
+      text: '0.5 mg (Children 1% / Teens 0.25% / Adults <0.5% DV)',
+      x: 200,
+      y: 188,
+      width: 200,
+      fontSize: 8
+    })
+  ];
+  const panels = segmentPanels(allSpans);
+  const result = extractNutritionTableFromPanels(panels);
+
+  assert.deepEqual(result, { Iron: '0.5 mg (Children 1% / Teens 0.25% / Adults <0.5% DV)' });
+});
+
 test('extractNutritionTableFromPanels: real fixture she-arise-gummies.pdf', async () => {
   const spans = await extractTextSpans(load('she-arise-gummies.pdf'));
   const panels = segmentPanels(spans);

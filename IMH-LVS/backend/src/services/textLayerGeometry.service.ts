@@ -354,6 +354,48 @@ export function extractNutritionTableFromPanels(panels: readonly Panel[]): Recor
   // Regex to validate that a value STARTS with an optional comparison operator and then a digit
   const valueStartsWithNumberRegex = /^[<>≤≥~]?\s*\d/;
 
+  // Step 5.1 (accuracy plan): a genuine nutrition row's name or value is
+  // short and number/unit-shaped -- "Total Carbohydrate", "0.5 mg (Children
+  // 1% / Teens 0.25% / Adults <0.5% DV)" -- never a full sentence. Real bug
+  // this catches, from eval/diff.py --field nutrition_table output (not
+  // invented, see STEP1_FAILURE_ANALYSIS.md): a footnote/dosage/storage/
+  // RDA-citation sentence elsewhere in the panel, which happens to start
+  // with (or the singleCellRegex above happens to split on) a digit, gets
+  // captured as if it were a nutrient row -- "2,000 kcal energy per day,
+  // however, calorie needs may vary.", "2020 guidelines for Children
+  // 5-17years &", "1 gummy (approx. 3g) for kids & 2 gummies for adults."
+  // Rule: whatever comes before the first "(" (or the whole string, if
+  // there's no "(") must be at most 3 words, and nothing meaningful may
+  // follow the closing ")" -- a genuine DV/RDA breakdown parenthetical is
+  // always the LAST thing in a value (or the name has none at all).
+  function looksLikeNutritionText(s: string): boolean {
+    const trimmed = s.trim();
+    const openIdx = trimmed.indexOf('(');
+    if (openIdx === -1) {
+      return trimmed.split(/\s+/).filter(Boolean).length <= 3;
+    }
+    const head = trimmed.slice(0, openIdx).trim();
+    if (head.split(/\s+/).filter(Boolean).length > 3) return false;
+    const closeIdx = trimmed.lastIndexOf(')');
+    if (closeIdx === -1) return true; // unbalanced -- let other rules judge it
+    return trimmed.slice(closeIdx + 1).trim().length === 0;
+  }
+
+  // The existing %-column strip below (for "7.5 kcal <0.5% <0.5% <0.5%" ->
+  // "7.5 kcal") must not fire on a % figure that's INSIDE an unclosed
+  // parenthetical -- "0.5 mg (Children 1% / Teens 0.25% / Adults <0.5%
+  // DV)" would otherwise lose everything from " 1%" onward, destroying a
+  // real DV/RDA breakdown instead of a stray %RDA column.
+  function stripTrailingPercentColumns(value: string): string {
+    const match = value.match(/\s+[<>≤≥~]?\d[\d.,]*\s*%.*$/);
+    if (!match || match.index === undefined) return value;
+    const before = value.slice(0, match.index);
+    const openParens = (before.match(/\(/g) || []).length;
+    const closeParens = (before.match(/\)/g) || []).length;
+    if (openParens > closeParens) return value;
+    return value.slice(0, match.index).trim();
+  }
+
   let headerPanelIndex = -1;
   let headerLineIndex = -1;
 
@@ -410,17 +452,23 @@ export function extractNutritionTableFromPanels(panels: readonly Panel[]): Recor
       }
     }
 
-    // Skip if value does not START with a number (with optional comparison operator) or name is empty
+    // Skip if value does not START with a number (with optional comparison operator) or name is empty.
     if (name && value && valueStartsWithNumberRegex.test(value)) {
-      // Strip trailing %-column tokens: remove " [<>≤≥~]?digit[digit.,]* %anything" from the end.
-      // This cleans up rows where the value cell physically contains %RDA/%DV columns:
-      // "7.5 kcal <0.5% <0.5% <0.5%" becomes "7.5 kcal"; "40 mg (66%)" is left alone
-      // because the % is inside parentheses (not a bare column token).
-      value = value.replace(/\s+[<>≤≥~]?\d[\d.,]*\s*%.*$/, '').trim();
+      // Strip trailing %-column tokens BEFORE the shape check below, not
+      // after: a genuine value like "7.5 kcal <0.5% <0.5% <0.5%" reads as
+      // a multi-word sentence until the stray %RDA columns are gone, at
+      // which point it's clearly nutrition-shaped again. "40 mg (66%)" and
+      // a DV/RDA breakdown parenthetical are left alone either way (see
+      // stripTrailingPercentColumns above).
+      value = stripTrailingPercentColumns(value);
 
-      // Store only if name not already present (keep first value)
-      if (!(name in result)) {
-        result[name] = value;
+      // Reject if either side now reads like a sentence rather than a
+      // nutrient name/value (see looksLikeNutritionText above).
+      if (looksLikeNutritionText(name) && looksLikeNutritionText(value)) {
+        // Store only if name not already present (keep first value)
+        if (!(name in result)) {
+          result[name] = value;
+        }
       }
     }
 
