@@ -2,6 +2,30 @@
 
 The only source of truth for extraction accuracy numbers on this project. Every row here was written by `eval/score.py`; if a number isn't here, it isn't verified — don't quote it.
 
+## Field definitions (human-decided, 2026-09-15 — Step 4.1)
+
+These answers were given directly by the client and settle what "correct" means
+for two fields that were ambiguous on labels like
+`AM7 GUMMIES - ORANGE  FLAVOUR (2).pdf` (see the ground-truth conflict logged
+below, from 2026-09-11). Annotations and extraction work on these two fields
+should follow this definition from here on.
+
+- **product_name** = the brand wordmark (e.g. "AM7", "ChewNectar", "Nutrinol"),
+  **not** the descriptive line underneath it (e.g. "Eye Multivitamin Gummies
+  for Kids & Adults"). Client's own words: "am7 is the brand name and eye
+  multivitamin is the discription about the product."
+- **brand_name** = whichever text is printed **biggest / most prominent** on
+  the front of the label — not necessarily the legal/marketing company's
+  registered brand mark, if a different word is visually dominant.
+
+Also decided (Step 1.2, `STEP1_FAILURE_ANALYSIS.md`):
+
+- **claims**: where the extractor returns a real, plausible claim string
+  (e.g. "Health Supplement", "Gluten Free") and ground truth currently says
+  blank, the ground truth is treated as incomplete, not the extraction as
+  wrong. These should be added to ground truth during the Step 4.2 human
+  review pass, not coded around in the extractor.
+
 ## 2026-09-11 18:33 UTC — mode `ai` — a920a6c
 
 **45 labels, 2348 fields scored.** Overall accuracy: **13.7%** (322 correct / 781 wrong / 1245 missing)
