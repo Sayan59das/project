@@ -83,6 +83,19 @@ FUZZY_FIELDS = {"logo", "layout", "address"}
 LIST_FIELDS = {"colour_theme", "claims", "ingredients"}
 # nutrition_table is the only dict field; handled by its own branch below.
 
+# Step 2 (accuracy plan): the nine scalar fields that go through the Node
+# extraction pipeline's fillBlanks cascade (backend/src/services/
+# labelExtraction.service.ts's FieldSource type) and so can carry a
+# field_sources entry in a --mode pipeline record. manufacturing_company is
+# a fixed constant (never extracted) and claims/ingredients/nutrition_table/
+# colour_theme have their own non-cascading extraction paths — none of the
+# four ever has a field_sources entry, by construction.
+FIELD_SOURCE_TRACKED_FIELDS = [
+    "brand_name", "product_name", "flavour", "fssai_number",
+    "marketing_company", "address", "customer_care_number",
+    "customer_care_email", "package_size",
+]
+
 
 def normalize(value):
     if value is None:
@@ -343,6 +356,61 @@ def score_labels(predictions_by_source, ground_truth):
     return field_results, all_conflicts, all_details
 
 
+def compute_by_source_table(predictions_by_source, ground_truth):
+    """Step 2 (accuracy plan): is a given extraction pass net-positive or
+    net-negative on a given field? A --mode pipeline record carries
+    field_sources (which pass wrote each of the nine FIELD_SOURCE_TRACKED_
+    FIELDS' non-blank values) alongside its predicted fields; this joins
+    that against score_field()'s own correct/wrong verdict for the same
+    field, tallied per (field, source) pair across every label.
+
+    A field with no field_sources entry for a label — meaning it's blank in
+    the prediction, or came from a mode/script that doesn't emit
+    field_sources at all (--mode textlayer, --mode ai) — contributes
+    nothing: there's no source to credit or blame for a MISSING cell, and a
+    mode with no field_sources produces an empty table entirely, which is
+    correct (this table only means something for --mode pipeline).
+
+    Returns {(field, source): {'correct': n, 'wrong': n}}."""
+    counts = defaultdict(lambda: {"correct": 0, "wrong": 0})
+    for source_file, (expected, _pages, _conflicts) in ground_truth.items():
+        predicted = predictions_by_source.get(source_file) or {}
+        sources = predicted.get("field_sources") or {}
+        for field in FIELD_SOURCE_TRACKED_FIELDS:
+            source = sources.get(field)
+            if not source:
+                continue
+            result = score_field(field, predicted.get(field), expected.get(field))
+            counts[(field, source)]["correct"] += result["correct"]
+            counts[(field, source)]["wrong"] += result["wrong"]
+    return dict(counts)
+
+
+def format_by_source_table(by_source):
+    """Renders compute_by_source_table()'s output as markdown lines, sorted
+    by field then source for a stable diff between runs. Empty input (any
+    mode other than pipeline, or a pipeline run against extraction code that
+    predates field_sources) produces no lines at all, so write_results_md
+    can unconditionally append this and get nothing extra when it doesn't
+    apply."""
+    if not by_source:
+        return []
+    lines = [
+        "\n**Accuracy by source** (which pass produced each field's value — "
+        "a source with more wrong than correct is actively hurting that "
+        "field and is a candidate to gate off; MISSING cells have no source "
+        "and aren't counted here):",
+        "| field | source | correct | wrong | accuracy |",
+        "|---|---|---|---|---|",
+    ]
+    for field, source in sorted(by_source.keys()):
+        counts = by_source[(field, source)]
+        total = counts["correct"] + counts["wrong"]
+        acc = (counts["correct"] / total) if total else 0.0
+        lines.append(f"| {field} | {source} | {counts['correct']} | {counts['wrong']} | {acc:.1%} |")
+    return lines
+
+
 def run_ai_mode():
     """Runs today's existing one-shot Qwen2-VL-2B pipeline (ExtractionService)
     over every ground-truth page, merging predictions per sourceFile the same
@@ -389,7 +457,23 @@ def _collect_ground_truth_pdfs(ground_truth):
     return pdf_paths
 
 
-def _run_node_extraction_cli_once(script_name, pdf_paths, mode_label, backend_dir):
+def _subprocess_env(vlm):
+    """The Node CLI subprocess's environment: inherits everything the parent
+    process has (so a real OLLAMA_URL already configured for --vlm on just
+    keeps working, no extra setup needed), except when --vlm off explicitly
+    blanks OLLAMA_URL for THIS call only — isVlmEnabled() in ollamaVlm
+    .service.ts is exactly `env.ollamaUrl !== ''`, so this is the one lever
+    that forces the VLM role-resolution step off regardless of what's
+    configured in the ambient environment, which is the only way to measure
+    the pipeline's own non-VLM accuracy against the exact same code path
+    used with it on."""
+    env = os.environ.copy()
+    if vlm == "off":
+        env["OLLAMA_URL"] = ""
+    return env
+
+
+def _run_node_extraction_cli_once(script_name, pdf_paths, mode_label, backend_dir, vlm="on"):
     """One subprocess invocation of a backend/scripts/*.ts CLI over however
     many PDFs are passed. Returns predictions keyed by source file."""
     cmd = ["node", "-r", "tsx/cjs", f"scripts/{script_name}", *[str(p) for p in pdf_paths]]
@@ -402,7 +486,10 @@ def _run_node_extraction_cli_once(script_name, pdf_paths, mode_label, backend_di
         # UnicodeDecodeError on a single non-cp1252 byte) and fails
         # silently in a background reader thread, leaving `result.stdout`
         # as None rather than raising here.
-        result = subprocess.run(cmd, cwd=backend_dir, capture_output=True, text=True, encoding="utf-8", check=True)
+        result = subprocess.run(
+            cmd, cwd=backend_dir, capture_output=True, text=True, encoding="utf-8", check=True,
+            env=_subprocess_env(vlm)
+        )
     except subprocess.CalledProcessError as e:
         raise SystemExit(f"{mode_label} extraction failed: {e.stderr}")
 
@@ -422,7 +509,7 @@ def _run_node_extraction_cli_once(script_name, pdf_paths, mode_label, backend_di
     return predictions_by_source
 
 
-def _run_node_extraction_cli(script_name, pdf_paths, mode_label, batch_size=None):
+def _run_node_extraction_cli(script_name, pdf_paths, mode_label, batch_size=None, vlm="on"):
     """Runs a backend/scripts/*.ts CLI (extract-textlayer.ts or
     extract-pipeline.ts — both accept the same <pdf>... argv and print the
     same JSON-array-of-records shape) and returns predictions keyed by
@@ -445,7 +532,7 @@ def _run_node_extraction_cli(script_name, pdf_paths, mode_label, batch_size=None
     predictions_by_source = {}
     for start in range(0, len(pdf_paths), batch_size):
         batch = pdf_paths[start : start + batch_size]
-        predictions_by_source.update(_run_node_extraction_cli_once(script_name, batch, mode_label, backend_dir))
+        predictions_by_source.update(_run_node_extraction_cli_once(script_name, batch, mode_label, backend_dir, vlm))
     return predictions_by_source
 
 
@@ -462,7 +549,7 @@ def run_textlayer_mode():
     return predictions_by_source, ground_truth
 
 
-def run_pipeline_mode():
+def run_pipeline_mode(vlm="on"):
     """Runs the FULL pipeline (Node CLI via backend/scripts/extract-pipeline.ts:
     text layer, then OCR with outlined-text detection, then Ollama VLM
     role-resolution for whatever is still blank — Phases C+D+E combined)
@@ -470,9 +557,12 @@ def run_pipeline_mode():
     handling as run_textlayer_mode(), against the full-pipeline CLI instead
     of the text-layer-only one.
 
-    Needs OLLAMA_URL set (and the model it names pulled) for the VLM step to
-    actually run — without it this still measures text-layer + OCR, just
-    without the role-resolution fallback; the CLI never throws either way.
+    vlm="on" (default) uses whatever OLLAMA_URL is already configured in the
+    ambient environment — unchanged from before this parameter existed.
+    vlm="off" forces the VLM role-resolution step off for this run
+    regardless of the ambient environment (see _subprocess_env), so both can
+    be measured from the exact same code path and land side by side in
+    RESULTS.md (Step 2, accuracy plan).
 
     Runs in small batches (see _run_node_extraction_cli's own docstring) —
     this mode is the one that keeps Ollama and the OCR engine loaded, so
@@ -480,7 +570,9 @@ def run_pipeline_mode():
     ground_truth = load_ground_truth()
     pdf_paths = _collect_ground_truth_pdfs(ground_truth)
     batch_size = int(os.environ.get("EVAL_PIPELINE_BATCH_SIZE", "5"))
-    predictions_by_source = _run_node_extraction_cli("extract-pipeline.ts", pdf_paths, "Full pipeline", batch_size=batch_size)
+    predictions_by_source = _run_node_extraction_cli(
+        "extract-pipeline.ts", pdf_paths, "Full pipeline", batch_size=batch_size, vlm=vlm
+    )
     return predictions_by_source, ground_truth
 
 
@@ -491,7 +583,13 @@ def _git_sha():
         return "unknown"
 
 
-def write_results_md(mode, summary, conflicts, label_count):
+def write_results_md(mode_label, summary, conflicts, label_count, by_source=None):
+    """mode_label is the text shown in the row's own header — plain
+    "pipeline" for textlayer/ai, or "pipeline (vlm on)"/"pipeline (vlm off)"
+    for a pipeline run, so both sit side by side in the file distinguishable
+    by eye (Step 2, accuracy plan). by_source, when given a non-empty
+    compute_by_source_table() result, appends the by-source accuracy table
+    right after the by-field one; omitted or empty adds nothing."""
     RESULTS_MD.parent.mkdir(parents=True, exist_ok=True)
     existing = RESULTS_MD.read_text(encoding="utf-8") if RESULTS_MD.is_file() else (
         "# Extraction accuracy — RESULTS\n\n"
@@ -505,7 +603,7 @@ def write_results_md(mode, summary, conflicts, label_count):
     overall = summary["overall"]
 
     lines = [
-        f"\n## {date} — mode `{mode}` — {sha}\n",
+        f"\n## {date} — mode `{mode_label}` — {sha}\n",
         f"**{label_count} labels, {overall['total']} fields scored.** "
         f"Overall accuracy: **{overall['accuracy']:.1%}** "
         f"({overall['correct']} correct / {overall['wrong']} wrong / {overall['missing']} missing)\n",
@@ -516,6 +614,8 @@ def write_results_md(mode, summary, conflicts, label_count):
         counts = summary["per_field"].get(field, {"correct": 0, "wrong": 0, "missing": 0, "total": 0})
         acc = (counts["correct"] / counts["total"]) if counts["total"] else 0.0
         lines.append(f"| {field} | {counts['correct']} | {counts['wrong']} | {counts['missing']} | {acc:.1%} |")
+
+    lines.extend(format_by_source_table(by_source or {}))
 
     if conflicts:
         lines.append("\n**Ground-truth conflicts found** (a field printed differently on two pages "
@@ -531,28 +631,48 @@ def write_results_md(mode, summary, conflicts, label_count):
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--mode", choices=["ai", "textlayer", "pipeline"], required=True)
+    parser.add_argument(
+        "--vlm", choices=["on", "off"], default="on",
+        help="--mode pipeline only: 'on' (default) uses whatever OLLAMA_URL is already configured in the "
+             "environment, unchanged from before this flag existed. 'off' forces the VLM role-resolution "
+             "step off for this run regardless of the ambient environment, so both can be measured from "
+             "the same code path and compared side by side in RESULTS.md (Step 2, accuracy plan)."
+    )
     args = parser.parse_args()
+
+    if args.mode != "pipeline" and args.vlm == "off":
+        parser.error("--vlm off only applies to --mode pipeline (ai and textlayer never call the VLM)")
 
     if args.mode == "ai":
         predictions_by_source, ground_truth = run_ai_mode()
     elif args.mode == "textlayer":
         predictions_by_source, ground_truth = run_textlayer_mode()
     else:
-        predictions_by_source, ground_truth = run_pipeline_mode()
+        predictions_by_source, ground_truth = run_pipeline_mode(vlm=args.vlm)
 
     field_results, conflicts, details = score_labels(predictions_by_source, ground_truth)
     summary = aggregate(field_results)
+    by_source = compute_by_source_table(predictions_by_source, ground_truth) if args.mode == "pipeline" else {}
 
+    # A pipeline run's own run file is suffixed by its --vlm value so an
+    # "off" run never clobbers the "on" run's file (or vice versa) — both
+    # need to survive on disk for eval/diff.py to compare them. "on" keeps
+    # the original unsuffixed pipeline.json name for backward compatibility
+    # with diff.py's existing --mode pipeline usage (Step 1).
+    run_key = args.mode if not (args.mode == "pipeline" and args.vlm == "off") else "pipeline-vlm-off"
     RUNS_DIR.mkdir(parents=True, exist_ok=True)
-    run_path = RUNS_DIR / f"{args.mode}.json"
+    run_path = RUNS_DIR / f"{run_key}.json"
     run_path.write_text(json.dumps({
         "mode": args.mode,
+        "vlm": args.vlm if args.mode == "pipeline" else None,
         "summary": summary,
         "conflicts": conflicts,
         "details": details,
+        "by_source": {f"{field}|{source}": counts for (field, source), counts in by_source.items()},
     }, indent=2, ensure_ascii=False), encoding="utf-8")
 
-    write_results_md(args.mode, summary, conflicts, label_count=len(ground_truth))
+    mode_label = f"{args.mode} (vlm {args.vlm})" if args.mode == "pipeline" else args.mode
+    write_results_md(mode_label, summary, conflicts, label_count=len(ground_truth), by_source=by_source)
     print(f"{args.mode}: overall {summary['overall']['accuracy']:.1%} across {len(ground_truth)} labels")
 
 

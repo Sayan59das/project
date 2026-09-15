@@ -110,12 +110,20 @@ test('PDF with a selectable text layer: extracts fields without OCR', { skip: SK
   assert.equal(body.data.marketingCompany, 'ABC Healthcare Pvt Ltd');
   assert.equal(body.data.fssaiNumber, '10023045009876');
   assert.equal(body.data.email, 'support@abchealthcaretest.com');
-  // Phase F: every field here was read straight off the text layer, on the
-  // fast path that never rasterizes or calls a model — fieldMeta must come
-  // back present but empty, not merely absent from the response, so a
-  // frontend that always reads response.fieldMeta never has to guard
-  // against it being undefined.
-  assert.deepEqual(body.fieldMeta, {});
+  // Step 2 (accuracy plan): fieldMeta now tags every field the fillBlanks
+  // cascade filled, not just VLM-inferred ones — this fixture's own
+  // productName is what finally showed this test's name was never quite
+  // accurate: the text layer here doesn't yield a complete productName, so
+  // this fixture DOES rasterize and OCR one field (title-region recovery),
+  // it was just invisible before fieldMeta could see non-VLM sources. Every
+  // other field really is a text-layer-flattened read, no OCR involved.
+  for (const field of ['marketingCompany', 'address', 'fssaiNumber', 'email', 'customerCareNumber', 'brand', 'flavour']) {
+    assert.deepEqual(body.fieldMeta[field], { source: 'text-layer-flattened', needsReview: false });
+  }
+  assert.deepEqual(body.fieldMeta.productName, { source: 'tesseract-title-region', needsReview: false });
+  assert.deepEqual(Object.keys(body.fieldMeta).sort(), [
+    'address', 'brand', 'customerCareNumber', 'email', 'flavour', 'fssaiNumber', 'marketingCompany', 'productName'
+  ]);
 });
 
 test('Scanned/image-only PDF: rasterizes and extracts via OCR (pdftoppm is installed in this environment)', { skip: SKIP }, async () => {

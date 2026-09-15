@@ -17,6 +17,8 @@ import pytest
 import score
 from score import (
     aggregate,
+    compute_by_source_table,
+    format_by_source_table,
     load_ground_truth,
     merge_label_pages,
     normalize,
@@ -640,3 +642,148 @@ class TestRunPipelineMode:
         assert mock_subprocess.run.call_count > 1
         assert all(size < n for size in batch_sizes_seen)
         assert sum(batch_sizes_seen) == n
+
+    def _stub_one_label(self, tmp_path, monkeypatch):
+        stub_ground_truth = {"A.pdf": ({"brand_name": "X"}, [("a_p1", 1)], [])}
+        monkeypatch.setattr(score, "load_ground_truth", lambda: stub_ground_truth)
+        pdf_dir = tmp_path / "pdfs"
+        pdf_dir.mkdir()
+        (pdf_dir / "A.pdf").touch()
+        monkeypatch.setenv("EVAL_LABEL_PDF_DIR", str(pdf_dir))
+        canned_output = json.dumps([{
+            "source_file": "A.pdf", "brand_name": "X", "product_name": None, "nutrition_table": None,
+            "flavour": None, "fssai_number": None, "marketing_company": None, "address": None,
+            "customer_care_number": None, "customer_care_email": None, "package_size": None,
+            "manufacturing_company": None, "claims": [], "ingredients": [], "colour_theme": None,
+            "logo": None, "layout": None, "field_sources": {},
+        }])
+        mock_subprocess = Mock()
+        mock_subprocess.run = Mock(return_value=Mock(stdout=canned_output, returncode=0))
+        monkeypatch.setattr(score, "subprocess", mock_subprocess)
+        return mock_subprocess
+
+    def test_vlm_off_blanks_ollama_url_for_the_subprocess_regardless_of_the_ambient_environment(self, tmp_path, monkeypatch):
+        # The only way to measure the pipeline's own non-VLM accuracy against
+        # the exact same code path used with the VLM on: force OLLAMA_URL
+        # blank for this subprocess call specifically, even though a real
+        # Ollama server is configured and running in the ambient environment
+        # (as it normally is during a live pipeline run).
+        monkeypatch.setenv("OLLAMA_URL", "http://127.0.0.1:11434")
+        mock_subprocess = self._stub_one_label(tmp_path, monkeypatch)
+
+        run_pipeline_mode(vlm="off")
+
+        _args, kwargs = mock_subprocess.run.call_args
+        assert kwargs["env"]["OLLAMA_URL"] == ""
+
+    def test_vlm_on_default_leaves_the_ambient_ollama_url_untouched(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("OLLAMA_URL", "http://127.0.0.1:11434")
+        mock_subprocess = self._stub_one_label(tmp_path, monkeypatch)
+
+        run_pipeline_mode()  # vlm defaults to "on"
+
+        _args, kwargs = mock_subprocess.run.call_args
+        assert kwargs["env"]["OLLAMA_URL"] == "http://127.0.0.1:11434"
+
+    def test_vlm_on_with_no_ollama_url_configured_at_all_stays_unset(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("OLLAMA_URL", raising=False)
+        mock_subprocess = self._stub_one_label(tmp_path, monkeypatch)
+
+        run_pipeline_mode(vlm="on")
+
+        _args, kwargs = mock_subprocess.run.call_args
+        assert "OLLAMA_URL" not in kwargs["env"]
+
+
+class TestComputeBySourceTable:
+    """Step 2 (accuracy plan): is a given extraction pass net-positive or
+    net-negative on a given field? Answered by joining each label's
+    field_sources (which pass wrote a field's value) with score_field's own
+    correct/wrong verdict for that field, tallied per (field, source) pair."""
+
+    FIELDS_NEEDED = {
+        "brand_name": None, "product_name": None, "flavour": None, "fssai_number": None,
+        "marketing_company": None, "address": None, "customer_care_number": None,
+        "customer_care_email": None, "package_size": None,
+    }
+
+    def test_tallies_correct_and_wrong_per_field_and_source(self):
+        ground_truth = {
+            "A.pdf": ({**self.FIELDS_NEEDED, "brand_name": "ChewNectar"}, [], []),
+            "B.pdf": ({**self.FIELDS_NEEDED, "brand_name": "Sleeprio"}, [], []),
+        }
+        predictions_by_source = {
+            "A.pdf": {**self.FIELDS_NEEDED, "brand_name": "ChewNectar", "field_sources": {"brand_name": "text-layer-flattened"}},
+            "B.pdf": {**self.FIELDS_NEEDED, "brand_name": "Gluten Free", "field_sources": {"brand_name": "text-layer-flattened"}},
+        }
+        by_source = compute_by_source_table(predictions_by_source, ground_truth)
+        assert by_source[("brand_name", "text-layer-flattened")] == {"correct": 1, "wrong": 1}
+
+    def test_a_field_with_no_field_sources_entry_is_not_counted_anywhere(self):
+        # A blank field (or a mode/record with no field_sources at all, e.g.
+        # --mode textlayer) has no pass to credit or blame — MISSING cells
+        # never appear in this table.
+        ground_truth = {"A.pdf": ({**self.FIELDS_NEEDED, "brand_name": "ChewNectar"}, [], [])}
+        predictions_by_source = {"A.pdf": {**self.FIELDS_NEEDED, "field_sources": {}}}
+        by_source = compute_by_source_table(predictions_by_source, ground_truth)
+        assert by_source == {}
+
+    def test_a_record_with_no_field_sources_key_at_all_is_handled_like_an_empty_one(self):
+        ground_truth = {"A.pdf": ({**self.FIELDS_NEEDED, "brand_name": "ChewNectar"}, [], [])}
+        predictions_by_source = {"A.pdf": {**self.FIELDS_NEEDED, "brand_name": "ChewNectar"}}  # no "field_sources" key
+        by_source = compute_by_source_table(predictions_by_source, ground_truth)
+        assert by_source == {}
+
+    def test_two_different_sources_on_the_same_field_are_tallied_separately(self):
+        ground_truth = {
+            "A.pdf": ({**self.FIELDS_NEEDED, "brand_name": "ChewNectar"}, [], []),
+            "B.pdf": ({**self.FIELDS_NEEDED, "brand_name": "Sleeprio"}, [], []),
+        }
+        predictions_by_source = {
+            "A.pdf": {**self.FIELDS_NEEDED, "brand_name": "ChewNectar", "field_sources": {"brand_name": "text-layer-flattened"}},
+            "B.pdf": {**self.FIELDS_NEEDED, "brand_name": "Sleeprio", "field_sources": {"brand_name": "vlm-role-resolution"}},
+        }
+        by_source = compute_by_source_table(predictions_by_source, ground_truth)
+        assert by_source[("brand_name", "text-layer-flattened")] == {"correct": 1, "wrong": 0}
+        assert by_source[("brand_name", "vlm-role-resolution")] == {"correct": 1, "wrong": 0}
+
+    def test_only_tracks_the_nine_fillblanks_cascade_fields_not_list_or_fixed_fields(self):
+        # manufacturing_company is a fixed constant (never goes through the
+        # cascade) and claims/ingredients/nutrition_table have their own
+        # non-cascading extraction paths — a field_sources entry for either
+        # would be a bug elsewhere, but this table should ignore it either way.
+        ground_truth = {"A.pdf": ({**self.FIELDS_NEEDED, "manufacturing_company": "IM Healthcare Pvt. Ltd."}, [], [])}
+        predictions_by_source = {
+            "A.pdf": {
+                **self.FIELDS_NEEDED,
+                "manufacturing_company": "IM Healthcare Pvt. Ltd.",
+                "field_sources": {"manufacturing_company": "fixed-constant"},
+            }
+        }
+        by_source = compute_by_source_table(predictions_by_source, ground_truth)
+        assert by_source == {}
+
+
+class TestFormatBySourceTable:
+    def test_empty_table_produces_no_lines(self):
+        assert format_by_source_table({}) == []
+
+    def test_renders_one_row_per_field_source_pair_with_accuracy(self):
+        by_source = {("brand_name", "text-layer-flattened"): {"correct": 8, "wrong": 2}}
+        lines = format_by_source_table(by_source)
+        joined = "\n".join(lines)
+        assert "brand_name" in joined
+        assert "text-layer-flattened" in joined
+        assert "80.0%" in joined
+
+    def test_rows_are_sorted_by_field_then_source_for_a_stable_diff(self):
+        by_source = {
+            ("product_name", "vlm-role-resolution"): {"correct": 1, "wrong": 0},
+            ("brand_name", "vlm-role-resolution"): {"correct": 1, "wrong": 0},
+            ("brand_name", "text-layer-flattened"): {"correct": 1, "wrong": 0},
+        }
+        lines = format_by_source_table(by_source)
+        table_rows = [line for line in lines if line.startswith("|") and "field" not in line and "---" not in line]
+        assert table_rows[0].startswith("| brand_name | text-layer-flattened")
+        assert table_rows[1].startswith("| brand_name | vlm-role-resolution")
+        assert table_rows[2].startswith("| product_name | vlm-role-resolution")
