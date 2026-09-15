@@ -75,11 +75,14 @@ class TestFormatRow:
         assert "Vitamin Gummies" in line
         assert "Vitamin C Gummies" in line
 
-    def test_a_missing_value_renders_as_an_em_dash_not_the_word_none(self):
+    def test_a_missing_value_renders_as_a_plain_placeholder_not_the_word_none(self):
+        # Plain ASCII, not an em dash -- a real run showed the em dash
+        # mangled into a replacement character on a Windows terminal,
+        # console-encoding mismatch, not bad data, but confusing to read.
         row = {"source_file": "C.pdf", "predicted": None, "expected": "Iron Gummies", "verdict": "missing"}
         line = format_row(row)
         assert "None" not in line
-        assert "—" in line
+        assert "(none)" in line
 
 
 class TestMainGroupsByVerdict:

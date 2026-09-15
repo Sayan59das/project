@@ -35,8 +35,13 @@ def load_details(mode, field):
 
 
 def format_row(row):
-    predicted = row["predicted"] if row["predicted"] is not None else "—"
-    expected = row["expected"] if row["expected"] is not None else "—"
+    # Plain ASCII placeholder, not an em dash: a real predicted value of
+    # None showed up on this Windows terminal as a mangled "�" replacement
+    # character instead of the em dash actually printed -- console-encoding
+    # mismatch, not bad data, but confusing enough while reading a diff by
+    # eye that it's worth avoiding outright rather than explaining every time.
+    predicted = row["predicted"] if row["predicted"] is not None else "(none)"
+    expected = row["expected"] if row["expected"] is not None else "(none)"
     label = row.get("source_file", row.get("item", "?"))
     return f"  {label}: predicted={predicted!r}  expected={expected!r}"
 
