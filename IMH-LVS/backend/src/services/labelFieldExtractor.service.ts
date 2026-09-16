@@ -1105,6 +1105,25 @@ function dedupeConsecutiveLines(lines: string[]): string[] {
 
 type TitleBlockResult = { brand: string; productName: string };
 
+// Step 5.6 (accuracy plan): a candidate title/brand line is excluded not
+// just when it CONTAINS the known marketing company name, but also when
+// the marketing company name CONTAINS it. Real pattern, found by dumping
+// a real label's actual OCR text (CALRIO Gummies (2).pdf): a rotated side
+// panel gets OCR'd with "RIOMEDICA" alone on its own short line, a
+// fragment of the fuller "RIOMEDICA HEALTHCARE PVT. LTD." this label's
+// marketingCompany had already correctly resolved to (Step 5.5) — the old
+// one-directional check ("does the CANDIDATE contain the company name")
+// never catches this, since here the fragment is the SHORTER side. Guarded
+// to at least 4 characters so a short, unrelated word that merely happens
+// to appear inside a long company name isn't excluded by coincidence.
+function overlapsMarketingCompany(line: string, marketingCompany: string): boolean {
+  if (!marketingCompany) return false;
+  const candidate = line.toLowerCase();
+  const company = marketingCompany.toLowerCase();
+  if (candidate.includes(company)) return true;
+  return candidate.length >= 4 && company.includes(candidate);
+}
+
 function findTitleBlock(lines: string[], marketingCompany: string): TitleBlockResult {
   // Collapse a repeated-phrase line ("GUMMIES GUMMIES GUMMIES...") down to
   // one occurrence BEFORE candidacy checks — otherwise the repeated text
@@ -1114,7 +1133,7 @@ function findTitleBlock(lines: string[], marketingCompany: string): TitleBlockRe
   const deduped = dedupeConsecutiveLines(lines).map((line) => collapseRepeatedPhrase(line));
   const candidates: { line: string; pos: number }[] = [];
   deduped.forEach((line, pos) => {
-    if (marketingCompany && line.toLowerCase().includes(marketingCompany.toLowerCase())) return;
+    if (overlapsMarketingCompany(line, marketingCompany)) return;
     // A short ALL-CAPS line immediately following one that ends in a
     // dangling connector ("&", "and", "or", a trailing comma) is the
     // wrapped tail of a longer sentence, not a standalone title — seen in
@@ -1284,7 +1303,7 @@ function extractBrandFallback(lines: string[], marketingCompany: string): string
     if (/\d{3,}/.test(line)) continue;
     if (isBareFieldLabel(line)) continue;
     if (EMAIL_PATTERN.test(line)) continue;
-    if (marketingCompany && line.toLowerCase().includes(marketingCompany.toLowerCase())) continue;
+    if (overlapsMarketingCompany(line, marketingCompany)) continue;
     if (mentionsManufacturingCompany(line)) continue;
     if (looksLikeSentence(line)) continue;
     if (line.length < 2 || line.length > 40) continue;
