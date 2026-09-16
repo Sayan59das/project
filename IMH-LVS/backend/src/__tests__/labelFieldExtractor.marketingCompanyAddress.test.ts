@@ -57,3 +57,34 @@ test('the ordinary "Marketed By:" anchor-then-company-on-next-line layout still 
   const fields = extractLabelFields(text);
   assert.equal(fields.marketingCompany, 'ChewNectar Pvt. Ltd.');
 });
+
+// Step 5 continuation (accuracy plan): a real, recurring wrong-answer
+// pattern across several client labels (HSN IRN75-1.pdf and others) --
+// "A Division of X Pvt Ltd" sits between the marketing company's own
+// name and its real address, and the old address collection treated it
+// as the first line of the address instead of skipping it, the same way
+// it already skips a parenthetical aside.
+test('a corporate-structure line between the company name and its address is skipped, not treated as address content', () => {
+  const text = 'Marketed By:\nLXIR Medilabs Pvt Ltd.\nA Division of LXIR Medilabs Pvt Ltd\nPlot No. 70/85/86, Bhatoli Kalan, Baddi (H.P.)';
+  const fields = extractLabelFields(text);
+  assert.equal(fields.address.includes('Division'), false);
+  assert.match(fields.address, /Plot No\. 70\/85\/86/);
+});
+
+// Real, minor formatting difference confirmed on a real label (MHJ
+// Lutein Domestic IRN165-1.pdf): the PDF's own text layer prints
+// "Delhi- 110015" (no space before the hyphen), but the ground truth
+// (and every other label) has "Delhi - 110015" -- a purely cosmetic
+// difference, not a wrong read.
+test('a missing space before a hyphen between a place name and a PIN code is normalized', () => {
+  const text = 'Marketed By:\nMHJ Wellness Pvt. Ltd.\nDSM-030/031, DLF Tower, Shivaji Marg, New Delhi- 110015, INDIA';
+  const fields = extractLabelFields(text);
+  assert.match(fields.address, /New Delhi - 110015/);
+});
+
+test('a plot/lot number hyphen with no letters on either side is left alone', () => {
+  const text = 'Marketed By:\nDeepar Pharmaceuticals Pvt. Ltd.\nPlot no.- 3/416, Chitrakoot Scheme, Sector No. 3, Jaipur - 302021';
+  const fields = extractLabelFields(text);
+  assert.match(fields.address, /Plot no\.- 3\/416/);
+  assert.match(fields.address, /Jaipur - 302021/);
+});

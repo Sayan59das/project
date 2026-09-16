@@ -352,13 +352,26 @@ const REGISTERED_OFFICE_PREFIX = /^(registered\s*office|regd\.?\s*office)\s*[:\-
 const ADDRESS_STOP_LINE =
   /^(fssai|customer\s*care|consumer\s*care|helpline|toll[\s-]?free|batch|mfg\.?\s*(date|by)|use\s*by|m\.?r\.?p\.?|manufactured|net\s*(content|wt)|ingredients|nutritional\s*information|to\s*be\s*sold|not\s*for\s*medicinal|recommended\s*usage|health\s*supplement)/i;
 
+// A city/place name printed directly against a following hyphen with no
+// space before it ("Delhi- 110015") but a normal space after — a real,
+// minor PDF-text-layer spacing quirk seen on several client labels, not
+// anything this extractor's own line handling introduces. Ground truth
+// always has the space on both sides ("Delhi - 110015"), so this is a
+// safe, purely cosmetic normalization: it only inserts a space where a
+// letter sits directly against a hyphen that already has whitespace (or
+// end of string) after it, never touching a hyphen used as part of a
+// plot/lot number ("3/416", no letters either side) or a compound word.
+function normalizeAddressPunctuation(value: string): string {
+  return value.replace(/([A-Za-z])-(\s|$)/g, '$1 -$2');
+}
+
 function extractAddress(lines: string[], emailPattern: RegExp, marketingCompanyLineIndex: number): string {
   for (const line of lines) {
     if (MANUFACTURING_KEYWORDS.test(line)) continue;
     const value = stripLabelPrefix(line, ADDRESS_PREFIX);
     if (value) {
       debugLog(`address: matched "${value}" via "Address:" prefix from line "${line}"`);
-      return value;
+      return normalizeAddressPunctuation(value);
     }
   }
 
@@ -367,7 +380,7 @@ function extractAddress(lines: string[], emailPattern: RegExp, marketingCompanyL
     const value = stripLabelPrefix(line, REGISTERED_OFFICE_PREFIX);
     if (value) {
       debugLog(`address: matched "${value}" via "Registered Office" prefix from line "${line}"`);
-      return value;
+      return normalizeAddressPunctuation(value);
     }
   }
 
@@ -391,6 +404,15 @@ function extractAddress(lines: string[], emailPattern: RegExp, marketingCompanyL
       // on either side of it still join into one block.
       if (/^\(.*\)$/.test(line.trim())) continue;
 
+      // A corporate-structure clause ("A Division of X Pvt. Ltd.") is a
+      // real, common line between the marketing company's own name and
+      // its address on several client labels (e.g. "A Division of LXIR
+      // Medilabs Pvt Ltd" before "Plot No. 70/85/86, Bhatoli Kalan..."),
+      // not address content — skipped the same way the parenthetical
+      // aside above is, generic to any company's own divisional wording,
+      // not this one company's specific name.
+      if (/^a\s+division\s+of\b/i.test(line.trim())) continue;
+
       const sanitized = sanitizeCandidateLine(line, 80);
       if (!sanitized) {
         debugLog(`address: stopped collecting at line "${line}" — fails the noise/length sanity gate.`);
@@ -408,7 +430,7 @@ function extractAddress(lines: string[], emailPattern: RegExp, marketingCompanyL
       if (sanitized.wasTruncated) break;
     }
     if (collected.length > 0) {
-      const value = collected.join(', ');
+      const value = normalizeAddressPunctuation(collected.join(', '));
       debugLog(`address: matched "${value}" from the lines following the identified marketing company.`);
       return value;
     }

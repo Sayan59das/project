@@ -494,14 +494,53 @@ product name even when it gets the brand right, so this gain is smaller.
 Every other field's numbers are byte-for-byte unchanged from the
 measurement right before this fix, confirming it really is isolated.
 
+## Address: two clean fixes, done
+
+Went back to the two clear address problems found earlier tonight:
+
+1. Several labels print a line like "A Division of LXIR Medilabs Pvt
+   Ltd" between the company's own name and its real address (e.g. HSN
+   IRN75-1.pdf). The old collection logic treated that line as the start
+   of the address; fixed by skipping it, the same way a parenthetical
+   aside next to it is already skipped.
+2. One label's real text prints "Delhi- 110015" (a real, minor PDF-
+   text-layer spacing quirk -- no space before the hyphen) where every
+   other label and the ground truth both have "Delhi - 110015". Fixed
+   with a narrow, targeted rule: only inserts a space where a letter
+   sits directly against a hyphen that already has whitespace after it,
+   so it can't touch a plot/lot number like "3/416" or "Plot no.- 3/416"
+   (no letters on either side of THOSE hyphens).
+
+Both landed cleanly. A real 45-label measurement (this one needed two
+retries -- see the note below) confirms it: address **37.8% → 46.7%**
+(fuzzy), 16→19 correct, wrong dropped from 12→8. Every other field's
+number is byte-for-byte unchanged from the measurement right before this
+fix, confirming it's isolated. Not fixed, on purpose, and still open: a
+font-ligature encoding glitch ("office" prints as "of[unreadable
+character]ce") and the "Registered office / Corporate office" two-address
+structure on a few labels -- both need more specific investigation than
+tonight had time for.
+
+**A memory/stability note, not a code problem.** Tonight's measurement
+runs hit real trouble getting through: two were killed by Windows for
+running low on memory (the same kind of pressure documented earlier
+tonight), and one crashed outright with an internal Node.js error
+partway through, writing nothing. None of these were caused by anything
+in today's code changes -- confirmed by simply retrying the exact same
+command with a smaller batch size (how many labels get processed by one
+subprocess at a time) each time, which eventually got a clean run
+through with no code changes at all. Went from the default batch size
+down to 2, then to 1 (one label at a time, slower but most stable)
+before it finally went through cleanly.
+
 ## What's next
 
 Brand/product name still has real room -- most of the STILL-wrong
 guesses are unrelated marketing text with no company-name or allergen-
 word overlap, a different, harder sub-pattern not addressed by anything
 tried so far, and product name's AI-model answer rate could likely
-improve with a better prompt (not attempted yet). The address field's
-mixed problems (noted above, not yet investigated in depth) are the
-other next real opportunity. After that, Step 6 only if the numbers still call for it,
-then Step 7. A full, final test of the whole project and a final results
-write-up come once all of that is done, as asked.
+improve with a better prompt (not attempted yet). Two smaller, specific
+address problems remain (noted above): the font-ligature glitch and the
+two-office address structure. After that, Step 6 only if the numbers
+still call for it, then Step 7. A full, final test of the whole project
+and a final results write-up come once all of that is done, as asked.
