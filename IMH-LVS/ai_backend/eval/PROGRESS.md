@@ -569,17 +569,40 @@ tool wrote). The code and its tests are solid on their own evidence;
 what's missing is only the final real-world confirmation number, which
 needs the machine to be in a calmer state to get.
 
+## The machine settled down -- real numbers for both pending fixes
+
+The measurement finally went through cleanly (batch size 1 again).
+
+**Spanish claims fix: confirmed, clean, exactly as expected.** claims
+went from 90 to 96 correct (strict count) -- exactly the six "Libre de"
+badges this fix targeted, not one more, not one less. Fair-match
+accuracy for claims: 24.6% -> 26.2%. No other field moved.
+
+**Font-ligature fix: real and safe, but no measured win yet, honestly.**
+Also tried at the same time. It does exactly what it says -- the
+Cal. Vit D / Iron IRN121 labels no longer have a broken character where
+"office" should be -- but none of the four address cells it touches
+flipped from wrong to correct, because those same cells have a SEPARATE,
+bigger problem too: the label prints "Registered office: ... Corporate
+office: ..." as two distinct addresses, and this tool still only reads
+it as one merged, incomplete block missing the second half entirely.
+Fixing the broken character alone wasn't enough on its own for these
+specific cells. Kept anyway -- it's a real, correct, safe improvement to
+the raw text (and a needed first step before the bigger two-office fix
+could ever work), just not one with its own accuracy number to show yet.
+Not treated as a finished win in the numbers above; the address field's
+own accuracy is unchanged this round.
+
 ## What's next
 
-The Spanish claims fix needs a real 45-label measurement once the
-machine settles down -- that's the very next thing to do, before
-anything else, so RESULTS.md has a real number for it. After that,
-brand/product name still has real room -- most of the STILL-wrong
+The "Registered office / Corporate office" two-part address structure
+is the next concrete thing worth trying, now that the ligature glitch
+that was scrambling those same labels' text is out of the way. After
+that: brand/product name still has real room -- most of the STILL-wrong
 guesses are unrelated marketing text with no company-name or allergen-
 word overlap, a different, harder sub-pattern not addressed by anything
 tried so far, and product name's AI-model answer rate could likely
-improve with a better prompt (not attempted yet). Two smaller, specific
-address problems remain (noted above): the font-ligature glitch and the
-two-office address structure. After that, Step 6 only if the numbers
-still call for it, then Step 7. A full, final test of the whole project
-and a final results write-up come once all of that is done, as asked.
+improve with a better prompt (not attempted yet). After that, Step 6
+only if the numbers still call for it, then Step 7. A full, final test
+of the whole project and a final results write-up come once all of that
+is done, as asked.

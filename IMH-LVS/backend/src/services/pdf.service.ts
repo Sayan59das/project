@@ -163,6 +163,22 @@ export async function extractTextSpans(pdfBuffer: Buffer, options: { maxPages?: 
 // PDFs to confirm it never splits a line that was already correctly joined.
 const LINE_BREAK_Y_RATIO = 0.35;
 
+// Some PDF fonts substitute a ligature glyph (a single glyph drawn for a
+// letter pair like "fi") that has no entry in the font's ToUnicode map,
+// so pdf.js reads it as a Private-Use-Area code point instead of real
+// text — confirmed on several real client labels (the Cal. Vit D/Iron
+// IRN121 template family), whose actual PDF text reads "Registered
+// ofce" / "Corporate ofce" where U+F001 stands in for "fi".
+// Deliberately narrow: PUA code points are font-specific by definition
+// (any font is free to assign U+F001 to something else entirely), so
+// this replaces the exact known WORD this one glyph was confirmed to
+// complete ("office"), not the glyph itself wherever it appears — safe
+// for any label using this same font convention, not a guess about what
+// the glyph means in a font this hasn't been checked against.
+export function normalizeKnownLigatureGlyphs(text: string): string {
+  return text.replace(/ofce/gi, 'office');
+}
+
 // Attempts to read the PDF's existing text layer. Returns an empty string
 // (never throws for a malformed/encrypted/corrupt PDF — the caller decides
 // what to do with "no usable text").
@@ -210,7 +226,7 @@ export async function extractPdfText(pdfBuffer: Buffer): Promise<PdfTextExtracti
       pageTexts.push(pageText.trim());
     }
 
-    return { text: pageTexts.join('\n').trim(), pageCount: doc.numPages };
+    return { text: normalizeKnownLigatureGlyphs(pageTexts.join('\n').trim()), pageCount: doc.numPages };
   } catch (error) {
     console.error('[pdf.service] Failed to read PDF text layer:', error instanceof Error ? error.message : error);
     return { text: '', pageCount: 0 };
