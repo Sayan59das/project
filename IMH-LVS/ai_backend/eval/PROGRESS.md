@@ -441,11 +441,67 @@ match (the 80% target metric).
   company): completely unchanged, confirming none of today's fixes had
   any side effect on fields they weren't meant to touch.
 
+## Brand/product name: the real fix, and an honest correction
+
+Reading brand_name's real wrong-answer list turned up something big: ten
+different labels expect the brand "BioFaith", eight expect "ChewNectar",
+several more expect "WOOBY" or "Calcimax" — over half of every wrong or
+missing brand_name answer in the whole 45-label set comes from just
+these few names. All of them are stylised logo graphics with no real
+text anywhere on the label (the same known problem this document already
+describes), and the tool's fallback guesses were things like "Gelatin"
+(an allergen callout) or "12.00 mm" (a print-spec dimension) — real text
+on the label, just nowhere near the actual brand.
+
+The AI model has already been shown to be very good at exactly this job
+(100% correct whenever it gets a turn) -- the problem was it almost
+never got a turn, because the check deciding "is this field done" only
+asks "is there SOME value here", not "is this value any good". A
+wrong-but-non-empty guess was permanently blocking the one thing that
+could fix it, the same trap the nutrition-table fix solved for a
+different field. Fixed the same safe way: a small, targeted check
+(reusing the same generic allergen word list from the claims work, plus
+a simple measurement-pattern check) recognises these specific known-bad
+shapes and gives the AI model a narrow, isolated chance to answer --
+never touching any other field, so the same mistake that broke other
+labels back in the reverted Step 5.6 attempt can't happen again here.
+Checked against every real-fixture test that caught THAT mistake before
+committing this one; all still pass.
+
+**An honest correction on testing, not the fix itself.** The first two
+real measurements of this fix showed no change at all, which was
+confusing given how it tested by hand on one real label. Dug into why
+and found a real mistake: the AI model needs one setting (`OLLAMA_URL`)
+that has to be present in the terminal actually running the measurement,
+and it had silently gone missing at some point after Docker was
+restarted earlier tonight -- so every "AI model on" measurement run
+today, including the ones already committed for the nutrition-table fix,
+was quietly running with the AI model OFF the whole time, despite saying
+"on". This is the exact same mistake this project's own history already
+made and documented once before (2026-09-15, see the correction note
+earlier in RESULTS.md) -- worth remembering properly this time. It did
+NOT affect the nutrition table, claims, package size, or ingredients
+numbers already reported, since none of those fixes involve the AI
+model at all -- only today's brand-name work was actually untested until
+this was caught and fixed.
+
+**Real result, with the setting actually correct this time:**
+brand_name **2.2% → 35.6%** (fuzzy), 15 of 15 AI-model answers correct
+(100%, zero wrong -- the model's own accuracy on this field holds up
+exactly as it did in every earlier measurement). product_name also moved,
+**11.1% → 26.7%** (fuzzy), the AI model doesn't always volunteer a
+product name even when it gets the brand right, so this gain is smaller.
+Every other field's numbers are byte-for-byte unchanged from the
+measurement right before this fix, confirming it really is isolated.
+
 ## What's next
 
-Brand/product name's remaining wrong-answer patterns (most are unrelated
-marketing text, not yet addressed) and the address field's mixed
-problems (noted above, not yet investigated in depth) are the next real
-opportunities. After that, Step 6 only if the numbers still call for it,
+Brand/product name still has real room -- most of the STILL-wrong
+guesses are unrelated marketing text with no company-name or allergen-
+word overlap, a different, harder sub-pattern not addressed by anything
+tried so far, and product name's AI-model answer rate could likely
+improve with a better prompt (not attempted yet). The address field's
+mixed problems (noted above, not yet investigated in depth) are the
+other next real opportunity. After that, Step 6 only if the numbers still call for it,
 then Step 7. A full, final test of the whole project and a final results
 write-up come once all of that is done, as asked.

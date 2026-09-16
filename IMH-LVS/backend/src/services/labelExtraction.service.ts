@@ -53,7 +53,8 @@ import { applyAiFallback } from './aiExtraction.service';
 import {
   extractClaims,
   extractIngredients,
-  extractNutritionTableFormat
+  extractNutritionTableFormat,
+  ALLERGEN_DIETARY_WORDS
 } from './labelSemanticExtractor.service';
 import {
   segmentPanels,
@@ -601,6 +602,39 @@ async function recoverNutritionTableViaOcr(pdfBuffer: Buffer): Promise<Record<st
   }
 }
 
+// A side-channel brand/productName recovery path, same shape and same
+// reason as recoverNutritionTableViaOcr just above: a PDF whose scalar
+// fields are ALL non-empty (isComplete is true — it only checks for SOME
+// value, not a trustworthy one) still takes the fast path even when
+// brand or productName holds a value nameFieldMissing recognises as
+// untrustworthy (an allergen callout, a bare measurement, OCR debris) —
+// real client labels whose actual brand is a logo-only graphic with no
+// readable text anywhere fall into exactly this trap, and the full,
+// multi-stage OCR enhancement pass is not worth running just to reach
+// the one narrow VLM step that could fix it. Calls only that narrow
+// step (recoverDisplayTextCandidates + resolveBlankDisplayRoles, which
+// already only ever touches brand/productName) directly, so every OTHER
+// field this pass already got right is exactly as safe as it was for
+// the nutrition-table side-channel.
+async function recoverNamesViaVlm(
+  pdfBuffer: Buffer,
+  fields: ExtractedLabelFields,
+  fieldMeta: Record<string, FieldMeta>,
+  spans: readonly TextSpan[]
+): Promise<{ fields: ExtractedLabelFields; fieldMeta: Record<string, FieldMeta> }> {
+  try {
+    const pageImages = await rasterizePdfPages(pdfBuffer, { maxPages: 1 });
+    if (pageImages.length === 0) return { fields, fieldMeta };
+    const displayTextCandidates = await recoverDisplayTextCandidates(pageImages[0], spans, env.pdfRasterDpi);
+    if (displayTextCandidates.length === 0) return { fields, fieldMeta };
+    const resolved = await resolveBlankDisplayRoles(fields, pageImages[0], displayTextCandidates);
+    return { fields: resolved.fields, fieldMeta: { ...fieldMeta, ...resolved.fieldMeta } };
+  } catch (error) {
+    debugLog(`Name recovery via VLM side-channel failed: ${error instanceof Error ? error.message : error}`);
+    return { fields, fieldMeta };
+  }
+}
+
 // Gathers the raw text for a PDF and parses it into fields, escalating to
 // OCR (with the enhancement passes above, per rasterized page) when the
 // text layer alone doesn't yield a complete result. Never throws — a
@@ -770,9 +804,46 @@ async function recoverDisplayTextCandidates(
   }
 }
 
-// Blank, or filled with what the report stage will scrub as OCR debris anyway.
-function nameFieldMissing(value: string): boolean {
-  return !value || looksLikeOcrGarbage(value);
+// A bare measurement/dimension value — never a brand name, but a real
+// wrong guess seen on several client labels (a die-line/print-spec
+// dimension nearby getting picked up instead of the brand).
+const MEASUREMENT_VALUE_PATTERN = /^\d+(\.\d+)?\s*(mm|cm|m|ml|l|g|kg|mg|mcg|iu|in|inch(es)?)\.?$/i;
+
+// True when `value`, stripped of "free"/"no" (the allergen-claim shape
+// words), is made ENTIRELY of terms from the same generic allergen/
+// dietary vocabulary claims extraction uses — never a brand name, but a
+// real wrong guess this project's own extractor makes on several client
+// labels whose real brand is a stylised logo with no readable text at
+// all: with nothing better nearby, it falls back to whatever nearby real
+// word it CAN read, and an allergen callout ("Gelatin", "Gelatin Free",
+// "Gluten") is exactly the kind of large, isolated, badge-style text a
+// title-block heuristic can mistake for a name. Only whole-value matches
+// count — a real brand that merely CONTAINS one of these words (e.g. a
+// name built from an ingredient word) is a different, much larger risk
+// this check deliberately does not take (see the reverted Step 5.6
+// blanket-gate attempt this project already tried once).
+function looksLikeAllergenCallout(value: string): boolean {
+  const words = value
+    .trim()
+    .toLowerCase()
+    .split(/\s+/)
+    .filter((word) => word !== 'free' && word !== 'no');
+  if (words.length === 0) return false;
+  return words.every((word) => ALLERGEN_DIETARY_WORDS.has(word.replace(/[^a-z]/g, '')));
+}
+
+// Blank, filled with what the report stage will scrub as OCR debris
+// anyway, a bare measurement, or an allergen callout — none of these are
+// ever a real brand/product name, so treating them the same as blank
+// here is what gives the recovery passes below (targeted OCR, VLM
+// display-role resolution) a chance to find the real one instead of a
+// wrong-but-non-empty guess silently blocking them forever.
+export function nameFieldMissing(value: string): boolean {
+  if (!value) return true;
+  if (looksLikeOcrGarbage(value)) return true;
+  if (MEASUREMENT_VALUE_PATTERN.test(value.trim())) return true;
+  if (looksLikeAllergenCallout(value)) return true;
+  return false;
 }
 
 // Resolve blank brand/productName fields using VLM classification of display-text candidates.
@@ -863,17 +934,25 @@ async function extractFieldsFromPdf(pdfBuffer: Buffer, knownFlavours: readonly s
     // so the expensive, multi-stage OCR enhancement pass (which exists to
     // recover WEAK scalar fields, and in doing so can overwrite a generic-
     // looking-but-correct productName with a wrong OCR guess) is not worth
-    // the risk here. If nutrition_table is still empty, that's the ONE
-    // thing worth a narrow, side-channel OCR attempt for — recovering the
-    // table's words without ever touching `fields`, so a field this pass
-    // already got right can't regress.
+    // the risk here. Two narrow, side-channel exceptions, each touching
+    // only its own field(s) and never the rest: nutrition_table if still
+    // empty, and brand/productName if nameFieldMissing judges the current
+    // value untrustworthy (isComplete only checked for SOME value, not a
+    // good one) — real client labels whose brand is a logo-only graphic
+    // fall into exactly that gap otherwise, permanently, since isComplete
+    // being true is exactly what keeps this whole label off the full OCR
+    // path where the AI model would normally get a chance to fix it.
     const recoveredNutrition = hasNutritionTable(nutritionTable) ? nutritionTable : await recoverNutritionTableViaOcr(pdfBuffer);
+    const namesNeedRecovery = nameFieldMissing(textLayerFields.brand) || nameFieldMissing(textLayerFields.productName);
+    const recoveredNames = namesNeedRecovery
+      ? await recoverNamesViaVlm(pdfBuffer, textLayerFields, textLayerFieldMeta, spans)
+      : { fields: textLayerFields, fieldMeta: textLayerFieldMeta };
     return {
-      fields: textLayerFields,
+      fields: recoveredNames.fields,
       text: orderedText,
       pageImages: [],
       nutritionTable: recoveredNutrition,
-      fieldMeta: textLayerFieldMeta
+      fieldMeta: recoveredNames.fieldMeta
     };
   }
 

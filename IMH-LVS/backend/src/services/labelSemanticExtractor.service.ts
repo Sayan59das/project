@@ -122,7 +122,7 @@ export function splitIngredientsList(declaration: string): string[] {
 // allergen/dietary word next to "free" or "no", not whatever word happens
 // to precede it (see the matchers themselves for the real-label evidence
 // that made this allowlist necessary).
-const ALLERGEN_DIETARY_WORDS = new Set([
+export const ALLERGEN_DIETARY_WORDS = new Set([
   'gluten', 'dairy', 'milk', 'lactose', 'casein', 'soy', 'soya', 'nut', 'nuts', 'peanut', 'peanuts',
   'egg', 'eggs', 'wheat', 'gelatin', 'gelatine', 'shellfish', 'fish', 'sesame', 'corn', 'yeast',
   'sugar', 'alcohol', 'caffeine', 'gmo', 'preservative', 'preservatives', 'msg', 'paraben', 'parabens',
