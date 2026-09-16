@@ -284,6 +284,41 @@ export function extractClaims(text: string, knownClaims: readonly string[] = [])
     if (!alreadyKnown) found.set(claim, isKnown(claim, knownClaims));
   }
 
+  // A third language, not just a third shape: at least one client label
+  // is printed for a Spanish-speaking market (Immunogum 4S IRN131-1.pdf,
+  // exported to Venezuela) and uses "LIBRE DE <ALLERGEN>" the same way
+  // other labels use "NO <ALLERGEN>" — confirmed on that label's actual
+  // text, six standalone badges in a row: "LIBRE DE GELATINA LIBRE DE
+  // GLUTEN LIBRE DE LÁCTEOS LIBRE DE MANÍ LIBRE DE NUEZ LIBRE DE SOYA".
+  // A small, separate Spanish allergen vocabulary (not reusing the
+  // English one — the words are different) keeps this exactly as safe as
+  // the English "NO X" matcher above. Ground truth drops the accents when
+  // it records the claim ("Lácteos" -> "Lacteos", "Maní" -> "Mani"), so
+  // the accent is stripped before the word is checked against the
+  // allowlist and before it's used to build the claim string, but the
+  // regex itself still has to match the accented word as printed.
+  const SPANISH_ALLERGEN_WORDS = new Set([
+    'gelatina', 'gluten', 'lacteos', 'leche', 'soya', 'mani', 'nuez', 'nueces',
+    'huevo', 'huevos', 'trigo', 'pescado', 'mariscos', 'azucar', 'cafeina',
+    'colorantes', 'conservantes', 'gmo', 'transgenicos'
+  ]);
+  const stripAccents = (value: string): string => value.normalize('NFD').replace(/[̀-ͯ]/g, '');
+  // No trailing \b: JS's \b is ASCII-only ([A-Za-z0-9_]), so it silently
+  // fails to match right after an accented letter at the end of a word
+  // (e.g. "MANÍ" followed by whitespace) — caught by this file's own test
+  // suite. The character class on the capture group already limits what
+  // can match, so the trailing boundary isn't needed for correctness.
+  const LIBRE_DE_CLAIM = /\blibre\s+de\s+([A-Za-zÀ-ÿ]+)/gi;
+  for (const match of flat.matchAll(LIBRE_DE_CLAIM)) {
+    const normalizedWord = stripAccents(match[1]).toLowerCase();
+    if (!SPANISH_ALLERGEN_WORDS.has(normalizedWord)) continue;
+    const claim = `Libre de ${normalizedWord[0].toUpperCase()}${normalizedWord.slice(1)}`;
+    const alreadyKnown = [...found.keys()].some(
+      (existing) => existing.toLowerCase().startsWith(claim.toLowerCase())
+    );
+    if (!alreadyKnown) found.set(claim, isKnown(claim, knownClaims));
+  }
+
   // NOT IMPLEMENTED, on purpose: a third real shape for the same fact was
   // found and confirmed on a real label — Iron IRN74-1.pdf prints "FREE
   // FROM   GLUTEN | MILK | SOY" as one combined badge, literal pipe

@@ -228,6 +228,32 @@ test('reports "No Artificial Colours" as a claim badge', () => {
   assert.deepEqual(result.claims.split(' | '), ['No Artificial Colours']);
 });
 
+// Real claim shape from a real Spanish-market label (Immunogum 4S
+// IRN131-1.pdf, exported to Venezuela), dumped from its actual PDF text:
+// "LIBRE DE GELATINA   LIBRE DE GLUTEN   LIBRE DE LÁCTEOS   LIBRE DE
+// MANÍ   LIBRE DE NUEZ   LIBRE DE SOYA" as six standalone badges, the
+// same shape as the English "NO X" badges above but in Spanish. Ground
+// truth records the claim text with accents stripped ("Lácteos" ->
+// "Lacteos", "Maní" -> "Mani") even though the label prints them
+// accented.
+test('reports the Spanish "LIBRE DE X" allergen badge shape, accents stripped to match ground truth', () => {
+  const result = extractClaims(
+    'LIBRE DE GELATINA   LIBRE DE GLUTEN   LIBRE DE LÁCTEOS   LIBRE DE MANÍ   LIBRE DE NUEZ   LIBRE DE SOYA'
+  );
+  assert.deepEqual(
+    result.claims.split(' | ').sort(),
+    ['Libre de Gelatina', 'Libre de Gluten', 'Libre de Lacteos', 'Libre de Mani', 'Libre de Nuez', 'Libre de Soya']
+  );
+});
+
+test('does not treat ordinary "libre de <word>" Spanish prose as a claim', () => {
+  // "de" is a common Spanish preposition -- the allowlist gate has to
+  // reject an ordinary phrase the same way the English "no <word>" gate
+  // rejects ordinary prose.
+  const result = extractClaims('Este producto es libre de preocupaciones para toda la familia.');
+  assert.equal(result.claims, '');
+});
+
 // A claim on the label with no master record is still stored — omitting it
 // would let two differently-claiming labels compare as a MATCH — but it is
 // reported separately so a Manager knows what the Claims master is missing.

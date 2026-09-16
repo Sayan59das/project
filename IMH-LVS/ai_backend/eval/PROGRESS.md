@@ -533,9 +533,48 @@ through with no code changes at all. Went from the default batch size
 down to 2, then to 1 (one label at a time, slower but most stable)
 before it finally went through cleanly.
 
+## A third claims fix, built and unit-tested -- real number still pending
+
+Kept going on claims after the address fixes landed: one more real,
+recurring pattern, "Libre de Gelatina", "Libre de Gluten", "Libre de
+Lacteos", "Libre de Mani", "Libre de Nuez", "Libre de Soya" -- a
+Spanish-language label (Immunogum 4S IRN131-1.pdf, exported to
+Venezuela) prints six standalone "LIBRE DE X" allergen badges, the exact
+same shape as the English "NO X" badges already fixed, just a different
+language. Confirmed by dumping the label's own real text before writing
+anything. Built the matcher the same safe way -- gated by a small,
+separate Spanish allergen word list, not a blanket rule -- and along the
+way found and fixed a real, subtle bug the test suite itself caught:
+JavaScript's word-boundary check only understands plain English letters
+by default, so it was silently failing to match "MANÍ" (with an accent
+on the last letter) even though the word itself was captured correctly.
+Fixed by removing the now-unnecessary boundary check. All 31 tests in
+this file pass, including two new ones for this fix, and the full
+real-fixture regression set (45/45) still passes.
+
+**The real 45-label number for this one fix is NOT yet confirmed.**
+Every attempt to run the official measurement tonight after this point
+failed -- six times in a row, across both AI-model-on and AI-model-off
+settings and every batch size from 5 down to 1 label at a time: two runs
+crashed outright with an internal Node.js error, four were killed by
+Windows for running low on memory. Free memory kept swinging between
+roughly 2.5GB and 8GB from one check to the next with nothing obviously
+holding onto it in between, which points to the same wider overnight
+system pressure already documented earlier tonight, not anything in
+this fix or any other code changed tonight -- but six failures in a row
+is past the point of "try again," so this is being left honestly
+unmeasured rather than guessed at, exactly as this document's own
+standing rule requires (never quote a number that isn't a real row this
+tool wrote). The code and its tests are solid on their own evidence;
+what's missing is only the final real-world confirmation number, which
+needs the machine to be in a calmer state to get.
+
 ## What's next
 
-Brand/product name still has real room -- most of the STILL-wrong
+The Spanish claims fix needs a real 45-label measurement once the
+machine settles down -- that's the very next thing to do, before
+anything else, so RESULTS.md has a real number for it. After that,
+brand/product name still has real room -- most of the STILL-wrong
 guesses are unrelated marketing text with no company-name or allergen-
 word overlap, a different, harder sub-pattern not addressed by anything
 tried so far, and product name's AI-model answer rate could likely
