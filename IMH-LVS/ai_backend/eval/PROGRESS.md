@@ -77,40 +77,21 @@ rate unchanged at 0%.** (Wrong count also rose — expected, not a
 regression: most of claims' "wrong" is really the answer key not having
 caught up yet, same finding as before.)
 
-### 5.4 — package_size: **fix done and committed, real number pending**
+### 5.4 — package_size: **done, real number confirmed**
 
 The dominant wrong-answer pattern (35 of 40) was the same everywhere: the
 right number, unit word dropped ("30" instead of "30 Gummies"). Found and
 fixed in all three places that read a pack count (the "Net Content:"
 line, the general "<number> Gummies/Tablets/..." text match, and the
 front-of-pack badge photo-reading path) — all three were silently
-throwing away the unit word. Confirmed working correctly by reading two
-real labels directly (not through the full scoring tool, see below) —
-both now come back with the unit word attached, matching the answer key.
+throwing away the unit word.
+**Real result: 2.2% → 35.6% (26 wrong, was 40; 16 correct, was 1).**
+Confirmed once memory allowed a full run the next morning — matches what
+the two real-label spot-checks predicted overnight.
 
-**Why no real scoring number yet**: the full 45-label measurement tool
-would not finish tonight — 5 attempts in a row, at shrinking batch sizes,
-all got shut down by Windows for running low on memory. Tried freeing
-memory by stopping the database program (not needed for this measurement)
-but that backtracked — it restarted itself multiple times and left LESS
-memory free than before, so that was undone and not attempted again.
-Confirmed the fix genuinely works by testing it directly on two real
-labels instead (much lighter than the full 45-label run), which is solid
-evidence the code is correct — just not yet the full official percentage.
-Will get the real number as soon as the measurement tool can complete a
-full run, likely either later tonight if memory recovers on its own, or
-in the final whole-project test pass at the end.
+### 5.5 — marketing_company / address: **done, real number confirmed**
 
-### 5.5 — marketing_company / address: **fix done and committed, real number pending**
-
-Same "no scoring number yet" situation as 5.4, same reason (the
-measurement tool would not complete tonight — see below for the full
-picture). Confirmed correct by testing directly on two real labels from
-the affected family: both now correctly read the real company name and
-address instead of a licence number and an unrelated disclaimer sentence.
-
-Found by reading the actual real label's text directly (not guessing):
-one whole family of ~8 labels prints the company name and its address
+One whole family of ~8 labels prints the company name and its address
 BEFORE the "Marketed by" line, with the line right after "Marketed by"
 being a licence number, not the company name — the code was always
 reading the line right after that phrase, so it grabbed the licence
@@ -119,6 +100,15 @@ name when the line below it doesn't look like one. Fixing marketing
 company this way fixed address too, for free — it starts reading from
 wherever the company name was found, so once that's right, the address
 right after it is too.
+**Real result: marketing_company 26.7% → 44.4%, address 17.8% → 35.6%.**
+Also confirmed the next morning, matching the overnight spot-checks.
+
+**Overall after 5.4+5.5 (real, confirmed): 29.9% → 31.3% strict (44.9%
+fair-scoring), vlm on: 31.7% strict (45.5% fair-scoring).** The AI model
+is now even better at brand name when it gets a turn — 7 correct, 0
+wrong (100%) this run, up from 91% before — while product name stays at
+0% even through the AI model, confirming that field's problem runs
+deeper than just "which method answers it" (see 5.6 below).
 
 ### 5.6 — brand/product name: **investigated, real fix intentionally not made yet**
 
