@@ -624,13 +624,45 @@ for the next label that uses "Registered office" differently, this is
 being left alone -- a real, human judgment call, not a guess made
 because it was late.
 
+## Tonight's honest stopping point
+
+Tried four more times to get one clean measurement with the AI model
+turned on and everything from tonight combined in a single run, spacing
+the attempts out (up to 30 minutes apart) to give the machine time to
+settle. All four were killed for low memory. The pattern is consistent
+enough to draw a real conclusion from: every run WITHOUT the AI model
+succeeded tonight; every run WITH it, after the very first two brand-name
+confirmations early in the night, failed. This points at the AI model's
+own memory use specifically (it has to load and run a real, several-
+gigabyte model each time) stacking on top of everything else already
+running, not random bad luck. Stopping here rather than trying a fifth,
+sixth, seventh time -- diminishing returns, and every fix already has
+its own real confirmed number on record without needing this one
+combined snapshot.
+
+**What's actually confirmed and safe, as of right now:**
+- Combined, AI model OFF: **34.8% exact match / 47.3% fair match**
+  (real, from a clean run tonight).
+- Brand name, AI model ON: **35.6%** (up from 2.2%), confirmed in its
+  own clean run earlier tonight, before anything unrelated changed it.
+- Product name, AI model ON: **26.7%** (up from 11.1%), same run.
+- Every other fix's own number is in this document above, each backed
+  by its own real RESULTS.md row.
+
+The one thing NOT captured tonight is a single run with everything
+(claims/ingredients/package size/address/ligature AND the AI model)
+measured together at once -- not because any of it is in doubt, just
+because the machine wouldn't stay up long enough to do that one extra
+confirmation. Getting that one combined number is the very first thing
+to do once memory is behaving normally again.
+
 ## What's next
 
-Brand/product name still has real room -- most of the STILL-wrong
-guesses are unrelated marketing text with no company-name or allergen-
-word overlap, a different, harder sub-pattern not addressed by anything
-tried so far, and product name's AI-model answer rate could likely
-improve with a better prompt (not attempted yet). After that, Step 6
-only if the numbers still call for it, then Step 7. A full, final test
-of the whole project and a final results write-up come once all of that
-is done, as asked.
+After that one combined confirmation: brand/product name still has real
+room -- most of the STILL-wrong guesses are unrelated marketing text
+with no company-name or allergen-word overlap, a different, harder
+sub-pattern not addressed by anything tried so far, and product name's
+AI-model answer rate could likely improve with a better prompt (not
+attempted yet). After that, Step 6 only if the numbers still call for
+it, then Step 7. A full, final test of the whole project and a final
+results write-up come once all of that is done, as asked.
