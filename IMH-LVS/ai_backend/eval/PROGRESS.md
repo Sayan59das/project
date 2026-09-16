@@ -228,10 +228,224 @@ checks. The official percentage for 5.4 and 5.5 will still need a real
 full run once memory allows — either later tonight if it recovers on its
 own, or in the final whole-project pass.
 
+## Continuing Step 5 the next day: nutrition table and claims, round two
+
+Step 5's own fields (nutrition table, ingredients, claims) were each given
+one dedicated round already (5.1/5.2/5.3), but the real numbers showed
+nutrition table and claims were still the two biggest problem areas by
+far — together almost 40% of everything being measured, and both still
+under 25% correct. Since the plan says to chase the biggest levers first,
+this continued digging into those two specifically rather than moving on.
+
+**Nutrition table — found a real structural gap.** Reading the wrong/
+missing list by hand (the same technique from Step 1) showed something
+different from Step 5.1's problem: on several labels, EVERY SINGLE
+nutrition row was missing — not a few rows wrong, the whole table blank.
+Dumping one such label's actual PDF text directly (Derocal IRN177-1.pdf)
+showed why: its nutrition table is printed as an image, not real text —
+so the tool that reads a PDF's built-in text has nothing to find there.
+The surprising part: the tool ALSO never tried its other reading method
+(reading the image itself, the way a person would) for this specific
+piece of information — that method only ever ran for the other fields
+(company name, address, etc.), never for the nutrition table, even
+though it was already being used on the same page for other things.
+
+Built a fix that teaches the image-reading method the same row-and-column
+logic already used for real PDF text, so it can find a nutrition table
+that only exists as a picture. First version of this was too blunt — it
+forced the image-reading method to run on EVERY label just in case, and
+that had a real side effect: the image-reading method's own name-guessing
+logic (built for when the ordinary reading fails) sometimes overwrote an
+already-correct brand or product name with a wrong guess, once it started
+running on labels where it never used to run at all. A real, measured
+run confirmed this: brand name accuracy dropped rather than rose. Caught
+this by checking real before/after numbers rather than just checking that
+tests passed, exactly the lesson from the earlier overnight brand-name
+mistake this document already describes. Fixed by keeping the two things
+completely separate: if a label's other fields are already correctly
+read, only a narrow, isolated check for the nutrition table's image runs
+— it never touches or risks the fields that were already right.
+
+**Claims — found two real bugs, one already-shipped and one new.**
+Reading the wrong-answer list for claims (real score.py output) showed
+the "any word right before 'free'" rule added in Step 5.3 was too loose:
+across many labels, a misread letter or two from the image-reading method
+right before a genuine "free" elsewhere on the label was being reported
+as its own fake claim ("Wilk Free", "Nay Free", "D Free" — real garbage
+from a real run, none of it printed on any label). Fixed by only
+accepting that shape when the word right before "free" is a real,
+common allergen/dietary word (gluten, milk, soy, nut, peanut, dairy,
+egg, wheat, gelatin, and others) — a small, general list that applies to
+any label in this industry, not anything specific to one client's
+products, the same principle Step 5.3's original fix already followed.
+
+Reading the MISSING list (not just the wrong one) for claims turned up a
+second, real, previously-uncaught claim shape: dumping a real label's
+text (Cal. Vit D IRN120-1.pdf) showed it prints "NO GELATIN", "NO
+GLUTEN", "NO MILK", "NO PEANUT", "NO NUT", "NO SOY" as six separate
+badges — a completely different way of saying the same kind of thing as
+"gluten free", which nothing in the tool recognised at all. Added a
+second, matching rule for that shape, gated by the exact same allergen
+word list so it stays safe (the word "no" alone is far too common in
+ordinary label prose — "do not exceed", "no warranty" — to match on its
+own). The same label also has a longer sentence ("Free of: Wheat, Milk,
+Eggs, Soy, Tree Nuts, Peanuts, Fish...") that mentions even more
+allergens, but the real ground-truth answers for this label only count
+the six standalone badges, not that longer sentence — so that sentence
+was deliberately left alone rather than parsed too, to avoid inventing
+claims the human reviewers didn't actually record.
+
+**Two more small, real claims bugs found and fixed the same way.** A
+label (EYE WELLNESS DOMESTIC LABEL MHJ.pdf) prints bare "No
+Preservatives", but the one existing rule for this always reported "No
+Added Preservatives" regardless of whether "Added" was actually printed
+— fabricating a claim the label doesn't make while missing the one it
+does. Split into two separate rules so each only fires for its own exact
+wording. The same label also makes a real claim, "No Artificial
+Colours", that nothing recognised at all — added as a new rule.
+
+**One more real claim shape was found, then deliberately NOT built.**
+The same label family (Iron IRN74-1.pdf, confirmed by reading its actual
+text) prints a combined badge, "FREE FROM   GLUTEN | MILK | SOY", as its
+own single claim — alongside, not instead of, the six separate "GLUTEN
+FREE"/"MILK FREE"/... badges already covered. Building a matcher for
+this was straightforward, but it uncovered a real, structural problem:
+this app joins every claim on a label into one saved value using
+" | " as the separator between claims — the exact same character this
+one claim's own text contains. The code that reads that saved value back
+apart (`scripts/extract-pipeline.ts`'s `parseDelimited`) does a plain
+split on that separator, so this one claim would come back shattered
+into three wrong pieces ("Free From Gluten", "Milk", "Soy") instead of
+staying one claim — worse than not extracting it at all. Properly fixing
+this means either picking a different separator for claims that won't
+collide with real label text (risks quietly no longer matching the exact
+wording some ground-truth answers already use), or storing claims as a
+real list all the way through instead of one joined-up piece of text
+(the correct fix, but changes something several other parts of the code
+rely on). Left this for the human to decide rather than picking one
+unasked — noted in the code so it isn't lost. Affects a small number of
+labels (around 4 missing claim cells seen so far), so it's a minor
+opportunity either way, not a blocker.
+
+All of today's claims fixes are written and passed a compile check; the
+official before/after numbers are still pending a full run — testing was
+paused partway through this work at the user's request, to be done
+together as one batch rather than one run per fix. Not yet claiming a
+percentage for any of them in RESULTS.md until that real run happens,
+per the standing rule that every number quoted here has to be a row
+`score.py` actually wrote.
+
+**Package size — a genuine ambiguity, taken to the user rather than
+guessed at.** Reading the wrong-answer list for package_size showed the
+single biggest pattern in the whole session so far: 22 of the 26 wrong
+answers were "<number> N" when the real answer was "<number> Gummies" or
+"<number> Sticks" — the tool was preferring a generic regulatory count
+label ("Net Content: 30 N") over the product's own front-of-pack wording
+("30 Gummies"). Tempting to just flip the order and call it fixed, but
+checking it against a real label first (the lesson from the earlier
+overnight brand-name mistake, applied again) turned up a real complication:
+one label that currently gets the RIGHT answer ("30 N") genuinely prints
+BOTH things — a real "Net Content: 30 N" line AND a real, separate "30
+GUMMIES" front badge — and the human reviewers picked "N" for that one
+specifically. The same shape of text is the right answer on some labels
+and the wrong answer on others, with nothing in the text itself to tell
+them apart. Rather than guess, this was put to the user directly with
+the real evidence and the real tradeoff (fixes the 22, may cost the
+handful like this one). The user chose to make the switch anyway, as the
+better bet across all 45 labels. Done: the tool now tries the product's
+own form-word wording first, and only falls back to the regulatory "N"
+count when no form word is found on the label at all. All 8 existing
+tests for this still pass by hand-tracing the logic (not yet run for
+real, same testing pause as above), and two new tests lock in the new
+behaviour plus the still-correct fallback.
+
+**Ingredients — one more clean, mechanical bug found and fixed.**
+Looked at ingredients next since its missing count was still large even
+after Step 5.2's fix. Comparing the WRONG list against the MISSING list
+side by side turned up a clear, purely mechanical pattern: "Vitamin D."
+(with a trailing period) was being reported as WRONG while "Vitamin D"
+(no period) was MISSING — the exact same fact, just with the whole
+ingredients declaration's own closing full stop stuck onto whichever
+item happened to be last. 27 of 75 wrong answers in one real run were
+exactly this shape. Fixed by trimming one trailing period off every
+split item (not just the last one, since a source PDF's own line breaks
+can land the stray punctuation anywhere) — an ingredient name is never
+itself supposed to end with a period, so this is safe. Also looked at:
+a second real pattern where the label uses "and" instead of a comma
+before the last item in a short list ("...Flavour and Food Colour:
+...") — ground truth splits there too, but this fix was NOT made; it is
+a real risk on any ingredient name that legitimately contains the word
+"and", and needs more evidence before it is safe to build generically,
+so this was left alone rather than guessed at. Also plenty of ingredient
+wrong-answers were pure OCR garbage on the labels with little/no real
+PDF text (letters and words that don't spell anything) — not something a
+text-shape rule can safely clean up, so also left alone.
+
+Also looked at address next (12 wrong, 16 missing), but it did not have
+one clear, high-confidence pattern the way nutrition table, claims,
+package size and ingredients did — it's a mix of separate problems
+(company name text bleeding into the address, a PDF font-ligature
+encoding glitch showing "office" as "ofce", and some addresses
+that are just genuinely hard multi-line "Registered office: ...
+Corporate office: ..." text) needing more careful, separate
+investigation later rather than a quick fix now.
+
+## Real numbers for everything above, now that testing resumed
+
+The user gave the go-ahead to test. Backend test suite: 461 tests, 442-445
+pass depending on the run; every failure traced to a known, pre-existing
+cause (a handful of database tests that were already flaky before this
+session from stale seed data, one OCR engine test that times out under
+load, one fixture file moved out of `Dataset_Example` earlier in the
+project's own history) or to running many tests at once competing for
+the same database connections — confirmed by re-running the affected
+files one at a time, where they all pass cleanly. Two real mistakes in
+today's own new tests were caught and fixed by the test run itself:
+one test asserted the wrong letter-casing for a value that was always
+going to keep the label's own printed casing (not a code bug, a wrong
+expectation), and one real bug where the new "No X" claim rule was
+firing a second time on text a badge rule had already correctly claimed
+in full ("No Artificial Colours" also (wrongly) produced a bare "No
+Artificial") — fixed by checking whether an existing claim already
+starts with the new one, not just whether it's an exact match.
+
+**Full 45-label measurement, before vs. after everything in this
+session** (`--vlm off`, since `--vlm on` came back byte-for-byte
+identical this run — the AI model's brand-name help didn't get a chance
+to run on any label this time, a real, honest result to report, not
+something today's fixes touched):
+
+Overall: **31.3% → 34.4%** strict match, **44.9% → 46.7%** fuzzy/fair
+match (the 80% target metric).
+
+- **claims**: 19.4% → 24.6% (fair match). Wrong answers dropped from 71
+  to 35 — confirms the OCR-garbage cleanup worked. Missing dropped from
+  269 to 256 — the new "NO X" badge rule recovering real claims.
+- **package_size**: 37.8% → 55.6% (fair match). 8 labels moved from
+  wrong to correct, 0 moved the other way in the aggregate — the
+  form-word-first reordering paid off cleanly, at least in this run.
+- **ingredients**: strict match jumped 250 → 271 correct (the trailing-
+  period fix); the fair/fuzzy number stayed flat at 305, because the
+  fairer metric was already treating "Vitamin D." and "Vitamin D" as the
+  same thing — so this fix only helps the stricter of the two numbers,
+  not the one the 80% goal is measured on.
+- **nutrition table**: roughly flat on its own, 49.8% → 49.1% (fair
+  match) — it DID recover 8 previously-blank cells (missing dropped
+  211 → 203), but most of those came back as wrong rather than right,
+  because the picture-reading method still misreads digits/units often
+  enough that finding MORE of the table isn't the same as reading it
+  MORE ACCURATELY. Coverage isn't the bottleneck for this field anymore;
+  reading accuracy is.
+- **Everything else** (brand name, product name, address, flavour,
+  marketing company, FSSAI number, customer care fields, manufacturing
+  company): completely unchanged, confirming none of today's fixes had
+  any side effect on fields they weren't meant to touch.
+
 ## What's next
 
-Try the full measurement again if memory allows, to catch up 5.4/5.5's
-real numbers. The concrete, ready-to-do brand/product name fix above,
-once it can be safety-checked properly. Then Step 6 only if needed, then
-Step 7. A full, final test of the whole project and a final results
+Brand/product name's remaining wrong-answer patterns (most are unrelated
+marketing text, not yet addressed) and the address field's mixed
+problems (noted above, not yet investigated in depth) are the next real
+opportunities. After that, Step 6 only if the numbers still call for it,
+then Step 7. A full, final test of the whole project and a final results
 write-up come once all of that is done, as asked.

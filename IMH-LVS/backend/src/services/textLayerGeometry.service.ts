@@ -1,4 +1,5 @@
 import type { TextSpan } from './pdf.service';
+import type { OcrWord } from './tesseract.service';
 
 export type TextLine = {
   page: number;
@@ -328,6 +329,56 @@ export function toReadingOrderText(spans: readonly TextSpan[]): string {
   });
 
   return panelTexts.join('\n\n');
+}
+
+// Adapts OCR word boxes (pixel coordinates, y increasing downward) into this
+// module's TextSpan shape (PDF-convention coordinates, y increasing upward),
+// so the same panel/line/nutrition-table geometry pipeline built for the PDF
+// text layer also works on a rasterized page's OCR output — the only path
+// available when a label's nutrition panel is baked into the artwork as an
+// image rather than real embedded PDF text (a real, common case on this
+// project's client labels: the PDF text layer has no nutrition data at all,
+// so extractNutritionTableFromPanels(segmentPanels(spans-from-PDF)) always
+// returns {} for those labels, no matter what the text layer contains
+// elsewhere on the page). Rotation is always 0 here: a full-page OCR pass
+// reads the rasterized (already right-side-up) image, not individual
+// arbitrarily-rotated glyphs the way a PDF's text layer can report.
+export function ocrWordsToTextSpans(words: readonly OcrWord[], page: number = 1): TextSpan[] {
+  return words
+    .filter((word) => word.text.trim().length > 0)
+    .map((word) => ({
+      page,
+      text: word.text,
+      x: word.bbox.x0,
+      y: -word.bbox.y0,
+      width: word.bbox.x1 - word.bbox.x0,
+      height: word.bbox.y1 - word.bbox.y0,
+      fontSize: word.bbox.y1 - word.bbox.y0,
+      rotation: 0,
+      fontName: 'ocr',
+    }));
+}
+
+// Convenience wrapper: OCR words in, nutrition table out, via the same
+// row/cell heuristics used for the PDF text layer — but deliberately
+// skipping segmentPanels' column-banding step. That step relies on some
+// line (in practice, the nutrition header) having a span wide enough to
+// bridge the empty horizontal gutter between the name and value columns,
+// or it reads that gutter as a gap between two separate side-by-side
+// panels and splits the table apart — the name column ends up in one
+// panel, the value column in another, and neither one alone has a
+// header + a same-panel value to pair it with. A real PDF text layer
+// sometimes has such a bridging span (one wide text run for the whole
+// header line); individual OCR word boxes never do, so segmentPanels
+// would silently return {} for every OCR-sourced page. Going straight
+// from words to lines to one single page-wide panel sidesteps that:
+// column separation for the OCR path happens per-row instead, in
+// splitLineIntoCells's own x-gap check, which doesn't have this problem.
+export function extractNutritionTableFromOcrWords(words: readonly OcrWord[], page: number = 1): Record<string, string> {
+  const spans = ocrWordsToTextSpans(words, page);
+  const lines = groupSpansIntoLines(spans);
+  const panel: Panel = { page, rotation: 0, lines };
+  return extractNutritionTableFromPanels([panel]);
 }
 
 // Extracts nutrient name -> printed value from the "Nutrition(al) Information" block of one label.

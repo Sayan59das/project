@@ -84,6 +84,20 @@ test('splitIngredientsList: blank input returns an empty list', () => {
   assert.deepEqual(splitIngredientsList(''), []);
 });
 
+// Real, common wrong-answer pattern from a real 45-label run: comma-
+// splitting alone leaves the whole declaration's closing full stop
+// attached to the last item ("Vitamin D." instead of "Vitamin D") -- 27
+// of 75 wrong ingredient answers in one real run were exactly this.
+test('splitIngredientsList: strips the declaration-ending period from the last item', () => {
+  const items = splitIngredientsList('Tricalcium Phosphate, Vitamin D.');
+  assert.deepEqual(items, ['Tricalcium Phosphate', 'Vitamin D']);
+});
+
+test('splitIngredientsList: a real parenthetical item is not damaged by the period fix', () => {
+  const items = splitIngredientsList('Corn Syrup, Natural Sweetener Stevia (INS 960).');
+  assert.deepEqual(items, ['Corn Syrup', 'Natural Sweetener Stevia (INS 960)']);
+});
+
 // THE REGRESSION THIS FILE EXISTS FOR.
 //
 // PDF text arrives in draw order, so these separate design elements from the
@@ -142,6 +156,76 @@ test('does not report "Toll Free" as a claim near a customer care number', () =>
   const result = extractClaims('Gluten Free. Customer Care Toll Free: 1800-555-1234');
   assert.equal(result.claims.includes('Toll Free'), false);
   assert.ok(result.claims.includes('Gluten Free'));
+});
+
+// Real regression found by running the "X Free" shape-matcher (above)
+// against the client's actual 45 labels: OCR misreads a letter or two right
+// before a genuine "free" elsewhere on the label, and the shape matcher
+// -- which accepted ANY word immediately before "free" -- reported the
+// misread fragment as its own claim. None of these fragments were invented
+// for this test; every one is copied verbatim from a real diff.py run
+// (eval/diff.py --mode pipeline --field claims): "D Free", "Wilk Free",
+// "Nay Free", "Aicima Free", "Seby Free", "Ees Free", "Eruchy Free" and
+// others, none of which the label actually says. Fixed by checking the
+// captured word against a small, generic allergen/dietary vocabulary
+// (the same kind of common terms — gluten, milk, soy, nut, peanut,
+// dairy, egg, wheat, gelatin — every food/supplement label in this
+// industry uses, not anything specific to one client's products) instead
+// of accepting every shape match.
+test('does not report OCR-garbled fragments before "free" as claims', () => {
+  const result = extractClaims('RIOMEDICA D Free HEALTHCARE Wilk Free Nay Free Aicima Free Seby Free Ees Free Eruchy Free');
+  assert.equal(result.claims, '');
+});
+
+test('still reports the real allergen "X Free" claims alongside OCR-garbled noise on the same label', () => {
+  const result = extractClaims('Gluten Free. Milk Free. Nut Free. Peanut Free. Soy Free. Wilk Free. D Free.');
+  assert.deepEqual(
+    result.claims.split(' | ').sort(),
+    ['Gluten Free', 'Milk Free', 'Nut Free', 'Peanut Free', 'Soy Free']
+  );
+});
+
+// Real second claim shape found on the same real label (Cal. Vit D
+// IRN120-1.pdf, dumped via its actual PDF text layer): six allergens
+// printed as standalone two-line badges — "NO\nGELATIN", "NO\nGLUTEN",
+// "NO\nMILK", "NO\nPEANUT", "NO\nNUT", "NO\nSOY" — a completely different
+// shape from "<allergen> free", and previously not recognised by anything
+// in this file (all six were MISSING, not just mis-cased, in a real
+// score.py run). Gated by the same allergen allowlist as the "X Free"
+// matcher, since "no" alone is common in ordinary label prose ("do not
+// exceed...", "not meant to diagnose...") in a way "X free" mostly isn't.
+test('reports the "NO X" allergen badge shape, a real second claim wording on the same label family', () => {
+  const result = extractClaims('NO GELATIN NO GLUTEN NO MILK NO PEANUT NO NUT NO SOY');
+  assert.deepEqual(
+    result.claims.split(' | ').sort(),
+    ['No Gelatin', 'No Gluten', 'No Milk', 'No Nut', 'No Peanut', 'No Soy']
+  );
+});
+
+test('does not treat ordinary "no <word>" label prose as an allergen claim', () => {
+  // The word right after "no" here is real prose, not an allergen — the
+  // allowlist gate (shared with the "X Free" matcher) has to reject this
+  // the same way it rejects OCR garbage before "free".
+  const result = extractClaims('No returns will be accepted once the seal is broken. No warranty is implied.');
+  assert.equal(result.claims, '');
+});
+
+// Real bug found the same way: a real label (EYE WELLNESS DOMESTIC LABEL
+// MHJ.pdf) prints bare "No Preservatives", but the one CLAIM_BADGES
+// pattern that existed always reported 'No Added Preservatives' whether
+// or not "added" was actually printed — fabricating a claim the label
+// doesn't make while missing the one it does.
+test('reports "No Preservatives" as its own claim, distinct from "No Added Preservatives"', () => {
+  const bare = extractClaims('No Preservatives');
+  assert.deepEqual(bare.claims.split(' | '), ['No Preservatives']);
+
+  const added = extractClaims('No Added Preservatives');
+  assert.deepEqual(added.claims.split(' | '), ['No Added Preservatives']);
+});
+
+test('reports "No Artificial Colours" as a claim badge', () => {
+  const result = extractClaims('No Artificial Colours');
+  assert.deepEqual(result.claims.split(' | '), ['No Artificial Colours']);
 });
 
 // A claim on the label with no master record is still stored — omitting it

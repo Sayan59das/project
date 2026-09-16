@@ -41,7 +41,7 @@ import { env } from '../config/env';
 import { FIXED_MANUFACTURING_COMPANY } from '../config/constants';
 import { extractPdfText, extractTextSpans, hasUsablePdfText, rasterizePdfPages, type TextSpan } from './pdf.service';
 import { preprocessForOcr, preprocessForOcrAlt } from './imagePreprocessing.service';
-import { recognizePageWithWords } from './tesseract.service';
+import { recognizePageWithWords, type OcrWord } from './tesseract.service';
 import { recognizeLines } from './paddleOcr.service';
 import { extractMarketingCompanyAndAddressFromRegion } from './regionOcr.service';
 import { recoverProductTitleFromRegion, type OcrSource } from './titleRegionOcr.service';
@@ -55,7 +55,13 @@ import {
   extractIngredients,
   extractNutritionTableFormat
 } from './labelSemanticExtractor.service';
-import { segmentPanels, toReadingOrderText, extractNutritionTableFromPanels, medianFontSize } from './textLayerGeometry.service';
+import {
+  segmentPanels,
+  toReadingOrderText,
+  extractNutritionTableFromPanels,
+  extractNutritionTableFromOcrWords,
+  medianFontSize
+} from './textLayerGeometry.service';
 import { projectSpanToPixels, findOutlinedLines, planOcrStrips, dropStripEdgeLines, dedupeOverlappingLines, type OcrLineLike } from './outlinedText.service';
 import { isVlmEnabled, prepareImage, ollamaClient, type VlmImage, type VlmClient } from './ollamaVlm.service';
 import { resolveDisplayRoles, type DisplayCandidateIn } from './displayRoleResolver.service';
@@ -310,6 +316,17 @@ function isComplete(fields: ExtractedLabelFields): boolean {
   return CORE_FIELDS_FOR_COMPLETENESS.every((key) => fields[key].trim().length > 0);
 }
 
+// A label's nutrition panel is sometimes baked into the artwork as an image
+// with no real text in the PDF's own text layer at all — the text-layer
+// geometry pass (extractNutritionTableFromPanels) then always returns {}
+// for that label, no matter how complete every OTHER field is. Used to
+// decide whether OCR is still worth running even when every scalar field
+// already has a value, and to decide whether to keep giving the nutrition
+// OCR fallback another page's worth of tries.
+function hasNutritionTable(table: Record<string, string> | undefined): boolean {
+  return !!table && Object.keys(table).length > 0;
+}
+
 // A productName that's nothing but a generic product-form word ("Gummies",
 // "Capsules", ...) doesn't actually identify the product — it's treated
 // like an unset value here so a later, more complete pass (e.g. a
@@ -475,7 +492,7 @@ async function ocrImageWithEnhancement(
   imageBuffer: Buffer,
   priorText: string,
   knownFlavours: readonly string[]
-): Promise<{ text: string; fields: ExtractedLabelFields; fieldMeta: Record<string, FieldMeta> }> {
+): Promise<{ text: string; fields: ExtractedLabelFields; fieldMeta: Record<string, FieldMeta>; words: OcrWord[] }> {
   const primaryProcessed = await preprocessForOcr(imageBuffer);
   const { text: primaryText, words } = await recognizePageWithWords(primaryProcessed);
 
@@ -556,7 +573,32 @@ async function ocrImageWithEnhancement(
     }
   }
 
-  return { text: combinedText, fields, fieldMeta };
+  return { text: combinedText, fields, fieldMeta, words };
+}
+
+// A side-channel nutrition-table recovery path for a PDF whose scalar fields
+// are already complete from the text layer, so the full, multi-stage OCR
+// enhancement pass (ocrImageWithEnhancement) isn't worth its risk: that
+// pass's title-region and other escalations can overwrite an already-
+// correct-but-generic-looking productName/brand with a wrong OCR guess —
+// a real regression measured when nutrition-table recovery was first tried
+// by simply forcing every incomplete-nutrition label through the full pass.
+// This calls only the plain word-level OCR primitive and never touches
+// `fields`, so a scalar field this pass already got right cannot regress.
+// Stops at the first page that yields a non-empty table; never throws.
+async function recoverNutritionTableViaOcr(pdfBuffer: Buffer): Promise<Record<string, string> | undefined> {
+  try {
+    const pageImages = await rasterizePdfPages(pdfBuffer);
+    for (const pageImage of pageImages) {
+      const { words } = await recognizePageWithWords(pageImage);
+      const table = extractNutritionTableFromOcrWords(words);
+      if (hasNutritionTable(table)) return table;
+    }
+    return undefined;
+  } catch (error) {
+    debugLog(`Nutrition-table OCR side-channel failed: ${error instanceof Error ? error.message : error}`);
+    return undefined;
+  }
 }
 
 // Gathers the raw text for a PDF and parses it into fields, escalating to
@@ -817,9 +859,22 @@ async function extractFieldsFromPdf(pdfBuffer: Buffer, knownFlavours: readonly s
   }
 
   if (textLayerFields && isComplete(textLayerFields)) {
-    // Fast path: nothing was rasterized, so pageImages is empty and the caller
-    // rasterizes a single page itself if it still wants colour.
-    return { fields: textLayerFields, text: orderedText, pageImages: [], nutritionTable, fieldMeta: textLayerFieldMeta };
+    // Fast path: every scalar field is already resolved from the text layer,
+    // so the expensive, multi-stage OCR enhancement pass (which exists to
+    // recover WEAK scalar fields, and in doing so can overwrite a generic-
+    // looking-but-correct productName with a wrong OCR guess) is not worth
+    // the risk here. If nutrition_table is still empty, that's the ONE
+    // thing worth a narrow, side-channel OCR attempt for — recovering the
+    // table's words without ever touching `fields`, so a field this pass
+    // already got right can't regress.
+    const recoveredNutrition = hasNutritionTable(nutritionTable) ? nutritionTable : await recoverNutritionTableViaOcr(pdfBuffer);
+    return {
+      fields: textLayerFields,
+      text: orderedText,
+      pageImages: [],
+      nutritionTable: recoveredNutrition,
+      fieldMeta: textLayerFieldMeta
+    };
   }
 
   if (!textLayerUsable) {
@@ -859,6 +914,17 @@ async function extractFieldsFromPdf(pdfBuffer: Buffer, knownFlavours: readonly s
     const merged = fillBlanks(fields, result.fields, result.fieldMeta, fieldMeta);
     fields = merged.fields;
     fieldMeta = merged.meta;
+
+    // Nutrition table has no text-layer equivalent of fillBlanks (it isn't
+    // one of ExtractedLabelFields) — first non-empty OCR page wins, same
+    // "don't overwrite a value that's already there" rule as everything
+    // else in this pipeline.
+    if (!hasNutritionTable(nutritionTable)) {
+      const ocrNutrition = extractNutritionTableFromOcrWords(result.words);
+      if (hasNutritionTable(ocrNutrition)) {
+        nutritionTable = ocrNutrition;
+      }
+    }
   }
   debugLog(`Combined text after OCR (${combinedText.length} chars):\n${combinedText}`);
 
@@ -896,6 +962,10 @@ async function extractFieldsFromImage(imageBuffer: Buffer, knownFlavours: readon
   debugLog(`OCR text (${text.length} chars):\n${text}`);
   // The upload IS the page image, so colour reads straight off it.
 
+  // No PDF text layer at all for a direct image upload — this is the only
+  // pass that will ever see this label's nutrition panel.
+  const nutritionTable = extractNutritionTableFromOcrWords(ocrResult.words);
+
   // For image uploads, if brand or product name are still missing after OCR,
   // recover display-text candidates. No spans from text layer, so pass empty array.
   let displayTextCandidates: DisplayTextCandidate[] | undefined;
@@ -909,7 +979,7 @@ async function extractFieldsFromImage(imageBuffer: Buffer, knownFlavours: readon
     }
   }
 
-  return { fields, text, pageImages: [imageBuffer], displayTextCandidates, fieldMeta };
+  return { fields, text, pageImages: [imageBuffer], nutritionTable, displayTextCandidates, fieldMeta };
 }
 
 // Shared post-processing for extraction results: placeholder scrubbing, garbage

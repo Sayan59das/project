@@ -50,3 +50,26 @@ test('still rejects a daily-dosage instruction, keeping only the real pack count
 test('no confident wording anywhere leaves packageSize blank, as before', () => {
   assert.equal(extractLabelFields('No package size information here.').packageSize, '');
 });
+
+// Step 5 follow-up (accuracy plan): a real full 45-label run showed the
+// ORIGINAL order (Net Content checked first) was wrong far more often
+// than right — 22 of 26 wrong package_size answers were "<N> N" where the
+// label's own front-of-pack form-word badge ("<N> Gummies"/"<N> Sticks")
+// was the ground truth's actual answer, and both are genuinely printed on
+// the same label (confirmed on a real one, Cal. Vit D IRN120-1.pdf: both
+// "Net Content: 30 N" and a separate "30\nGUMMIES" badge are really
+// there). The user was shown this exact tradeoff — including that it
+// would flip Cal. Vit D IRN120-1 itself from correct to wrong — and chose
+// to reorder anyway as the better net bet across all 45 labels.
+test('prefers the form-word badge over the Net Content declaration when both are printed', () => {
+  // Casing kept exactly as printed (the label really does print "GUMMIES"
+  // in caps here), same as every other packageSize value — not a bug in
+  // this test's assertion, matches the function's own documented behavior.
+  const text = 'Net Content: 30 N\n30\nGUMMIES\nSupport for Strong, Healthy Bones and Teeth';
+  assert.equal(extractLabelFields(text).packageSize, '30 GUMMIES');
+});
+
+test('still falls back to the Net Content declaration when no form-word badge exists', () => {
+  const text = 'Net Content: 30 N\nSupport for Strong, Healthy Bones and Teeth';
+  assert.equal(extractLabelFields(text).packageSize, '30 N');
+});

@@ -560,22 +560,22 @@ const NET_CONTENT_COUNT_PATTERN =
   /\bnet\s*(?:content|qty|quantity)\s*[:\-]?\s*(\d{1,4})\s*(n|nos?|no\.?|units?|pieces?|gummies|gummy|tablets?|capsules?)\b/i;
 
 function extractPackageSize(text: string): string {
-  // Tried before the '<number> Gummies' wording below because it is an explicit
-  // declaration of the pack count rather than a phrase that usually means one.
-  const netContent = text.match(NET_CONTENT_COUNT_PATTERN);
-  if (netContent) {
-    // Step 5.1 (accuracy plan): the number ALONE, not "30 N"/"30 Gummies",
-    // was the dominant real wrong-answer pattern (35 of 40 in Step 1.2's
-    // sample) — the ground truth always carries the unit token too, so a
-    // bare digit string reads as a different value even when the count
-    // itself was read correctly. netContent[2] is whichever unit word the
-    // pattern actually matched ("N", "Nos", "gummies", ...), kept exactly
-    // as printed rather than normalized to a canonical spelling.
-    const value = `${netContent[1]} ${netContent[2]}`;
-    debugLog(`packageSize: matched "${value}" from the Net Content declaration "${netContent[0].trim()}".`);
-    return value;
-  }
-
+  // Step 5 follow-up (accuracy plan): tried BEFORE the Net Content
+  // declaration below, reversing the original Step 5.1 order. Real
+  // evidence from a full 45-label run (eval/diff.py --mode pipeline
+  // --field package_size) showed the Net-Content-first order was wrong
+  // far more often than it was right: 22 of 26 wrong answers were "<N>
+  // N" where the ground truth wanted "<N> Gummies"/"<N> Sticks" — the
+  // product's own form word, printed as its own front-of-pack badge, is
+  // what the label is actually understood to say. Net Content's "N" unit
+  // (short for "numbers/units", a regulatory count declaration) still
+  // wins when no form-word badge exists on the label at all — confirmed
+  // still correct for real cases where the two are genuinely both
+  // printed (Cal. Vit D IRN120-1.pdf has both "Net Content: 30 N" and a
+  // "30 GUMMIES" badge, and — a real, human-confirmed exception —
+  // ground truth wants "30 N" there specifically, not "30 Gummies"; the
+  // user was shown this exact tradeoff and chose the reordering anyway
+  // as the better net bet across all 45 labels).
   const re = new RegExp(PACKAGE_SIZE_PATTERN);
   let match: RegExpExecArray | null;
   while ((match = re.exec(text))) {
@@ -592,6 +592,19 @@ function extractPackageSize(text: string): string {
     // still normalizes to one space, the same shape the ground truth uses.
     const value = `${match[1]} ${match[2]}`;
     debugLog(`packageSize: matched "${value}" from "${match[0].trim()}".`);
+    return value;
+  }
+
+  // Falls back to the Net Content declaration only when no form-word
+  // badge was found — the number ALONE, not "30 N"/"30 Gummies", was the
+  // original dominant wrong-answer pattern this whole function exists to
+  // fix (Step 5.1: 35 of 40 in an early sample), and the ground truth
+  // always carries a unit token, so a bare digit reads as a different
+  // value even when the count itself was read correctly.
+  const netContent = text.match(NET_CONTENT_COUNT_PATTERN);
+  if (netContent) {
+    const value = `${netContent[1]} ${netContent[2]}`;
+    debugLog(`packageSize: matched "${value}" from the Net Content declaration "${netContent[0].trim()}".`);
     return value;
   }
 

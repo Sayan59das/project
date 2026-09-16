@@ -10,10 +10,13 @@ import {
   segmentPanels,
   toReadingOrderText,
   extractNutritionTableFromPanels,
+  ocrWordsToTextSpans,
+  extractNutritionTableFromOcrWords,
   type TextLine,
 } from '../services/textLayerGeometry.service';
 import { extractTextSpans } from '../services/pdf.service';
 import type { TextSpan } from '../services/pdf.service';
+import type { OcrWord } from '../services/tesseract.service';
 
 const FIXTURES = path.join(__dirname, 'fixtures');
 const load = (name: string) => readFileSync(path.join(FIXTURES, name));
@@ -526,4 +529,64 @@ test('extractNutritionTableFromPanels: value with parenthesized % is left alone'
   assert.deepEqual(result, {
     'Calcium': '40 mg (66%)',
   }, 'Value with parenthesized % should not be stripped');
+});
+
+function ocrWord(props: { text: string; x0: number; y0: number; x1: number; y1: number; confidence?: number }): OcrWord {
+  return {
+    text: props.text,
+    bbox: { x0: props.x0, y0: props.y0, x1: props.x1, y1: props.y1 },
+    confidence: props.confidence ?? 90,
+  };
+}
+
+test('ocrWordsToTextSpans: pixel (y-down) coordinates are converted to PDF-style (y-up) spans', () => {
+  // A word nearer the TOP of the image (smaller y0) must end up with a
+  // LARGER converted y than a word further down — matching the PDF-space
+  // convention the rest of this module's geometry sorting (cross DESC)
+  // assumes, so a page read via OCR sorts top-to-bottom just like one read
+  // from a real PDF text layer.
+  const words = [
+    ocrWord({ text: 'Top', x0: 10, y0: 20, x1: 40, y1: 32 }),
+    ocrWord({ text: 'Bottom', x0: 10, y0: 200, x1: 60, y1: 212 }),
+  ];
+  const spans = ocrWordsToTextSpans(words);
+  const top = spans.find((s) => s.text === 'Top')!;
+  const bottom = spans.find((s) => s.text === 'Bottom')!;
+  assert.ok(top.y > bottom.y, 'the word nearer the top of the image should have the larger (PDF-style) y');
+  assert.equal(top.rotation, 0);
+  assert.equal(top.width, 30);
+  assert.equal(top.fontSize, 12);
+});
+
+test('extractNutritionTableFromOcrWords: recovers a nutrition table from OCR word boxes alone (no PDF text layer)', () => {
+  // Real shape of the problem this exists for: some client labels render
+  // their whole nutrition panel as artwork, so the PDF text layer has zero
+  // nutrition data — extractNutritionTableFromPanels(segmentPanels(spans))
+  // on the real text layer returns {} no matter what. This is the OCR
+  // fallback: the same header+rows table, but built from a rasterized
+  // page's OCR word boxes (pixel, y-down) instead of PDF spans (points,
+  // y-up) — three rows, one row's value has a trailing %DV column that
+  // should be stripped exactly like the PDF-text-layer path already does.
+  const words = [
+    ocrWord({ text: 'Nutrition', x0: 20, y0: 40, x1: 90, y1: 52 }),
+    ocrWord({ text: 'Information', x0: 92, y0: 40, x1: 170, y1: 52 }),
+    ocrWord({ text: 'Energy', x0: 20, y0: 60, x1: 70, y1: 72 }),
+    ocrWord({ text: '12', x0: 220, y0: 60, x1: 235, y1: 72 }),
+    ocrWord({ text: 'kcal', x0: 238, y0: 60, x1: 265, y1: 72 }),
+    ocrWord({ text: 'Protein', x0: 20, y0: 80, x1: 75, y1: 92 }),
+    ocrWord({ text: '0.5', x0: 220, y0: 80, x1: 240, y1: 92 }),
+    ocrWord({ text: 'g', x0: 243, y0: 80, x1: 250, y1: 92 }),
+    ocrWord({ text: 'Vitamin', x0: 20, y0: 100, x1: 70, y1: 112 }),
+    ocrWord({ text: 'C', x0: 73, y0: 100, x1: 82, y1: 112 }),
+    ocrWord({ text: '40', x0: 220, y0: 100, x1: 235, y1: 112 }),
+    ocrWord({ text: 'mg', x0: 238, y0: 100, x1: 255, y1: 112 }),
+    ocrWord({ text: '66%', x0: 290, y0: 100, x1: 315, y1: 112 }),
+  ];
+  const result = extractNutritionTableFromOcrWords(words);
+
+  assert.deepEqual(result, {
+    Energy: '12 kcal',
+    Protein: '0.5 g',
+    'Vitamin C': '40 mg',
+  });
 });

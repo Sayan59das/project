@@ -97,7 +97,17 @@ export function splitIngredientsList(declaration: string): string[] {
   }
   items.push(current);
 
-  return items.map((item) => item.trim()).filter((item) => item.length > 0);
+  // Real, common wrong-answer pattern (eval/diff.py --mode pipeline --field
+  // ingredients, a real 45-label run): comma-splitting alone leaves the
+  // declaration's own closing full stop attached to whichever item happens
+  // to be last — "...Vitamin D." instead of "...Vitamin D" — 27 of 75 wrong
+  // answers in one real run were exactly this. An ingredient name is never
+  // itself supposed to end in a period, so trimming one trailing "." off
+  // every item (not just the last — the same stray-punctuation shape can
+  // turn up anywhere a source PDF's line break lands right on it) is safe.
+  return items
+    .map((item) => item.trim().replace(/\.$/, '').trim())
+    .filter((item) => item.length > 0);
 }
 
 // ---------------------------------------------------------------------
@@ -105,6 +115,20 @@ export function splitIngredientsList(declaration: string): string[] {
 // ---------------------------------------------------------------------
 
 // Claim-shaped phrases that appear on labels as badges rather than sentences.
+// Generic allergen/dietary vocabulary shared by the "X Free" and "No X"
+// claim-shape matchers below. A small, industry-standard set of terms any
+// food/supplement label might declare — not built from any one client's
+// products — used to gate those matchers so they only accept a REAL
+// allergen/dietary word next to "free" or "no", not whatever word happens
+// to precede it (see the matchers themselves for the real-label evidence
+// that made this allowlist necessary).
+const ALLERGEN_DIETARY_WORDS = new Set([
+  'gluten', 'dairy', 'milk', 'lactose', 'casein', 'soy', 'soya', 'nut', 'nuts', 'peanut', 'peanuts',
+  'egg', 'eggs', 'wheat', 'gelatin', 'gelatine', 'shellfish', 'fish', 'sesame', 'corn', 'yeast',
+  'sugar', 'alcohol', 'caffeine', 'gmo', 'preservative', 'preservatives', 'msg', 'paraben', 'parabens',
+  'sulphate', 'sulphates', 'sulfate', 'sulfates', 'fragrance', 'artificial', 'cruelty'
+]);
+
 // This list exists because the Claims master cannot be assumed complete — the
 // seeded master has four entries and the real artwork carries claims none of
 // them cover — and because a claim present on the label but absent from the
@@ -112,7 +136,21 @@ export function splitIngredientsList(declaration: string): string[] {
 const CLAIM_BADGES: readonly { pattern: RegExp; claim: string }[] = [
   { pattern: /\bno\s+added\s+sugar\b/i, claim: 'No Added Sugar' },
   { pattern: /\bnatural\s+colou?rs?\s*(&|and)\s*flavou?rs?\b/i, claim: 'Natural Colours & Flavours' },
-  { pattern: /\bno\s+(added\s+)?preservatives?\b/i, claim: 'No Added Preservatives' },
+  // Two separate patterns, not one with an optional "added" — a real label
+  // (EYE WELLNESS DOMESTIC LABEL MHJ.pdf) prints bare "No Preservatives",
+  // and a single pattern that always output 'No Added Preservatives'
+  // regardless of which words were actually on the label was reporting a
+  // claim the label doesn't make (WRONG) while also missing the one it
+  // does (MISSING) — the exact same real bug in the same shape as the
+  // "X Free"/"No X" fixes above. "no added preservatives" can only match
+  // the first pattern (the word "added" sits between "no" and
+  // "preservatives", so the second pattern's direct adjacency never
+  // matches it too), so the two never double up on the same text.
+  { pattern: /\bno\s+added\s+preservatives?\b/i, claim: 'No Added Preservatives' },
+  { pattern: /\bno\s+preservatives?\b/i, claim: 'No Preservatives' },
+  // Real ground-truth claim (same EYE WELLNESS label, and LXIR Shilajit
+  // STICK) not previously in this list at all.
+  { pattern: /\bno\s+artificial\s+colou?rs?\b/i, claim: 'No Artificial Colours' },
   { pattern: /\b(100%\s*)?vegetarian\b/i, claim: 'Vegetarian' },
   { pattern: /\bnon[\s-]?gmo\b/i, claim: 'Non GMO' },
   { pattern: /\bhealth\s+supplement\b/i, claim: 'Health Supplement' },
@@ -191,21 +229,78 @@ export function extractClaims(text: string, knownClaims: readonly string[] = [])
   // recognised two specific "X Free" claims (gluten, sugar) while the real
   // dataset's ground truth has Gelatin Free, Milk Free, Nut Free, Peanut
   // Free, Soy Free and more — a closed list can never keep up with every
-  // allergen a label might declare. Matches the SHAPE instead: any single
-  // word immediately followed by "free" (badge-style, not "carefree" or
-  // "toll free" — see the exclusion below, a real risk on these labels'
-  // customer-care sections, not a guess). Reported in the printed casing,
-  // Title-Cased for a consistent canonical form the way every other badge
-  // claim already is.
+  // allergen a label might declare. Matches the SHAPE instead: a word
+  // immediately followed by "free" — but ONLY when that word is one of a
+  // small, generic set of allergen/dietary terms every label in this
+  // industry uses (not a list built from any one client's products).
+  //
+  // Step 5.6 follow-up (accuracy plan): a first version of this accepted
+  // ANY word before "free", denylisting only a few known false positives
+  // ("toll free", "carefree"). Running it against the client's real 45
+  // labels (eval/diff.py --mode pipeline --field claims) showed that was
+  // far too loose — OCR misreads a letter or two right before a genuine
+  // "free" elsewhere on the label, and every one of those misread
+  // fragments ("D Free", "Wilk Free", "Nay Free", "Aicima Free", "Seby
+  // Free", "Ees Free", "Eruchy Free", ...) was reported as its own
+  // fabricated claim, none of which the label actually says. An allowlist
+  // of real allergen/dietary words fixes this the same way the rest of
+  // this matcher already works: generic across any label, never built
+  // from one label's specific text.
   const FREE_CLAIM = /\b([A-Za-z]+)[\s-]free\b/gi;
-  const FREE_CLAIM_EXCLUSIONS = new Set(['toll', 'carefree', 'care', 'hands', 'hassle', 'worry']);
   for (const match of flat.matchAll(FREE_CLAIM)) {
     const word = match[1];
-    if (FREE_CLAIM_EXCLUSIONS.has(word.toLowerCase())) continue;
+    if (!ALLERGEN_DIETARY_WORDS.has(word.toLowerCase())) continue;
     const claim = `${word[0].toUpperCase()}${word.slice(1).toLowerCase()} Free`;
     const alreadyKnown = [...found.keys()].some((existing) => existing.toLowerCase() === claim.toLowerCase());
     if (!alreadyKnown) found.set(claim, isKnown(claim, knownClaims));
   }
+
+  // Same idea, the label's OTHER common way of printing the same fact: a
+  // standalone "NO <ALLERGEN>" badge (e.g. "NO GELATIN", "NO GLUTEN", "NO
+  // MILK") rather than "<allergen> free" — confirmed on a real label by
+  // dumping its actual PDF text layer (Cal. Vit D IRN120-1.pdf prints six
+  // of these as separate two-line badges: "NO\nGELATIN", "NO\nGLUTEN", ...).
+  // The SAME allergen allowlist keeps this safe: "no" alone is far too
+  // common a word to match generically ("do not exceed", "not meant to
+  // diagnose"), but "no" immediately before one of these specific allergen
+  // words is not a risk shared with ordinary label prose.
+  const NO_CLAIM = /\bno\s+([A-Za-z]+)\b/gi;
+  for (const match of flat.matchAll(NO_CLAIM)) {
+    const word = match[1];
+    if (!ALLERGEN_DIETARY_WORDS.has(word.toLowerCase())) continue;
+    const claim = `No ${word[0].toUpperCase()}${word.slice(1).toLowerCase()}`;
+    // Prefix check, not just exact match: a real bug caught by the test
+    // suite — "No Artificial Colours" (the CLAIM_BADGES pattern, checked
+    // above) and this matcher's own "No Artificial" (since "artificial"
+    // is in the allergen allowlist too) both fired for the same text,
+    // because an exact-string dedup only catches an identical claim, not
+    // a shorter fragment of a longer one already found. Same risk for
+    // "No Added Preservatives" if the allowlist word were the SECOND
+    // word rather than "added" the first — checked for completeness even
+    // though no current allowlist word triggers that specific case.
+    const alreadyKnown = [...found.keys()].some(
+      (existing) => existing.toLowerCase().startsWith(claim.toLowerCase())
+    );
+    if (!alreadyKnown) found.set(claim, isKnown(claim, knownClaims));
+  }
+
+  // NOT IMPLEMENTED, on purpose: a third real shape for the same fact was
+  // found and confirmed on a real label — Iron IRN74-1.pdf prints "FREE
+  // FROM   GLUTEN | MILK | SOY" as one combined badge, literal pipe
+  // characters and all, alongside six separate "GLUTEN FREE"/"MILK
+  // FREE"/... badges. Ground truth records it as its own single claim
+  // entry, "Free From Gluten | Milk | Soy". But this app's storage format
+  // joins every claim on a label into ONE string using that exact same
+  // " | " separator (see the join below, and CLAIM_DELIMITER in
+  // scripts/extract-pipeline.ts, which un-joins it the same naive way —
+  // value.split(' | ')). A claim whose own text contains " | " would be
+  // shattered back into three wrong fragments instead of staying one
+  // claim, which is worse than not extracting it at all. Recording this
+  // rather than guessing at a workaround (a different internal separator
+  // would silently stop matching the ground truth's exact string; storing
+  // claims as a real array end-to-end would be the correct fix but touches
+  // every caller of this field) — a decision for the human, not a code
+  // change to make unasked.
 
   const claims = [...found.keys()];
   return {
