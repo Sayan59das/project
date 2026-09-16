@@ -137,18 +137,32 @@ something in, even wrongly, nothing else is allowed to overwrite it. So
 the guess isn't just wrong: it's actively blocking the one thing that's
 good at this from ever being tried on 17+ labels.
 
-The obvious next fix — stop letting the plain-text method guess a
-brand/product name at all, and let the AI model (or the picture-reading
-method) take over that job entirely — is not being made tonight,
-on purpose. It's a bigger, more sweeping change than tonight's other
-fixes (it touches how EVERY label is read, not one template family), and
-it cannot be safety-checked without a full run through the measurement
-tool, which could not complete tonight (see below). Given the plan's own
-explicit instruction to be extra careful with this exact field, that
-verification gap is a real reason to wait, not something to push past.
-This is written up here as a concrete, ready-to-do next step, backed by
-real numbers and two fresh real-label checks — not a guess still waiting
-to be tested.
+**Update, next morning, memory allowed a real attempt**: tried the
+obvious fix described above — stop letting the plain-text method guess a
+brand/product name at all, let the AI model take over that job entirely.
+Built it, and before trusting it, checked it against this project's own
+existing tests (not the client's 45 labels — this project's OWN test
+PDFs, used to catch regressions). It broke several of them: this
+project's own test labels (brand names like "VitaFit", "Nutrinol",
+"Homeo-Vita", "Sharp Mind Plus", "She-Arise") are cases where the
+plain-text method currently gets the brand right, reading real words
+that really are the brand name on those specific labels. A blanket "never
+trust the plain-text guess" rule would have thrown away correct answers
+on these to fix wrong answers on the client's labels — a real step
+backward disguised as a fix.
+
+**So the "0 right out of 17" number needs a correction**: that's true for
+the client's 45 labels specifically, not true in general — this
+project's own test labels prove the plain-text method genuinely works
+sometimes, when the real brand name is actual readable text on the label
+(not a stylised picture/logo, which is what's happening on the client's
+Riomedica-family labels specifically). The fix isn't "never trust
+plain text for this field" — it's "tell the two situations apart," and
+that's a harder, smarter problem than the overnight write-up made it
+sound. The code change was reverted rather than kept in a half-right
+state. No safe, generic way to tell the two situations apart has been
+found yet — this remains open, correctly still not fixed, but now for a
+better-understood reason than a missing measurement.
 
 ## Tonight's memory trouble, in plain terms
 
