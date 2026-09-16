@@ -161,8 +161,48 @@ plain text for this field" — it's "tell the two situations apart," and
 that's a harder, smarter problem than the overnight write-up made it
 sound. The code change was reverted rather than kept in a half-right
 state. No safe, generic way to tell the two situations apart has been
-found yet — this remains open, correctly still not fixed, but now for a
-better-understood reason than a missing measurement.
+found yet — this remains open for now, but a smaller, safer fix was
+found afterward (see below).
+
+**Later update: a small, real fix was found and kept.** Instead of the
+big "never trust plain text" rule that broke other labels, a much
+narrower rule was tried: don't let the plain-text method guess a brand
+name that is really just a piece of the already-correctly-found company
+name. This came from reading one label's actual computer-read text
+directly (Calrio Gummies): on a sideways panel of the package, the word
+"RIOMEDICA" gets read on its own short line, separate from the full
+company name "RIOMEDICA HEALTHCARE PVT. LTD." that the tool had already
+correctly found elsewhere on the same label. The old check only looked
+one way — "does this line contain the full company name" — which missed
+this, because here it's the other way around: the short guess is
+*part of* the company name, not the other way round. Fixed by checking
+both directions, with a minimum length so short unrelated words (like
+"Cal") don't get wrongly blocked just because they happen to appear
+inside a longer, unrelated company name.
+
+This was checked against every one of this project's own real test
+labels first (not just the client's), so it would not repeat the
+overnight mistake — all of them still pass, nothing that used to work
+broke.
+
+**Real, measured result, run on all 45 client labels again:**
+- With the AI model turned off: one wrong brand-name guess became a
+  blank instead (no longer actively wrong, but no new correct answer
+  either, since plain text still has nothing better to offer there).
+- With the AI model turned on: brand_name accuracy moved from **17.8%
+  to 20.0%** (8 correct → 9 correct, out of 45). Blocking the one bad
+  guess freed that label up for the AI model to have a turn, and the AI
+  model — which is very good at this field, 100% correct whenever it
+  gets to try — got it right.
+
+**Honest scope of this fix**: it is small. It only catches the specific
+case where the wrong guess overlaps the real company's name. Most other
+wrong brand-name guesses (ordinary marketing text with no connection to
+the company name, like "Relax") are not touched by this and remain
+wrong. Overall headline accuracy barely moved because of this one
+change alone. product_name is still stuck at 0% everywhere, including
+through the AI model — a separate, still-unexplained problem that this
+fix does not address.
 
 ## Tonight's memory trouble, in plain terms
 
