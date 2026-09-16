@@ -593,12 +593,40 @@ could ever work), just not one with its own accuracy number to show yet.
 Not treated as a finished win in the numbers above; the address field's
 own accuracy is unchanged this round.
 
+## Looked at "Registered office / Corporate office" -- decided not to guess
+
+Read this structure's real text directly (Cal. Vit D IRN120-3.pdf):
+
+```
+B-1/357 Registered office:
+Janakpuri, New Delhi - 110058
+NESCO IT Park, Corporate office:
+Building 4, North Wing,
+Western Express Highway,
+Goregaon, Mumbai, Maharashtra
+```
+
+The real content ("B-1/357", "NESCO IT Park") is drawn BEFORE its own
+"Registered office:" / "Corporate office:" label in the PDF's own
+content stream, even though it belongs AFTER the label when read as a
+sentence -- the ground truth reads "Registered office: B-1/357
+Janakpuri...". Recovering this correctly would mean detecting the label,
+reaching backward to the text drawn just before it, and re-ordering --
+a real, working fix, but only confirmed on this ONE template family so
+far (4 cells: Cal. Vit D IRN120-3/4, Iron IRN121-3/4). Unlike tonight's
+other fixes (allergen words, corporate-division lines, hyphen spacing --
+all clearly general, industry-wide conventions), this specific
+before-the-label draw order looks like it could just as easily be this
+one template's own graphic design choice, not something that
+generalizes to a label never seen. Rather than build something this
+narrow's worth of code on one confirmed example and risk it being wrong
+for the next label that uses "Registered office" differently, this is
+being left alone -- a real, human judgment call, not a guess made
+because it was late.
+
 ## What's next
 
-The "Registered office / Corporate office" two-part address structure
-is the next concrete thing worth trying, now that the ligature glitch
-that was scrambling those same labels' text is out of the way. After
-that: brand/product name still has real room -- most of the STILL-wrong
+Brand/product name still has real room -- most of the STILL-wrong
 guesses are unrelated marketing text with no company-name or allergen-
 word overlap, a different, harder sub-pattern not addressed by anything
 tried so far, and product name's AI-model answer rate could likely
