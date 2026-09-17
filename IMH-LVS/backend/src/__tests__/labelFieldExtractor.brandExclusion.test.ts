@@ -52,3 +52,44 @@ Calcimax Nutraceuticals Pvt. Ltd.`;
   assert.equal(fields.marketingCompany, 'Calcimax Nutraceuticals Pvt. Ltd.');
   assert.equal(fields.brand, 'Cal Pro');
 });
+
+// Real wrong answer (Calcimax Pack 30/60 IRN168/169-2.pdf, eval/diff.py
+// --mode pipeline --field product_name): productName came back as
+// "Meyer Organics Pvt. Ltd." -- the label's own marketing company name
+// -- instead of "Calcimax Gummies", the real product name printed
+// nearby in the same title-candidate block. A company-suffix-shaped
+// line is never a real product name, checked independently of whether
+// it happens to match the marketingCompany field's own resolved value,
+// so this catches the mistake even on a label where marketingCompany
+// wasn't resolved from the exact same text.
+test('a company-suffix-shaped line is never picked as the product name, even inside the title candidate block', () => {
+  const text = `CALCIMAX
+GUMMIES
+Meyer Organics Pvt. Ltd.
+
+Marketed By:
+Meyer Organics Pvt. Ltd.`;
+  const fields = extractLabelFields(text);
+  assert.notEqual(fields.productName, 'Meyer Organics Pvt. Ltd.');
+  assert.match(fields.productName, /Gummies/i);
+});
+
+// Real follow-up on the SAME real label: excluding the company name (the
+// fix above) surfaced a second real wrong answer sitting right behind it
+// in the same candidate block -- "Not To Be Sold Loose", standard Indian
+// packaged-goods boilerplate. The old TITLE_BOILERPLATE_LINE/
+// ADDRESS_STOP_LINE exclusion already had "to be sold" but anchored to
+// the start of the line, so this real "Not..." phrasing slipped past it.
+test('boilerplate "Not To Be Sold Loose" is excluded from title candidacy, not just "To Be Sold" on its own', () => {
+  const text = `CALCIMAX
+GUMMIES
+Meyer Organics Pvt. Ltd.
+Not To Be Sold Loose
+
+Marketed By:
+Meyer Organics Pvt. Ltd.`;
+  const fields = extractLabelFields(text);
+  assert.notEqual(fields.productName, 'Meyer Organics Pvt. Ltd.');
+  assert.notEqual(fields.productName, 'Not To Be Sold Loose');
+  assert.match(fields.productName, /Gummies/i);
+});

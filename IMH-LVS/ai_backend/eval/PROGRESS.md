@@ -656,13 +656,54 @@ because the machine wouldn't stay up long enough to do that one extra
 confirmation. Getting that one combined number is the very first thing
 to do once memory is behaving normally again.
 
+## Morning: the combined number, confirmed, plus two more small fixes
+
+Memory recovered this morning. The one missing combined measurement
+(everything from last night, AI model on, all at once) finally went
+through cleanly: **35.5% exact match / 48.4% fair match** -- the real,
+current, best-known number, up from the 25.5% starting point.
+
+Also found and fixed two more real, small bugs while reading
+product_name's wrong-answer list:
+
+1. A real wrong answer (Calcimax Pack 30/60 IRN168/169-2.pdf): product
+   name came back as "Meyer Organics Pvt. Ltd." -- the label's own
+   marketing company name. Fixed: a company-suffix-shaped line ("Pvt.
+   Ltd.", "Ltd.", "LLP", "Inc.", ...) is never treated as a real product
+   name candidate, whether or not it happens to match the marketing
+   company field's own value.
+
+2. Excluding that surfaced a SECOND wrong candidate sitting right behind
+   it on the same label: "Not To Be Sold Loose", standard Indian
+   packaged-goods regulatory boilerplate. The existing boilerplate list
+   already excluded "to be sold" -- but only when it was the very first
+   word on the line, so this real "Not..." phrasing slipped through.
+   Fixed the same way "not for medicinal" was already handled elsewhere
+   in the same list.
+
+Both fixes are real, safe, and verified (32/32 tests, including the
+real-fixture regression set). Honest finding: fixing both did NOT flip
+these two specific cells to correct -- there turned out to be a THIRD,
+then apparently a fourth, competing wrong candidate on this one
+template ("Substances . . .", then nothing at all). Each fix removed
+exactly the garbage it targeted, confirmed by checking the real diff
+again after each one -- this is real, incremental data-quality
+improvement, not wasted work -- but this one label's product name isn't
+fully solved yet, and chasing it further would mean guessing at an
+open-ended list of exclusions rather than fixing the actual root cause
+(the title-block logic has no POSITIVE signal for "this is the product
+name," only an ever-growing list of things to rule out). Left here
+rather than continuing to whack individual moles on one template.
+
 ## What's next
 
-After that one combined confirmation: brand/product name still has real
-room -- most of the STILL-wrong guesses are unrelated marketing text
-with no company-name or allergen-word overlap, a different, harder
-sub-pattern not addressed by anything tried so far, and product name's
-AI-model answer rate could likely improve with a better prompt (not
-attempted yet). After that, Step 6 only if the numbers still call for
-it, then Step 7. A full, final test of the whole project and a final
-results write-up come once all of that is done, as asked.
+Brand/product name's harder remaining sub-pattern: most STILL-wrong
+guesses are unrelated marketing text with no company-name or allergen-
+word overlap (not addressed by anything tried so far), and a real,
+different approach -- giving the title-block logic something positive to
+look for, not just more things to exclude -- is worth considering before
+chasing more individual exclusions. Product name's AI-model answer rate
+could also likely improve with a better prompt (not attempted). After
+that, Step 6 only if the numbers still call for it, then Step 7. A full,
+final test of the whole project and a final results write-up come once
+all of that is done, as asked.

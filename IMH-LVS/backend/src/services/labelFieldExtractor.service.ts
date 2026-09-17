@@ -350,7 +350,7 @@ function extractMarketingCompany(lines: string[]): { value: string; lineIndex: n
 const ADDRESS_PREFIX = /^address\s*[:\-]?\s*/i;
 const REGISTERED_OFFICE_PREFIX = /^(registered\s*office|regd\.?\s*office)\s*[:\-]?\s*/i;
 const ADDRESS_STOP_LINE =
-  /^(fssai|customer\s*care|consumer\s*care|helpline|toll[\s-]?free|batch|mfg\.?\s*(date|by)|use\s*by|m\.?r\.?p\.?|manufactured|net\s*(content|wt)|ingredients|nutritional\s*information|to\s*be\s*sold|not\s*for\s*medicinal|recommended\s*usage|health\s*supplement)/i;
+  /^(fssai|customer\s*care|consumer\s*care|helpline|toll[\s-]?free|batch|mfg\.?\s*(date|by)|use\s*by|m\.?r\.?p\.?|manufactured|net\s*(content|wt)|ingredients|nutritional\s*information|(not\s+)?to\s*be\s*sold|not\s*for\s*medicinal|recommended\s*usage|health\s*supplement)/i;
 
 // A city/place name printed directly against a following hyphen with no
 // space before it ("Delhi- 110015") but a normal space after — a real,
@@ -1036,8 +1036,17 @@ function mentionsManufacturingCompany(line: string): boolean {
 // claim-badge text as the immunity/booster/energy/etc. words already
 // excluded below, just verb-led instead of noun-led, and just as common
 // across supplement labels regardless of what the specific claim is about.
+//
+// "(not\s+)?to\s*be\s*sold" (also in ADDRESS_STOP_LINE below): a real
+// wrong productName answer (Calcimax Pack 30/60 IRN168/169-2.pdf, once
+// the company-suffix exclusion above stopped the worse mistake of
+// picking the company's own name) was "Not To Be Sold Loose" — this
+// list already excluded "to be sold" on its own, but anchored to the
+// start of the line, so the real printed wording with "Not" in front of
+// it slipped through. Standard Indian packaged-goods regulatory
+// boilerplate, not specific to this one product.
 const TITLE_BOILERPLATE_LINE =
-  /^(marketed|manufactured|address|fssai|customer\s*care|consumer\s*care|helpline|email|e-mail|website|www\.|toll[\s-]?free|batch|mfg|exp|use\s*by|m\.?r\.?p\.?|price|net\s*(content|wt)|ingredients|images?\s*are|keep\s*out|keep\s*away|store\s*in|not\s*for|registered|regd|facility|nutritional|recommended\s*usage|duration\s*of|do\s*not|this\s*food|contains|health\s*supplement|to\s*be\s*sold|per\s*(gummy|serving)|free\s*of|serving\s*size|no\.?\s*of\s*serving|immunity|booster|energy|vitality|wellness|nutraceutical|daily|ayurvedic|proprietary\s*medicine|supports?\b|helps?\b|promotes?\b|boosts?\b|improves?\b|maintains?\b|enhances?\b)/i;
+  /^(marketed|manufactured|address|fssai|customer\s*care|consumer\s*care|helpline|email|e-mail|website|www\.|toll[\s-]?free|batch|mfg|exp|use\s*by|m\.?r\.?p\.?|price|net\s*(content|wt)|ingredients|images?\s*are|keep\s*out|keep\s*away|store\s*in|not\s*for|registered|regd|facility|nutritional|recommended\s*usage|duration\s*of|do\s*not|this\s*food|contains|health\s*supplement|(not\s+)?to\s*be\s*sold|per\s*(gummy|serving)|free\s*of|serving\s*size|no\.?\s*of\s*serving|immunity|booster|energy|vitality|wellness|nutraceutical|daily|ayurvedic|proprietary\s*medicine|supports?\b|helps?\b|promotes?\b|boosts?\b|improves?\b|maintains?\b|enhances?\b)/i;
 
 const ALL_CAPS_LINE = /^[A-Z][A-Z0-9 &'.-]*$/;
 
@@ -1169,6 +1178,17 @@ function findTitleBlock(lines: string[], marketingCompany: string): TitleBlockRe
   const candidates: { line: string; pos: number }[] = [];
   deduped.forEach((line, pos) => {
     if (overlapsMarketingCompany(line, marketingCompany)) return;
+    // A line shaped like a company name (ends "Pvt. Ltd.", "Ltd.", "LLP",
+    // "Inc.", ...) is never a real product name, regardless of whether it
+    // happens to match the marketingCompany field's own resolved value —
+    // a real wrong answer on Calcimax Pack 30/60 IRN168/169-2.pdf, where
+    // productName came back as "Meyer Organics Pvt. Ltd." (the correct
+    // marketing company's name) rather than "Calcimax Gummies". Checked
+    // independently of overlapsMarketingCompany above as a defense-in-
+    // depth rule, not a duplicate of it — this fires even on a label
+    // where marketingCompany itself wasn't resolved to the same string
+    // yet (or at all), catching the same shape of mistake either way.
+    if (COMPANY_SUFFIX_LINE.test(line)) return;
     // A short ALL-CAPS line immediately following one that ends in a
     // dangling connector ("&", "and", "or", a trailing comma) is the
     // wrapped tail of a longer sentence, not a standalone title — seen in
