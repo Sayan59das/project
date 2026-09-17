@@ -54,7 +54,8 @@ import {
   extractClaims,
   extractIngredients,
   extractNutritionTableFormat,
-  ALLERGEN_DIETARY_WORDS
+  ALLERGEN_DIETARY_WORDS,
+  type ClaimsResult
 } from './labelSemanticExtractor.service';
 import {
   segmentPanels,
@@ -230,6 +231,43 @@ function toResult(fields: ExtractedLabelFields, extended: ExtendedFields): Label
   return { ...fields, manufacturingCompany: FIXED_MANUFACTURING_COMPANY, ...extended.values };
 }
 
+// Real bug found by dumping one real label's actual text both ways
+// (Cal. Vit D IRN120-2.pdf): the geometry-based reading-order text (used
+// as claims' primary source because it generally respects visual layout
+// better) can scramble a badge cluster that sits spatially close to an
+// unrelated block — a "NO GELATIN NO GLUTEN NO MILK..." allergen row
+// next to the nutrition table ends up with "NO" landing on one
+// nutrition-table line and "GELATIN" on a completely different one,
+// losing the claim entirely — while the plain flattened text-layer text
+// keeps the same badge cluster together and finds it correctly. Rather
+// than pick a winner (reading-order text is still better for OTHER
+// labels, which is why it stayed primary), extracting from both and
+// taking the union recovers a real claim whichever text preserves it,
+// with no added fabrication risk: every claim-shape matcher already
+// gates on a narrow, generic word list regardless of which text
+// surfaced the match, so a claim found either way is still a claim
+// really printed on the label.
+export function mergeClaimsResults(primary: ClaimsResult, secondaryText: string | undefined, knownClaims: readonly string[]): ClaimsResult {
+  if (!secondaryText) return primary;
+  const secondary = extractClaims(secondaryText, knownClaims);
+
+  const merged = new Map<string, string>(); // lowercase -> canonical casing, primary wins ties
+  for (const claim of primary.claims.split(' | ')) {
+    if (claim) merged.set(claim.toLowerCase(), claim);
+  }
+  for (const claim of secondary.claims.split(' | ')) {
+    if (claim && !merged.has(claim.toLowerCase())) merged.set(claim.toLowerCase(), claim);
+  }
+
+  const matchedLower = new Set([...primary.matched, ...secondary.matched].map((claim) => claim.toLowerCase()));
+  const mergedClaims = [...merged.values()];
+  return {
+    claims: mergedClaims.join(' | '),
+    matched: mergedClaims.filter((claim) => matchedLower.has(claim.toLowerCase())),
+    unmatched: mergedClaims.filter((claim) => !matchedLower.has(claim.toLowerCase()))
+  };
+}
+
 type ExtendedFields = {
   values: Pick<LabelExtractionResult, 'colourTheme' | 'claims' | 'ingredients' | 'nutritionTableFormat' | 'nutritionTable' | 'displayTextCandidates'>;
   unknownClaims: string[];
@@ -257,9 +295,10 @@ async function extractExtendedFields(
   pageImage: Buffer | undefined,
   knownClaims: readonly string[],
   nutritionTable?: Record<string, string>,
-  displayTextCandidates?: DisplayTextCandidate[]
+  displayTextCandidates?: DisplayTextCandidate[],
+  flattenedText?: string
 ): Promise<ExtendedFields> {
-  const claims = extractClaims(text, knownClaims);
+  const claims = mergeClaimsResults(extractClaims(text, knownClaims), flattenedText, knownClaims);
 
   let colourTheme = '';
   if (pageImage) {
@@ -655,6 +694,22 @@ type FieldPass = {
   displayTextCandidates?: DisplayTextCandidate[];
   /** Phase F: fields this pass filled via VLM role-resolution rather than a direct read. Undefined when that step never ran. */
   fieldMeta?: Record<string, FieldMeta>;
+  /**
+   * The PDF's own flattened text-layer text (before any geometry-based
+   * reordering), when one exists. `text` above is normally BETTER for
+   * claims/ingredients (it respects visual layout the flattened version
+   * doesn't) — but a real, confirmed case (Cal. Vit D IRN120-2.pdf) shows
+   * the geometry-based panel reconstruction can scramble a badge cluster
+   * that sits close to an unrelated block (a "NO GELATIN NO GLUTEN..."
+   * allergen badge row next to the nutrition table) into two different,
+   * unrelated lines, while the plain flattened text keeps them together
+   * correctly. Kept alongside `text`, not instead of it, so claims
+   * extraction can check both and take the union — safe because a claim
+   * found either way is still a claim really on the label, and the
+   * allergen/dietary word allowlists already gate against fabrication
+   * regardless of which text surfaced the match.
+   */
+  flattenedText?: string;
 };
 
 // Recovery helper for display-text candidates: outlined text detected on the
@@ -952,7 +1007,8 @@ async function extractFieldsFromPdf(pdfBuffer: Buffer, knownFlavours: readonly s
       text: orderedText,
       pageImages: [],
       nutritionTable: recoveredNutrition,
-      fieldMeta: recoveredNames.fieldMeta
+      fieldMeta: recoveredNames.fieldMeta,
+      flattenedText: textLayerText
     };
   }
 
@@ -970,7 +1026,8 @@ async function extractFieldsFromPdf(pdfBuffer: Buffer, knownFlavours: readonly s
       text: orderedText,
       pageImages: [],
       nutritionTable,
-      fieldMeta: textLayerFieldMeta
+      fieldMeta: textLayerFieldMeta,
+      flattenedText: textLayerText
     };
   }
 
@@ -1030,7 +1087,7 @@ async function extractFieldsFromPdf(pdfBuffer: Buffer, knownFlavours: readonly s
     }
   }
 
-  return { fields, text: finalText, pageImages, nutritionTable, displayTextCandidates, fieldMeta };
+  return { fields, text: finalText, pageImages, nutritionTable, displayTextCandidates, fieldMeta, flattenedText: textLayerText };
 }
 
 async function extractFieldsFromImage(imageBuffer: Buffer, knownFlavours: readonly string[]): Promise<FieldPass> {
@@ -1163,7 +1220,7 @@ export async function extractLabelFromTextLayerOnly(
     debugLog(`Parsed fields: ${JSON.stringify(fields)}`);
 
     // Extract extended fields without a page image (text layer only, no colour)
-    const extended = await extractExtendedFields(text, undefined, knownClaims, nutritionTable);
+    const extended = await extractExtendedFields(text, undefined, knownClaims, nutritionTable, undefined, textLayerText);
     const result = toResult(fields, extended);
 
     // Post-process the result: placeholder scrubbing, garbage detection, AI fallback
@@ -1249,7 +1306,14 @@ export async function extractLabelReportFromFile(
       }
     }
 
-    const extended = await extractExtendedFields(pass.text, pageImage, knownClaims, pass.nutritionTable, pass.displayTextCandidates);
+    const extended = await extractExtendedFields(
+      pass.text,
+      pageImage,
+      knownClaims,
+      pass.nutritionTable,
+      pass.displayTextCandidates,
+      pass.flattenedText
+    );
     const result = toResult(pass.fields, extended);
 
     // Post-process the result: placeholder scrubbing, garbage detection, AI fallback

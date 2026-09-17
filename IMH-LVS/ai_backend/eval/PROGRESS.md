@@ -695,6 +695,30 @@ open-ended list of exclusions rather than fixing the actual root cause
 name," only an ever-growing list of things to rule out). Left here
 rather than continuing to whack individual moles on one template.
 
+## Claims: a real, deeper bug found and fixed, confirmed
+
+Read claims' still-missing list again and noticed several labels in the
+Cal. Vit D family still missing their "No Gelatin"/"No Gluten"/etc.
+badges even though the same fix already worked for a different label in
+the same family. Dumped the real text two different ways to compare:
+the plain flattened PDF text keeps "NO GELATIN NO GLUTEN..." together
+correctly, but the geometry-based "reading order" text (used as claims'
+main source because it's generally better for other labels) scrambles
+this particular badge cluster into two unrelated lines because it sits
+close to the nutrition table -- "NO" ends up on one nutrition row,
+"GELATIN" on a different one, and the claim is lost entirely. Confirmed
+by testing extractClaims against each version of the real text directly.
+
+Fixed by extracting claims from BOTH versions of the text and combining
+what each one finds, instead of picking one -- safe because a claim
+found either way is still something really printed on the label, and
+every claim rule already only accepts a small, safe list of allergen/
+dietary words regardless of which text surfaced it. 56/56 tests pass.
+
+**Real, confirmed result:** claims 96 -> 105 correct (strict), 101 -> 110
+(fuzzy), missing dropped from 250 to 241. Accuracy 26.2% -> 28.3%.
+**New combined headline: 35.9% exact match / 48.8% fair match.**
+
 ## What's next
 
 Brand/product name's harder remaining sub-pattern: most STILL-wrong
