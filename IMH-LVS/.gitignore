@@ -49,3 +49,10 @@ ai_backend/finetune/eval/
 # breakdown) — regenerable by re-running score.py. RESULTS.md (the summary
 # every accuracy number must trace back to) is NOT ignored and stays tracked.
 ai_backend/eval/runs/
+
+# Real client label source files — must never leave localhost (see the
+# project ground rules). "all labels/" is the current working copy of the
+# client's PDFs/images used by eval/score.py's EVAL_LABEL_PDF_DIR; nothing
+# under it belongs in git or any remote.
+/all labels/
+scratch/

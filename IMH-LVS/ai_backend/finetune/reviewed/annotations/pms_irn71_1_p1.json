@@ -1,7 +1,27 @@
 {
+  "image_file": "pms_irn71_1_p1.png",
+  "sourceFile": "PMS IRN71-1.pdf",
+  "page": 1,
+  "reviewed": true,
+  "reviewedAt": 1789639162909,
+  "isFront": true,
   "label": {
-    "address": "Plot No. 70/85/86, Bhatoli Kalan, Baddi (H.P.); A.O.: SCO No. 48, Sector-5, MDC, PKL (H.R.) 134114",
     "brand_name": "BioFaith",
+    "product_name": "PMS Gummies (Chamomile & Chasteberry)",
+    "marketing_company": "BioFaith (A Division of LXIR Medilabs Pvt. Ltd.)",
+    "manufacturing_company": "IM Healthcare Pvt. Ltd.",
+    "fssai_number": "10924999000008",
+    "package_size": "30 Gummies",
+    "flavour": "Strawberry",
+    "colour_theme": [
+      "Dusty Pink",
+      "Rose"
+    ],
+    "logo": "Stylised leaf-swirl B in the BioFaith wordmark",
+    "layout": "Bottle label (jar cap circles + wraparound body label)",
+    "customer_care_number": "0172-4045014",
+    "customer_care_email": "info@biofaith.in",
+    "address": "Plot No. 70/85/86, Bhatoli Kalan, Baddi (H.P.); A.O.: SCO No. 48, Sector-5, MDC, PKL (H.R.) 134114",
     "claims": [
       "Supports Menstrual Comfort",
       "Supports Hormonal Balance",
@@ -12,14 +32,6 @@
       "Nut Free",
       "Cruelty Free"
     ],
-    "colour_theme": [
-      "Dusty Pink",
-      "Rose"
-    ],
-    "customer_care_email": "info@biofaith.in",
-    "customer_care_number": "0172-4045014",
-    "flavour": "Strawberry",
-    "fssai_number": "10924999000008",
     "ingredients": [
       "Corn Syrup",
       "Sugar",
@@ -39,10 +51,6 @@
       "Vitamin B12",
       "Natural Sweetener Stevia (INS 960)"
     ],
-    "layout": "Bottle label (jar cap circles + wraparound body label)",
-    "logo": "Stylised leaf-swirl B in the BioFaith wordmark",
-    "manufacturing_company": "IM Healthcare Pvt. Ltd.",
-    "marketing_company": "BioFaith (A Division of LXIR Medilabs Pvt. Ltd.)",
     "nutrition_table": {
       "Beet Root Extract (Beta vulgaris)": "10 mg",
       "Chamomile (Matricaria chamomilla/recutita aerial parts extract)": "20 mg",
@@ -59,13 +67,7 @@
       "Total Carbohydrate": "2.28 g",
       "Vitamin B12 (as Cyanocobalamin)": "2 mcg (91% DV)",
       "Vitamin B6 (as Pyridoxine HCl)": "0.5 mg (26% DV)"
-    },
-    "package_size": "30 Gummies",
-    "product_name": "PMS Gummies (Chamomile & Chasteberry)"
+    }
   },
-  "page": 1,
-  "reviewed": true,
-  "reviewedAt": 1789132800053,
-  "isFront": true,
-  "sourceFile": "PMS IRN71-1.pdf"
+  "aiReviewNotes": "[AI first-pass review, pending human confirmation] All priority fields, claims, and full 15-row nutrition_table checked directly against the image -- all correct and complete, no %DV omissions here (matches the same Chamomile/Chasteberry formula as Femirio Gummies, same numbers)."
 }

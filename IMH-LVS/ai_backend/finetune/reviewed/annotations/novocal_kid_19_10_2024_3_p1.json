@@ -3,7 +3,7 @@
   "sourceFile": "Novocal Kid 19-10-2024 (3).jpg",
   "page": 1,
   "reviewed": true,
-  "reviewedAt": 1789132800052,
+  "reviewedAt": 1789663476604,
   "isFront": true,
   "label": {
     "brand_name": "Novocal-Kid",
@@ -22,13 +22,13 @@
     "logo": null,
     "layout": "Pouch label (flattened, front + back panels)",
     "nutrition_table": {
-      "Calories": "12 kcal",
+      "Calories": "12 kcal (<0.6% DV)",
       "Total Carbohydrate": "3.2 g",
       "Sugar": "2.4 g",
       "Dietary Fiber (as pectin)": "0.08 g",
-      "Proteins": "0 g",
-      "Fats": "0 g",
-      "Sodium": "4 mg",
+      "Proteins": "0 g (0% DV)",
+      "Fats": "0 g (0% DV)",
+      "Sodium": "4 mg (<0.5% DV)",
       "Calcium (as Tricalcium Phosphate)": "125 mg",
       "Vitamin D (as Ergocalciferol) (200IU of Vitamin D=5mcg)": "200 IU"
     },
@@ -49,5 +49,6 @@
     "customer_care_email": "novogenpharma@gmail.com",
     "package_size": "30 N",
     "manufacturing_company": "IM Healthcare Pvt. Ltd."
-  }
+  },
+  "aiReviewNotes": "AI-resolved per explicit user request. DECISION: marked reviewed, but the Calcium and Vitamin D rows' Adults-column %DV are deliberately left as printed (without those two specific numbers) rather than guessed -- they were not legible with confidence at the available image resolution even after a second look, and inventing digits I could not verify would be worse than leaving them out. Every other value in this file (all other rows, all other fields) is confirmed correct and complete."
 }

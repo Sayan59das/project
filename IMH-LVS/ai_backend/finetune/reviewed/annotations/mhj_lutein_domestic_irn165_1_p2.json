@@ -1,7 +1,26 @@
 {
+  "image_file": "mhj_lutein_domestic_irn165_1_p2.png",
+  "sourceFile": "MHJ Lutein Domestic IRN165-1.pdf",
+  "page": 2,
+  "reviewed": true,
+  "reviewedAt": 1789639100102,
+  "isFront": false,
   "label": {
-    "address": "DSM-030/031, DLF Tower, Shivaji Marg, New Delhi, West Delhi, Delhi - 110015, INDIA",
     "brand_name": null,
+    "product_name": null,
+    "marketing_company": "MHJ Pharmaconcepts Private Limited",
+    "manufacturing_company": "IM Healthcare Pvt. Ltd.",
+    "fssai_number": "13324009000080",
+    "package_size": "30 Gummies",
+    "flavour": "Strawberry-Mint",
+    "colour_theme": [
+      "Orange"
+    ],
+    "logo": null,
+    "layout": null,
+    "customer_care_number": "+91 78650 06500",
+    "customer_care_email": "support@wooby.in",
+    "address": "DSM-030/031, DLF Tower, Shivaji Marg, New Delhi, West Delhi, Delhi - 110015, INDIA",
     "claims": [
       "No Artificial Colours",
       "No Preservatives",
@@ -14,13 +33,6 @@
       "Soy Free",
       "Cruelty Free"
     ],
-    "colour_theme": [
-      "Orange"
-    ],
-    "customer_care_email": "support@wooby.in",
-    "customer_care_number": "+91 78650 06500",
-    "flavour": "Strawberry-Mint",
-    "fssai_number": "13324009000080",
     "ingredients": [
       "Glucose",
       "Cane Sugar",
@@ -31,10 +43,6 @@
       "Strawberry-Mint Flavour",
       "Natural Sweetener Stevia (INS 960)"
     ],
-    "layout": null,
-    "logo": null,
-    "manufacturing_company": "IM Healthcare Pvt. Ltd.",
-    "marketing_company": "MHJ Pharmaconcepts Private Limited",
     "nutrition_table": {
       "Dietary Fiber (as Pectin)": "0.05 g",
       "Energy": "8 kcal (<1% DV)",
@@ -45,13 +53,7 @@
       "Sugars": "1.6 g",
       "Total Carbohydrate": "2.2 g",
       "Zeaxanthin (Lutegen, 50mg Marigold Flower/Tagetes erecta Extract)": "2 mg"
-    },
-    "package_size": "30 Gummies",
-    "product_name": null
+    }
   },
-  "page": 2,
-  "reviewed": true,
-  "reviewedAt": 1789132800049,
-  "isFront": false,
-  "sourceFile": "MHJ Lutein Domestic IRN165-1.pdf"
+  "aiReviewNotes": "[AI first-pass review, pending human confirmation] Same content as eye_wellness_domestic_label_mhj_p2.json (already thoroughly verified row-by-row), just this later artwork revision -- full nutrition_table and ingredients re-checked directly against this image, all correct. All 6 free-from icons listed individually here (no consolidating pill badge on this specific proof), matching the image."
 }

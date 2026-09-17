@@ -1,13 +1,27 @@
 {
+  "image_file": "sleeprio_gummies_p1.png",
   "sourceFile": "Sleeprio Gummies.pdf",
   "page": 1,
   "reviewed": true,
-  "reviewedAt": 1789132800058,
+  "reviewedAt": 1789663476489,
   "isFront": true,
-  "aiReviewNotes": "package_size is ambiguous the same way as Riofill Fe Next: the front ribbon says '10 GUMMIES' (kept) but the back panel's own nutrition table says 'No. of Serving per container 30' at 1 gummy/serving (=30) and 'Net Content: 30 N'. Looks like a real inconsistency in the artwork, not a misread — please confirm the true count.",
   "label": {
-    "address": "654, Arjun Nagar, Nanhera Road, Ambala Cantt, Haryana, India - 133001",
     "brand_name": "Sleeprio",
+    "product_name": "Relax Gummies for Adults",
+    "marketing_company": "Riomedica Healthcare Pvt. Ltd.",
+    "manufacturing_company": "IM Healthcare Pvt. Ltd.",
+    "fssai_number": "10824999000328",
+    "package_size": "30 Gummies",
+    "flavour": "Strawberry",
+    "colour_theme": [
+      "Purple",
+      "White"
+    ],
+    "logo": "Green leaf icon above the RIOMEDICA wordmark",
+    "layout": "Carton",
+    "customer_care_number": "+91 82229 99972",
+    "customer_care_email": "riomedicahealthcare@gmail.com",
+    "address": "654, Arjun Nagar, Nanhera Road, Ambala Cantt, Haryana, India - 133001",
     "claims": [
       "Sleep Better. Wake Refreshed.",
       "Riomedica Relax Gummies are thoughtfully formulated with melatonin and botanical extracts to support restful sleep and relaxation",
@@ -23,14 +37,6 @@
       "Nut Free",
       "Soy Free"
     ],
-    "colour_theme": [
-      "Purple",
-      "White"
-    ],
-    "customer_care_email": "riomedicahealthcare@gmail.com",
-    "customer_care_number": "+91 82229 99972",
-    "flavour": "Strawberry",
-    "fssai_number": "10824999000328",
     "ingredients": [
       "Corn Syrup",
       "Sugar",
@@ -43,10 +49,6 @@
       "Food Colours: Black Carrot Concentrate (Daucus carota root extract)",
       "Natural Sweetener Stevia (INS 960)"
     ],
-    "layout": "Carton",
-    "logo": "Green leaf icon above the RIOMEDICA wordmark",
-    "manufacturing_company": "IM Healthcare Pvt. Ltd.",
-    "marketing_company": "Riomedica Healthcare Pvt. Ltd.",
     "nutrition_table": {
       "Ashwagandha (Withania Somnifera Root Extract)": "50 mg",
       "Dietary Fiber (as Pectin)": "0.06 g",
@@ -57,8 +59,7 @@
       "Sodium": "4 mg (<0.5% DV)",
       "Sugars": "1.77 g",
       "Total Carbohydrate": "2.4 g"
-    },
-    "package_size": "10 Gummies",
-    "product_name": "Relax Gummies for Adults"
-  }
+    }
+  },
+  "aiReviewNotes": "AI-resolved per explicit user request (time-constrained). DECISION: package_size changed to '30 Gummies'. Reasoning: two independent back-panel data points agree on 30 (serving-size x servings-per-container math, AND a separate 'Net Content: 30 N' line), while '10 GUMMIES' is a single front ribbon badge using an identical generic phrase across all 4 otherwise-unrelated products in this conflict group -- the signature of an unfixed shared design-template default rather than a deliberately-set number. The 'Duration of Usage: at least 3 months' instruction on these labels also fits a ~30-count pack at 1/day far better than a 10-count pack. This is a judgment call under real artwork ambiguity, not a certain fact -- flagging the reasoning here in case it needs revisiting. (was '10 Gummies')"
 }

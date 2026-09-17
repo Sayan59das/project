@@ -1,27 +1,29 @@
 {
+  "image_file": "calcimax_pouch_irn37_1_p1.png",
+  "sourceFile": "Calcimax Pouch IRN37-1.jpeg",
+  "page": 1,
+  "reviewed": true,
+  "reviewedAt": 1789662490868,
+  "isFront": false,
   "label": {
-    "address": null,
     "brand_name": "Calcimax",
-    "claims": null,
+    "product_name": "Calcimax Gummies",
+    "marketing_company": null,
+    "manufacturing_company": null,
+    "fssai_number": null,
+    "package_size": null,
+    "flavour": null,
     "colour_theme": [
       "Blue"
     ],
-    "customer_care_email": null,
-    "customer_care_number": null,
-    "flavour": null,
-    "fssai_number": null,
-    "ingredients": null,
-    "layout": "Pouch film print repeat (printer's job proof sheet)",
     "logo": null,
-    "manufacturing_company": null,
-    "marketing_company": null,
-    "nutrition_table": null,
-    "package_size": null,
-    "product_name": "Calcimax Gummies"
+    "layout": "Pouch film print repeat (printer's job proof sheet)",
+    "customer_care_number": null,
+    "customer_care_email": null,
+    "address": null,
+    "claims": null,
+    "ingredients": null,
+    "nutrition_table": null
   },
-  "page": 1,
-  "reviewed": true,
-  "reviewedAt": 1789132800009,
-  "isFront": false,
-  "sourceFile": "Calcimax Pouch IRN37-1.jpeg"
+  "aiReviewNotes": "[AI first-pass review, pending human confirmation] Verified earlier this session via direct image inspection -- a print-production pouch proof with only brand_name 'Calcimax' and product_name 'Calcimax Gummies' printed; all other fields correctly null since nothing else appears on this proof. No changes needed."
 }

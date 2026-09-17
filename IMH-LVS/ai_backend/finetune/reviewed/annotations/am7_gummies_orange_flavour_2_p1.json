@@ -3,16 +3,24 @@
   "sourceFile": "AM7 GUMMIES - ORANGE  FLAVOUR (2).pdf",
   "page": 1,
   "reviewed": true,
-  "reviewedAt": 1789496617317,
+  "reviewedAt": 1789638205188,
   "isFront": true,
-  "aiReviewNotes": "Two possible brand/company readings: the small 'GUERISON' wordmark+icon and the large 'AM7 gummies' wordmark both appear on-package. Set brand_name=AM7 (the prominent display name) and marketing_company=Guerison Infusions Private Limited, matching the pattern used for sibling Riomedica-marketed products, but this should be confirmed. This image is a single flattened full carton (front marketing panel + nutrition/ingredients together), not a separate front-only page. [2026-09-15 correction: product_name changed from the descriptor line (\"Eye Multivitamin Gummies for Kids & Adults\") to the wordmark (\"AM7 Gummies\"), per the client's own answer to the Step 4.1 definition question recorded in ai_backend/eval/RESULTS.md -- product_name is the brand wordmark, not the descriptor. This also resolves the page1/page2 product_name conflict listed in RESULTS.md, since page 2 already had \"AM7 Gummies\".]",
   "label": {
     "brand_name": "AM7",
     "product_name": "AM7 Gummies",
+    "marketing_company": "Guerison Infusions Private Limited",
+    "manufacturing_company": "IM Healthcare Pvt. Ltd.",
+    "fssai_number": "10825005000687",
+    "package_size": "15 Gummies",
+    "flavour": "Orange",
     "colour_theme": [
       "Orange"
     ],
-    "flavour": "Orange",
+    "logo": "Stylised wave/hand swoosh icon above the GUERISON wordmark",
+    "layout": "Carton (flattened, front and back content together)",
+    "customer_care_number": "+91 98 710 54 111",
+    "customer_care_email": "info@guerison.in",
+    "address": "Plot No. 620, Phase - V, Udyog Vihar, Gurugram, Haryana - 122016",
     "claims": [
       "Gelatin Free",
       "Gluten Free",
@@ -20,25 +28,6 @@
       "Soy Free",
       "Best in Class, Best in Taste"
     ],
-    "logo": "Stylised wave/hand swoosh icon above the GUERISON wordmark",
-    "layout": "Carton (flattened, front and back content together)",
-    "nutrition_table": {
-      "Energy": "16 kcal",
-      "Total Carbohydrate": "4.4 g",
-      "Sugars": "3.2 g",
-      "Dietary Fiber (as Pectin)": "0.10 g",
-      "Proteins": "0 g",
-      "Fats": "0 g",
-      "Sodium": "8 mg",
-      "Omega 3 (DHA/Algal DHA 10%)": "100 mg",
-      "Vitamin C (as Ascorbic Acid)": "30 mg",
-      "Vitamin E (as D-Alpha Tocopherol Acetate)": "5.04 mg",
-      "Lutein 20%": "4 mg",
-      "Astaxanthin 2%": "1600 mcg",
-      "Zeaxanthin 10%": "800 mcg",
-      "Vitamin A (as Vitamin A Palmitate)": "499.8 mcg"
-    },
-    "fssai_number": "10825005000687",
     "ingredients": [
       "Corn Syrup",
       "Sugar",
@@ -55,11 +44,22 @@
       "Vitamin A",
       "Natural Sweetener Stevia (INS 960)"
     ],
-    "marketing_company": "Guerison Infusions Private Limited",
-    "address": "Plot No. 620, Phase - V, Udyog Vihar, Gurugram, Haryana - 122016",
-    "customer_care_number": "+91 98 710 54 111",
-    "customer_care_email": "info@guerison.in",
-    "package_size": "15 Gummies",
-    "manufacturing_company": "IM Healthcare Pvt. Ltd."
-  }
+    "nutrition_table": {
+      "Energy": "16 kcal",
+      "Total Carbohydrate": "4.4 g",
+      "Sugars": "3.2 g",
+      "Dietary Fiber (as Pectin)": "0.10 g",
+      "Proteins": "0 g",
+      "Fats": "0 g",
+      "Sodium": "8 mg",
+      "Omega 3 (DHA/Algal DHA 10%)": "100 mg",
+      "Vitamin C (as Ascorbic Acid)": "30 mg",
+      "Vitamin E (as D-Alpha Tocopherol Acetate)": "5.04 mg",
+      "Lutein 20%": "4 mg",
+      "Astaxanthin 2%": "1600 mcg",
+      "Zeaxanthin 10%": "800 mcg",
+      "Vitamin A (as Vitamin A Palmitate)": "499.8 mcg"
+    }
+  },
+  "aiReviewNotes": "[AI first-pass review, pending human confirmation] Verified via direct image inspection -- all fields (claims, full nutrition_table, ingredients) checked against the real label image, all correct."
 }

@@ -1,7 +1,27 @@
 {
+  "image_file": "iron_vf_irn36_1_p1.png",
+  "sourceFile": "Iron VF IRN36-1.pdf",
+  "page": 1,
+  "reviewed": true,
+  "reviewedAt": 1789638803736,
+  "isFront": true,
   "label": {
-    "address": "IX/33-B, Kerala, South (India) PIN-676306",
     "brand_name": "Duored",
+    "product_name": "Duored Gummies",
+    "marketing_company": "De'glora Cosmed (Div. of LifeGLORA)",
+    "manufacturing_company": "IM Healthcare Pvt. Ltd.",
+    "fssai_number": "11326999000167",
+    "package_size": "30 Gummies",
+    "flavour": "Strawberry",
+    "colour_theme": [
+      "Red",
+      "White"
+    ],
+    "logo": "Red liquid droplet graphic beside the Duored wordmark",
+    "layout": "Bottle label (wraparound)",
+    "customer_care_number": "+91 974 6355 444",
+    "customer_care_email": "degloracosmed@gmail.com",
+    "address": "IX/33-B, Kerala, South (India) PIN-676306",
     "claims": [
       "Iron contributes to reduction of tiredness and fatigue",
       "Supports energy metabolism",
@@ -15,14 +35,6 @@
       "Nut Free",
       "Soy Free"
     ],
-    "colour_theme": [
-      "Red",
-      "White"
-    ],
-    "customer_care_email": "degloracosmed@gmail.com",
-    "customer_care_number": "+91 974 6355 444",
-    "flavour": "Strawberry",
-    "fssai_number": "11326999000167",
     "ingredients": [
       "Corn Syrup",
       "Sugar",
@@ -34,10 +46,6 @@
       "Food Colour: Black Carrot Concentrate (Daucus Carota root extract)",
       "Natural Sweetener Stevia (INS 960)"
     ],
-    "layout": "Bottle label (wraparound)",
-    "logo": "Red liquid droplet graphic beside the Duored wordmark",
-    "manufacturing_company": "IM Healthcare Pvt. Ltd.",
-    "marketing_company": "De'glora Cosmed (Div. of LifeGLORA)",
     "nutrition_table": {
       "Dietary Fiber (as Pectin)": "0.10 g",
       "Energy": "16 kcal (<1% DV)",
@@ -47,13 +55,7 @@
       "Sodium": "8 mg (<1% DV)",
       "Sugars": "3.2 g",
       "Total Carbohydrate": "4.4 g"
-    },
-    "package_size": "30 Gummies",
-    "product_name": "Duored Gummies"
+    }
   },
-  "page": 1,
-  "reviewed": true,
-  "reviewedAt": 1789132800037,
-  "isFront": true,
-  "sourceFile": "Iron VF IRN36-1.pdf"
+  "aiReviewNotes": "[AI first-pass review, pending human confirmation] This is one of the 15 priority-sample labels. All priority fields, claims (11 items), and the full nutrition_table (including the Kids 100% / Teens 50% DV split on the Iron row) checked directly against the image -- all correct and complete, no %DV omissions here. Confirmed 'Ferric Diphosphate' (not 'Ferric Pyrophosphate' as on the BioFaith/ChewNectar Iron labels) is genuinely what THIS label prints -- correctly not normalized to match sibling files."
 }

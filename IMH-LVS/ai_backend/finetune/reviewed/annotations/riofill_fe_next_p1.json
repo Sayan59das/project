@@ -1,13 +1,27 @@
 {
+  "image_file": "riofill_fe_next_p1.png",
   "sourceFile": "Riofill Fe Next.pdf",
   "page": 1,
   "reviewed": true,
-  "reviewedAt": 1789132800056,
+  "reviewedAt": 1789663476470,
   "isFront": true,
-  "aiReviewNotes": "package_size is genuinely ambiguous on this label: the front ribbon badge reads '10 GUMMIES' (kept, matching the existing value) but the back panel's own regulatory fields say 'Net Content: 30 N' and 'No. of Serving: per container 15' at 2 gummies/serving (=30). This looks like a real inconsistency in the artwork itself, not a misread — please confirm which count is correct.",
   "label": {
-    "address": "654, Arjun Nagar, Nanhera Road, Ambala Cantt, Haryana, India - 133001",
     "brand_name": "Riofill fe Next",
+    "product_name": "Iron Gummies",
+    "marketing_company": "Riomedica Healthcare Pvt. Ltd.",
+    "manufacturing_company": "IM Healthcare Pvt. Ltd.",
+    "fssai_number": "10824999000328",
+    "package_size": "30 Gummies",
+    "flavour": "Classic Strawberry",
+    "colour_theme": [
+      "Pink",
+      "White"
+    ],
+    "logo": "Green leaf icon above the RIOMEDICA wordmark",
+    "layout": "Carton",
+    "customer_care_number": "+91 82229 99972",
+    "customer_care_email": "riomedicahealthcare@gmail.com",
+    "address": "654, Arjun Nagar, Nanhera Road, Ambala Cantt, Haryana, India - 133001",
     "claims": [
       "Because Every Mother Deserves the Best Care",
       "RIOFILL Fe Next is formulated with bioavailable iron to support healthy hemoglobin formation during pregnancy",
@@ -27,14 +41,6 @@
       "Nut Free",
       "Soy Free"
     ],
-    "colour_theme": [
-      "Pink",
-      "White"
-    ],
-    "customer_care_email": "riomedicahealthcare@gmail.com",
-    "customer_care_number": "+91 82229 99972",
-    "flavour": "Classic Strawberry",
-    "fssai_number": "10824999000328",
     "ingredients": [
       "Maltitol Powder (INS 965i)",
       "Maltitol Syrup (INS 965ii)",
@@ -48,10 +54,6 @@
       "Vitamin B9",
       "Vitamin B12"
     ],
-    "layout": "Carton",
-    "logo": "Green leaf icon above the RIOMEDICA wordmark",
-    "manufacturing_company": "IM Healthcare Pvt. Ltd.",
-    "marketing_company": "Riomedica Healthcare Pvt. Ltd.",
     "nutrition_table": {
       "Added Sugar": "0 g",
       "Energy": "8.4 kcal (<1% DV)",
@@ -65,8 +67,7 @@
       "Total Carbohydrate": "4 g",
       "Vitamin B12 (as Cyanocobalamin)": "0.6 mcg (24% RDA)",
       "Vitamin C (as Ascorbic Acid)": "30 mg (38% RDA)"
-    },
-    "package_size": "10 Gummies",
-    "product_name": "Iron Gummies"
-  }
+    }
+  },
+  "aiReviewNotes": "AI-resolved per explicit user request (time-constrained). DECISION: package_size changed to '30 Gummies'. Reasoning: two independent back-panel data points agree on 30 (serving-size x servings-per-container math, AND a separate 'Net Content: 30 N' line), while '10 GUMMIES' is a single front ribbon badge using an identical generic phrase across all 4 otherwise-unrelated products in this conflict group -- the signature of an unfixed shared design-template default rather than a deliberately-set number. The 'Duration of Usage: at least 3 months' instruction on these labels also fits a ~30-count pack at 1/day far better than a 10-count pack. This is a judgment call under real artwork ambiguity, not a certain fact -- flagging the reasoning here in case it needs revisiting. (was '10 Gummies')"
 }

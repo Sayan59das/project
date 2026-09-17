@@ -1,7 +1,26 @@
 {
+  "image_file": "femirio_gummies_p1.png",
+  "sourceFile": "Femirio Gummies.pdf",
+  "page": 1,
+  "reviewed": true,
+  "reviewedAt": 1789663476510,
+  "isFront": true,
   "label": {
-    "address": "654, Arjun Nagar, Nanhera Road, Ambala Cantt, Haryana, India - 133001",
     "brand_name": "Femirio",
+    "product_name": "PMS Gummies",
+    "marketing_company": "Riomedica Healthcare Pvt. Ltd.",
+    "manufacturing_company": "IM Healthcare Pvt. Ltd.",
+    "fssai_number": "10824999000328",
+    "package_size": "30 Gummies",
+    "flavour": "Strawberry",
+    "colour_theme": [
+      "Pink"
+    ],
+    "logo": "Green leaf icon above the RIOMEDICA wordmark",
+    "layout": "Carton",
+    "customer_care_number": "+91 82229 99972",
+    "customer_care_email": "riomedicahealthcare@gmail.com",
+    "address": "654, Arjun Nagar, Nanhera Road, Ambala Cantt, Haryana, India - 133001",
     "claims": [
       "Empowering Women's Wellness, Every Day",
       "PMS Gummies are thoughtfully formulated to support hormonal balance, emotional well-being, and everyday comfort",
@@ -14,14 +33,6 @@
       "Nut Free",
       "Soy Free"
     ],
-    "colour": null,
-    "colour_theme": [
-      "Pink"
-    ],
-    "customer_care_email": "riomedicahealthcare@gmail.com",
-    "customer_care_number": "+91 82229 99972",
-    "flavour": "Strawberry",
-    "fssai_number": "10824999000328",
     "ingredients": [
       "Corn Syrup",
       "Sugar",
@@ -41,10 +52,6 @@
       "Vitamin B12",
       "Natural Sweetener Stevia (INS 960)"
     ],
-    "layout": "Carton",
-    "logo": "Green leaf icon above the RIOMEDICA wordmark",
-    "manufacturing_company": "IM Healthcare Pvt. Ltd.",
-    "marketing_company": "Riomedica Healthcare Pvt. Ltd.",
     "nutrition_table": {
       "Beet Root Extract (Beta vulgaris)": "10 mg",
       "Chamomile (Matricaria chamomilla/recutita aerial parts extract)": "20 mg",
@@ -61,13 +68,7 @@
       "Total Carbohydrate": "2.28 g",
       "Vitamin B12 (as Cyanocobalamin)": "2 mcg (91% DV)",
       "Vitamin B6 (as Pyridoxine HCl)": "0.5 mg (26% DV)"
-    },
-    "package_size": "10 Gummies",
-    "product_name": "PMS Gummies"
+    }
   },
-  "page": 1,
-  "reviewed": true,
-  "reviewedAt": 1789132800021,
-  "isFront": true,
-  "sourceFile": "Femirio Gummies.pdf"
+  "aiReviewNotes": "AI-resolved per explicit user request (time-constrained). DECISION: package_size changed to '30 Gummies'. Reasoning: two independent back-panel data points agree on 30 (serving-size x servings-per-container math, AND a separate 'Net Content: 30 N' line), while '10 GUMMIES' is a single front ribbon badge using an identical generic phrase across all 4 otherwise-unrelated products in this conflict group -- the signature of an unfixed shared design-template default rather than a deliberately-set number. The 'Duration of Usage: at least 3 months' instruction on these labels also fits a ~30-count pack at 1/day far better than a 10-count pack. This is a judgment call under real artwork ambiguity, not a certain fact -- flagging the reasoning here in case it needs revisiting. (was '10 Gummies')"
 }

@@ -893,11 +893,31 @@ function looksLikeAllergenCallout(value: string): boolean {
 // here is what gives the recovery passes below (targeted OCR, VLM
 // display-role resolution) a chance to find the real one instead of a
 // wrong-but-non-empty guess silently blocking them forever.
+// A small, unambiguous print-production/pre-press vocabulary — real
+// wrong guesses seen on several client labels' "VF" (die-line/vector-
+// file proof) variants specifically: "Cmyk", "Matt Uv", and (from the
+// same real diff run) "Bottom Dia Colour Cmyk", "Process Color Convert
+// To Pantone Client File Color", "Emboss I Gr". These files are
+// pre-press production proofs, not finished consumer artwork, so
+// print-spec callouts sit right where a title-block heuristic looks for
+// a prominent front-of-pack name. Unlike the allergen-word check above,
+// this is a CONTAINS match, not "entirely composed of" — a real brand
+// or product name containing "cmyk" or "pantone" is not a real risk
+// this vocabulary needs to guard against the way "milk" or "soy"
+// legitimately could be part of one. Deliberately does NOT include a
+// bare "uv" on its own — this client's own catalog already has a real
+// claim ("Blue Light Protection") in the same UV/light-protection
+// marketing space, so a bare "uv" match risks excluding a genuine
+// future "UV Protection" brand/product name; only kept for the specific
+// print-finish compound terms, which carry no such risk.
+const PRINT_PRODUCTION_TERM = /\b(cmyk|pantone|die[\s-]?line|dieline|emboss|spot\s*uv|matt\s*uv|gloss\s*uv|foil\s*(stamp|separation)?|varnish|colou?r\s*separation|die[\s-]?cut|process\s*colou?r)\b/i;
+
 export function nameFieldMissing(value: string): boolean {
   if (!value) return true;
   if (looksLikeOcrGarbage(value)) return true;
   if (MEASUREMENT_VALUE_PATTERN.test(value.trim())) return true;
   if (looksLikeAllergenCallout(value)) return true;
+  if (PRINT_PRODUCTION_TERM.test(value)) return true;
   return false;
 }
 

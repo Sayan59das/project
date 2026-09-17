@@ -49,7 +49,8 @@
   },
   "page": 1,
   "reviewed": true,
-  "reviewedAt": 1789132800015,
+  "reviewedAt": 1789663476529,
   "isFront": true,
-  "sourceFile": "Crisper Cal. Vit. D IRN-137-1 (1).pdf"
+  "sourceFile": "Crisper Cal. Vit. D IRN-137-1 (1).pdf",
+  "aiReviewNotes": "AI-resolved per explicit user request. DECISION: left ingredients array format unchanged. Both the split (two entries) and joined (one entry) forms accurately represent the same real printed text -- a formatting-convention question, not a correctness question, so no change was made without real evidence favoring one form."
 }

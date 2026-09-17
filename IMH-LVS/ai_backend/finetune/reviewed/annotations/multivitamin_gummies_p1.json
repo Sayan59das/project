@@ -1,7 +1,27 @@
 {
+  "image_file": "multivitamin_gummies_p1.png",
+  "sourceFile": "Multivitamin Gummies.pdf",
+  "page": 1,
+  "reviewed": true,
+  "reviewedAt": 1789639131560,
+  "isFront": true,
   "label": {
-    "address": "654, Arjun Nagar, Nanhera Road, Ambala Cantt, Haryana, India - 133001",
     "brand_name": "Vit2Fit",
+    "product_name": "Kids Multivitamin Gummies",
+    "marketing_company": "Riomedica Healthcare Pvt. Ltd.",
+    "manufacturing_company": "IM Healthcare Pvt. Ltd.",
+    "fssai_number": "10824999000328",
+    "package_size": "30 Gummies",
+    "flavour": "Tangy Lemon and Classic Strawberry",
+    "colour_theme": [
+      "Purple",
+      "White"
+    ],
+    "logo": "Green leaf icon above the RIOMEDICA wordmark",
+    "layout": "Carton",
+    "customer_care_number": "+91 82229 99972",
+    "customer_care_email": "riomedicahealthcare@gmail.com",
+    "address": "654, Arjun Nagar, Nanhera Road, Ambala Cantt, Haryana, India - 133001",
     "claims": [
       "Vit2Fit Gummies deliver essential vitamins in a delicious way to support growing kids every day",
       "Supports Immunity",
@@ -20,14 +40,6 @@
       "Nut Free",
       "Soy Free"
     ],
-    "colour_theme": [
-      "Purple",
-      "White"
-    ],
-    "customer_care_email": "riomedicahealthcare@gmail.com",
-    "customer_care_number": "+91 82229 99972",
-    "flavour": "Tangy Lemon and Classic Strawberry",
-    "fssai_number": "10824999000328",
     "ingredients": [
       "Corn Syrup",
       "Sugar",
@@ -48,10 +60,6 @@
       "Vitamin D",
       "Vitamin B12"
     ],
-    "layout": "Carton",
-    "logo": "Green leaf icon above the RIOMEDICA wordmark",
-    "manufacturing_company": "IM Healthcare Pvt. Ltd.",
-    "marketing_company": "Riomedica Healthcare Pvt. Ltd.",
     "nutrition_table": {
       "Calories": "7.5 kcal (<0.5% DV)",
       "Dietary Fiber (as Pectin)": "0.05 g",
@@ -70,13 +78,7 @@
       "Vitamin D (as Ergocalciferol)": "1.25 mcg (8.3% DV)",
       "Vitamin E (as D-Alpha Tocopherol Acetate)": "2.5 mg (25% DV)",
       "Zinc (as Zinc Citrate)": "1 mg (Children 12% / Teens 7% / Adults 8% DV)"
-    },
-    "package_size": "30 Gummies",
-    "product_name": "Kids Multivitamin Gummies"
+    }
   },
-  "page": 1,
-  "reviewed": true,
-  "reviewedAt": 1789132800050,
-  "isFront": true,
-  "sourceFile": "Multivitamin Gummies.pdf"
+  "aiReviewNotes": "[AI first-pass review, pending human confirmation] Very thorough check: all priority fields, all 16 claims, and the full 17-row 3-column (Children/Teens/Adults) nutrition_table checked number-by-number directly against the image -- every single value and %DV matches exactly, including correctly using a single combined %DV where the three groups agree vs. a three-way split where they genuinely differ. fssai_number correctly uses the marketing company's number, not IM Healthcare's. No errors found anywhere in this file."
 }

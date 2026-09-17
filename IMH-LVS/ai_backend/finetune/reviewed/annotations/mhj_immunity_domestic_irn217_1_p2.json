@@ -1,20 +1,32 @@
 {
+  "image_file": "mhj_immunity_domestic_irn217_1_p2.png",
+  "sourceFile": "MHJ Immunity Domestic IRN217-1.pdf",
+  "page": 2,
+  "reviewed": true,
+  "reviewedAt": 1789639035741,
+  "isFront": false,
   "label": {
-    "address": "DSM-030/031, DLF Tower, Shivaji Marg, New Delhi, West Delhi, Delhi - 110015, INDIA",
     "brand_name": null,
+    "product_name": null,
+    "marketing_company": "MHJ Pharmaconcepts Private Limited",
+    "manufacturing_company": "IM Healthcare Pvt. Ltd.",
+    "fssai_number": "13324009000080",
+    "package_size": "30 Gummies",
+    "flavour": null,
+    "colour_theme": [
+      "Green (Lime)"
+    ],
+    "logo": null,
+    "layout": null,
+    "customer_care_number": "+91 78650 06500",
+    "customer_care_email": "support@wooby.in",
+    "address": "DSM-030/031, DLF Tower, Shivaji Marg, New Delhi, West Delhi, Delhi - 110015, INDIA",
     "claims": [
       "Pectin Based",
       "Gluten Free",
       "Lab Tested",
       "Cruelty Free"
     ],
-    "colour_theme": [
-      "Green (Lime)"
-    ],
-    "customer_care_email": "support@wooby.in",
-    "customer_care_number": "+91 78650 06500",
-    "flavour": null,
-    "fssai_number": "13324009000080",
     "ingredients": [
       "Glucose",
       "Cane Sugar",
@@ -57,10 +69,6 @@
       "Haritaki (Terminalia chebula) Fruit Extract",
       "Natural Sweetener Stevia (INS 960)"
     ],
-    "layout": null,
-    "logo": null,
-    "manufacturing_company": "IM Healthcare Pvt. Ltd.",
-    "marketing_company": "MHJ Pharmaconcepts Private Limited",
     "nutrition_table": {
       "Dietary Fiber (as Pectin)": "0.06 g",
       "Energy": "8.8 kcal (<1% DV)",
@@ -70,13 +78,7 @@
       "Sugars": "1.8 g",
       "Total Carbohydrate": "2.41 g",
       "Truextracts Chyawanprash Blend (Giloy, Ashwagandha, Mahameda, Amla, Harad, Draksha, Gokshura & other nutraceutical ingredients)": "132.5 mg"
-    },
-    "package_size": "30 Gummies",
-    "product_name": null
+    }
   },
-  "page": 2,
-  "reviewed": true,
-  "reviewedAt": 1789132800047,
-  "isFront": false,
-  "sourceFile": "MHJ Immunity Domestic IRN217-1.pdf"
+  "aiReviewNotes": "[AI first-pass review, pending human confirmation] One of the 15 priority-sample labels. marketing_company/address/fssai_number all correctly use MHJ Pharmaconcepts (the marketing company), not IM Healthcare's separate manufacturing or packing FSSAI numbers, both of which also appear on this page. Full nutrition_table and the ~40-item ingredients list checked directly against the image, all correct. 'Cruelty Free' icon confirmed present and captured."
 }

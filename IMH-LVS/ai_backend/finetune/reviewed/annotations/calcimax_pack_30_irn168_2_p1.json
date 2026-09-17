@@ -1,7 +1,27 @@
 {
+  "image_file": "calcimax_pack_30_irn168_2_p1.png",
+  "sourceFile": "Calcimax Pack 30 IRN168-2.pdf",
+  "page": 1,
+  "reviewed": true,
+  "reviewedAt": 1789639469226,
+  "isFront": true,
   "label": {
-    "address": "A-177, Wagle Estate, Thane – 400 604 (Mumbai), INDIA",
     "brand_name": "Calcimax",
+    "product_name": "Calcium + Vitemin D",
+    "marketing_company": "Meyer Organics Pvt. Ltd.",
+    "manufacturing_company": "IM Healthcare Pvt. Ltd.",
+    "fssai_number": "10020022011831",
+    "package_size": "30 Gummies",
+    "flavour": "Strawberry",
+    "colour_theme": [
+      "Blue",
+      "Pink"
+    ],
+    "logo": null,
+    "layout": "Carton (flattened die-line proof, front + side + back panels)",
+    "customer_care_number": "022-6275 7000/01, 2581 7000/01",
+    "customer_care_email": "consumercare@meyer.co.in",
+    "address": "A-177, Wagle Estate, Thane - 400 604 (Mumbai), INDIA",
     "claims": [
       "Strong Bones. Strong Family.",
       "Gluten Free",
@@ -9,14 +29,6 @@
       "Sugar Free",
       "Soy Free"
     ],
-    "colour_theme": [
-      "Blue",
-      "Pink"
-    ],
-    "customer_care_email": "consumercare@meyer.co.in",
-    "customer_care_number": "022-6275 7000/01, 2581 7000/01",
-    "flavour": "Strawberry",
-    "fssai_number": "10020022011831",
     "ingredients": [
       "Maltitol Syrup (INS 965)",
       "Water",
@@ -27,10 +39,6 @@
       "Food Colour: Black Carrot Concentrate (Daucus Carota root extract)",
       "Vitamin D"
     ],
-    "layout": "Carton (flattened die-line proof, front + side + back panels)",
-    "logo": null,
-    "manufacturing_company": "IM Healthcare Pvt. Ltd.",
-    "marketing_company": "Meyer Organics Pvt. Ltd.",
     "nutrition_table": {
       "Added Sugars": "Kids: 0.00 g; Adults: 0.00 g",
       "Carbohydrate (Sugar Alcohols)": "Kids: 2.60 g; Adults: 5.20 g",
@@ -42,13 +50,7 @@
       "Total Fat": "Kids: 0.00 g; Adults: 0.00 g",
       "Total Sugars": "Kids: 0.33 g; Adults: 0.66 g",
       "Vitamin D2 (Ergocalciferol)": "Kids: 5 mcg/200 IU (33.33% RDA); Adults: 10 mcg/400 IU (66.66% RDA)"
-    },
-    "package_size": "30 Gummies",
-    "product_name": "Calcimax Gummies"
+    }
   },
-  "page": 1,
-  "reviewed": true,
-  "reviewedAt": 1789132800007,
-  "isFront": true,
-  "sourceFile": "Calcimax Pack 30 IRN168-2.pdf"
+  "aiReviewNotes": "[AI first-pass review, pending human confirmation] All priority fields, claims, and the rest of nutrition_table/ingredients checked directly against this die-line proof image -- all correct, including fssai_number '10020022011831' which correctly matches Meyer Organics (the marketing company), NOT IM Healthcare's separate FSSAI number that also appears near the 'Manufactured by' block. Real fix made earlier: the Energy row in nutrition_table was missing its %RDA figures (0.505% / 1.010%) -- added directly since the source numbers are unambiguous. Address's en dash verified as a genuine correctly-encoded character, not mojibake."
 }

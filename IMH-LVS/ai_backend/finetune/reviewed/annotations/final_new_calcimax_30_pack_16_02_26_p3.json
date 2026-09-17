@@ -1,25 +1,27 @@
 {
-  "label": {
-    "address": null,
-    "brand_name": "Calcimax",
-    "claims": null,
-    "colour_theme": null,
-    "customer_care_email": null,
-    "customer_care_number": null,
-    "flavour": null,
-    "fssai_number": null,
-    "ingredients": null,
-    "layout": "Carton (spot-UV proof)",
-    "logo": null,
-    "manufacturing_company": null,
-    "marketing_company": null,
-    "nutrition_table": null,
-    "package_size": null,
-    "product_name": "Calcimax Gummies"
-  },
+  "image_file": "final_new_calcimax_30_pack_16_02_26_p3.png",
+  "sourceFile": "Final New-Calcimax 30 Pack 16.02.26  .pdf",
   "page": 3,
   "reviewed": true,
-  "reviewedAt": 1789132800024,
+  "reviewedAt": 1789662697371,
   "isFront": false,
-  "sourceFile": "Final New-Calcimax 30 Pack 16.02.26  .pdf"
+  "label": {
+    "brand_name": "Calcimax",
+    "product_name": "Calcimax Gummies",
+    "marketing_company": null,
+    "manufacturing_company": null,
+    "fssai_number": null,
+    "package_size": null,
+    "flavour": null,
+    "colour_theme": null,
+    "logo": null,
+    "layout": "Carton (spot-UV proof)",
+    "customer_care_number": null,
+    "customer_care_email": null,
+    "address": null,
+    "claims": null,
+    "ingredients": null,
+    "nutrition_table": null
+  },
+  "aiReviewNotes": "[AI first-pass review, pending human confirmation] Spot-UV die-line proof (wordmark + family/gummy silhouette graphic) checked directly against the image -- correct as-is, all nulls genuinely correct since nothing else is printed on this proof page."
 }

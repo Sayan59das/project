@@ -50,3 +50,25 @@ test('blank and OCR-debris values are still treated as missing, as before', () =
   assert.equal(nameFieldMissing(''), true);
   assert.equal(nameFieldMissing('Mc Mc Mg'), true);
 });
+
+// Real wrong answers on this client's "VF" (die-line/vector-file proof)
+// label variants -- pre-press production files, not finished consumer
+// artwork, whose print-spec callouts land right where a title-block
+// heuristic looks for a prominent front-of-pack name. All copied
+// verbatim from a real eval/diff.py run, not invented.
+test('print-production/pre-press jargon is treated as missing, not a trustworthy name', () => {
+  assert.equal(nameFieldMissing('Cmyk'), true);
+  assert.equal(nameFieldMissing('Matt Uv'), true);
+  assert.equal(nameFieldMissing('Bottom Dia Colour Cmyk'), true);
+  assert.equal(nameFieldMissing('Process Color Convert To Pantone Client File Color'), true);
+  assert.equal(nameFieldMissing('Emboss I Gr'), true);
+});
+
+test('a bare mention of "UV" alone is NOT treated as missing -- a real future claim risk', () => {
+  // This client's own catalog already has a real claim in the same
+  // marketing space ("Blue Light Protection"), so a bare "uv" match
+  // would risk excluding a genuine "UV Protection" brand/product name --
+  // only the specific print-finish compound terms are excluded.
+  assert.equal(nameFieldMissing('UV Protect Gummies'), false);
+  assert.equal(nameFieldMissing('Sun UV Shield'), false);
+});

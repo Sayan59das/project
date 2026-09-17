@@ -3,8 +3,9 @@
   "sourceFile": "Cal. Vit D IRN120-1.pdf",
   "page": 1,
   "reviewed": true,
-  "reviewedAt": 1789132800003,
+  "reviewedAt": 1789663476510,
   "isFront": true,
+  "aiReviewNotes": "AI-resolved per explicit user request. DECISION: left package_size unchanged. Both '30 N' and '30 Gummies' are accurate representations of the same real printed quantity (no conflicting numbers here, unlike the Riofill/Sleeprio/Femirio group) -- this is a wording-style question, not a correctness question, so no change was made without real evidence favoring one form over the other.",
   "label": {
     "brand_name": "ChewNectar",
     "product_name": "Calcium 125 mg + Vitamin D 200 IU Gummy",

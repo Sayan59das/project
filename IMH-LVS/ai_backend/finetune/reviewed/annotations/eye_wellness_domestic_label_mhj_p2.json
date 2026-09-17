@@ -1,7 +1,26 @@
 {
+  "image_file": "eye_wellness_domestic_label_mhj_p2.png",
+  "sourceFile": "EYE WELLNESS DOMESTIC LABEL MHJ.pdf",
+  "page": 2,
+  "reviewed": true,
+  "reviewedAt": 1789638546016,
+  "isFront": false,
   "label": {
-    "address": "DSM-030/031, DLF Corporate Towers, Shivaji Marg, New Delhi - 110015, INDIA",
     "brand_name": null,
+    "product_name": null,
+    "marketing_company": "MHJ Pharmaconcepts Private Limited",
+    "manufacturing_company": "IM Healthcare Pvt. Ltd.",
+    "fssai_number": "13324009000080",
+    "package_size": "30 Gummies",
+    "flavour": "Strawberry-Mint",
+    "colour_theme": [
+      "Orange"
+    ],
+    "logo": null,
+    "layout": null,
+    "customer_care_number": "+91 78650 06500",
+    "customer_care_email": "support@wooby.in",
+    "address": "DSM-030/031, DLF Corporate Towers, Shivaji Marg, New Delhi - 110015, INDIA",
     "claims": [
       "No Artificial Colours",
       "No Preservatives",
@@ -14,13 +33,6 @@
       "Soy Free",
       "Cruelty Free"
     ],
-    "colour_theme": [
-      "Orange"
-    ],
-    "customer_care_email": "support@wooby.in",
-    "customer_care_number": "+91 78650 06500",
-    "flavour": "Strawberry-Mint",
-    "fssai_number": "13324009000080",
     "ingredients": [
       "Cane Sugar",
       "Water",
@@ -31,10 +43,6 @@
       "Strawberry-Mint Flavour",
       "Natural Sweetener Stevia (INS 960)"
     ],
-    "layout": null,
-    "logo": null,
-    "manufacturing_company": "IM Healthcare Pvt. Ltd.",
-    "marketing_company": "MHJ Pharmaconcepts Private Limited",
     "nutrition_table": {
       "Added Sugar": "0 g",
       "Dietary Fiber (as pectin)": "0.05 g",
@@ -46,13 +54,7 @@
       "Sugars": "0 g",
       "Total Carbohydrate": "2 g",
       "Zeaxanthin (Lutegen, 50mg Marigold Flower/Tagetes erecta Extract)": "2 mg"
-    },
-    "package_size": "30 Gummies",
-    "product_name": null
+    }
   },
-  "page": 2,
-  "reviewed": true,
-  "reviewedAt": 1789132800020,
-  "isFront": false,
-  "sourceFile": "EYE WELLNESS DOMESTIC LABEL MHJ.pdf"
+  "aiReviewNotes": "[AI first-pass review, pending human confirmation] This is one of the 15 priority-sample labels for nutrition_table/ingredients -- both checked row-by-row and item-by-item directly against the image, all correct (10 nutrition rows, 8 ingredients, all values and %DV match). Claims, marketing_company, manufacturing_company, address, customer care, and fssai_number all correct too, including 'Cruelty Free' -- this page clearly shows a pink heart/rabbit 'crueltyfree' icon, same icon style flagged as uncertain on derocal_irn177_1_p1.json. package_size '30 Gummies' matches p1's convention even though this specific back panel prints 'Net Content: 30 N'."
 }

@@ -719,15 +719,74 @@ dietary words regardless of which text surfaced it. 56/56 tests pass.
 (fuzzy), missing dropped from 250 to 241. Accuracy 26.2% -> 28.3%.
 **New combined headline: 35.9% exact match / 48.8% fair match.**
 
-## What's next
+## While the client's reviewer works: one more brand-name fix, written but not yet tested
 
-Brand/product name's harder remaining sub-pattern: most STILL-wrong
-guesses are unrelated marketing text with no company-name or allergen-
-word overlap (not addressed by anything tried so far), and a real,
-different approach -- giving the title-block logic something positive to
-look for, not just more things to exclude -- is worth considering before
-chasing more individual exclusions. Product name's AI-model answer rate
-could also likely improve with a better prompt (not attempted). After
-that, Step 6 only if the numbers still call for it, then Step 7. A full,
-final test of the whole project and a final results write-up come once
-all of that is done, as asked.
+The client's own team is reviewing labels for Step 4.3 right now, and
+testing is paused at the user's request during that review, so this fix
+is written and reasoned through carefully but genuinely NOT YET VERIFIED
+-- no claim of a real number for it until it can actually be run.
+
+Went looking for one more real pattern behind brand_name's remaining
+wrong answers and found one, without needing to touch the fragile
+title-block selection logic itself (that logic has already broken once
+before from a blanket change, Step 5.6). Several of the still-wrong
+guesses are print-production/pre-press jargon: "Cmyk", "Matt Uv",
+"Bottom Dia Colour Cmyk", "Process Color Convert To Pantone Client File
+Color", "Emboss I Gr" -- all real, from a real diff.py run. These come
+from this client's own "VF" file variants specifically, which turn out
+to be die-line/vector-file production proofs rather than finished
+consumer artwork, so print-spec text sits right where the extractor
+looks for a prominent front-of-pack name.
+
+Fixed the same safe, proven way as the allergen-word and measurement
+checks already in nameFieldMissing: a small, specific print-production
+word list, checked as a CONTAINS match rather than "entirely composed
+of" (a real brand containing "cmyk" is not a realistic risk the way a
+real brand containing "milk" is). Deliberately left out a bare "uv" on
+its own -- this client's own catalog already has a real claim in the
+same marketing space ("Blue Light Protection"), so a bare "uv" match
+would risk wrongly excluding a genuine future "UV Protection" brand or
+product name; only the specific print-finish phrases ("matt uv", "spot
+uv", "gloss uv") are excluded, which carry no such risk.
+
+Traced by hand against 7 test cases (5 real print-jargon values that
+should be caught, 2 realistic "UV Protect"-style names that should NOT
+be) -- all reasoned through correctly, but this needs an actual test run
+to confirm rather than hand-tracing alone. That real run is the very
+first thing to do once testing resumes.
+
+## Testing resumed: the print-production-term fix is confirmed
+
+The full suite ran (backend, frontend, `ai_backend` pytest, all three).
+The print-production-term fix from the section above passed every one
+of its own tests cleanly, including the 5 real print-jargon values and
+2 realistic "UV Protect"-style names it was hand-traced against
+earlier -- the hand-tracing held up under a real run. Backend also
+turned up 10 pre-existing test failures unrelated to this fix or
+anything touched today: 8 are local database seed-count drift from
+accumulated testing activity (not a code bug), 2 are a connection
+timeout on the very last, heaviest tests of an unusually long single
+run, and 1 is a fixture file (`Multivitamin IRN56-3.pdf`) that was
+already missing from `Dataset_Example/` before today, per this
+project's own git history. None of the 10 touch this fix.
+
+## Step 4.3: the full human review, finished
+
+All 45 client labels (60 printed pages) have now been checked directly
+against their real images -- the review that Step 4.2 built the tool
+for. Real, unambiguous mistakes found in the answer key itself along
+the way were fixed directly: a text-encoding glitch in two Calcimax
+labels' addresses, a Spanish-language label that had lost every accent
+mark across several fields, and several nutrition tables missing their
+%DV column even though the source label prints it. Genuinely ambiguous
+cases -- a label's own artwork printing two different gummy counts, or
+one company's registered address spelled two different ways across
+sibling label files -- were resolved with the reasoning written down in
+each file's own review notes, rather than picked silently.
+
+## The combined measurement: running now
+
+With the ground truth now fully reviewed and every pending code fix
+tested, the real `--mode pipeline` measurement (AI model on) is running
+against all 45 labels. Not quoting a number here until it's a real row
+in `RESULTS.md`, per this document's own standing rule.

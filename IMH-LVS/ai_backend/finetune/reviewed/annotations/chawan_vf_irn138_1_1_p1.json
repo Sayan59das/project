@@ -1,7 +1,28 @@
 {
+  "image_file": "chawan_vf_irn138_1_1_p1.png",
+  "sourceFile": "Chawan VF IRN138-1 (1).pdf",
+  "page": 1,
+  "reviewed": true,
+  "reviewedAt": 1789638427877,
+  "isFront": true,
   "label": {
-    "address": "Vill. Doduwal, Manpura, Baddi (H.P.) - 173 205",
     "brand_name": "Chewvit",
+    "product_name": "Chyawanprash Gummy",
+    "marketing_company": "Vitamec Healthcare Pvt. Ltd.",
+    "manufacturing_company": "IM Healthcare Pvt. Ltd.",
+    "fssai_number": "10919011000092",
+    "package_size": "30 Gummies",
+    "flavour": null,
+    "colour_theme": [
+      "Brown",
+      "White",
+      "Orange"
+    ],
+    "logo": "Small orange leaf icon above the Chewvit wordmark",
+    "layout": "Carton",
+    "customer_care_number": "0172-4056827",
+    "customer_care_email": "vitamec@yahoo.com",
+    "address": "Vill. Doduwal, Manpura, Baddi (H.P.) - 173 205",
     "claims": [
       "With the goodness of Ayurvedic 40+ herbs",
       "Contains 40+ Ayurvedic herbs including Amla, Giloy, Ashwagandha, Haritaki and Gokshura",
@@ -17,15 +38,6 @@
       "No Nut",
       "No Soy"
     ],
-    "colour_theme": [
-      "Brown",
-      "White",
-      "Orange"
-    ],
-    "customer_care_email": "vitamec@yahoo.com",
-    "customer_care_number": "0172-4056827",
-    "flavour": null,
-    "fssai_number": "10919011000092",
     "ingredients": [
       "Corn Syrup",
       "Sugar",
@@ -68,10 +80,6 @@
       "Haritaki (Terminalia chebula) Fruit Extract",
       "Natural Sweetener Stevia (INS 960)"
     ],
-    "layout": "Carton",
-    "logo": "Small orange leaf icon above the Chewvit wordmark",
-    "manufacturing_company": "IM Healthcare Pvt. Ltd.",
-    "marketing_company": "Vitamec Healthcare Pvt. Ltd.",
     "nutrition_table": {
       "Dietary Fiber (as pectin)": "0.06 g",
       "Energy": "8.8 kcal (<1% DV)",
@@ -81,13 +89,7 @@
       "Sugars": "1.8 g",
       "Total Carbohydrate": "2.41 g",
       "Truextracts Chyawanprash Blend (Giloy, Ashwagandha, Mahameda, Amla, Harad, Draksha, Gokshura & other nutraceutical ingredients)": "132 mg"
-    },
-    "package_size": "30 Gummies",
-    "product_name": "Chyawanprash Gummy"
+    }
   },
-  "page": 1,
-  "reviewed": true,
-  "reviewedAt": 1789132800013,
-  "isFront": true,
-  "sourceFile": "Chawan VF IRN138-1 (1).pdf"
+  "aiReviewNotes": "[AI first-pass review, pending human confirmation] Die-line proof of the same Chewvit Chyawanprash Gummy artwork as chawan_irn138_1_1_p1 -- all fields checked directly against this unfolded carton image and match exactly (brand_name, product_name, marketing_company vs manufacturing_company split, claims, nutrition_table, ingredients all correct). Print-production markup ('emboss', 'drip off uv', 'SIZE: 80x180x52mm', 'jasco paper products', hologram placeholder box) correctly NOT captured as label content."
 }
