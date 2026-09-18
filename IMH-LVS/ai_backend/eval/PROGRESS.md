@@ -790,3 +790,98 @@ With the ground truth now fully reviewed and every pending code fix
 tested, the real `--mode pipeline` measurement (AI model on) is running
 against all 45 labels. Not quoting a number here until it's a real row
 in `RESULTS.md`, per this document's own standing rule.
+
+## The combined measurement, in: a real, confirmed 34.7% / 48.6%
+
+That run finished and wrote a real row. **34.7% exact match / 48.6%
+fair match** -- a small dip from the previous headline (35.9% / 48.8%),
+not a regression. The cause is understood and expected: the ground-
+truth review just finished (previous section) fixed real mistakes in
+the answer key itself, including several nutrition tables that were
+missing their own %DV column even though the label prints it. Once the
+answer key asks for that column, any extractor that still drops it
+(the code hadn't been touched yet at this point) counts as wrong where
+it used to count as right by accident. A more honest answer key
+producing a slightly lower number, for a reason that's fully explained
+and traceable to specific real fields, is the expected and correct
+outcome of doing the review properly -- not a sign anything broke.
+
+That gives two clear, real gaps to close next, both already visible in
+field-level detail: the package_size conflict pattern found during the
+ground-truth review (a front-badge count contradicted by two
+independent back-panel numbers, Step 5's package_size section above),
+and the nutrition table %DV column the review just confirmed is
+sometimes genuinely printed and expected.
+
+## Both known gaps, closed: package_size conflicts and nutrition %DV
+
+**package_size.** Implemented the conflict-resolution rule reasoned
+through in the ground-truth review: when a front-of-pack badge count
+(e.g. "10 GUMMIES") disagrees with the label's own Net Content
+declaration AND that disagreement is independently corroborated by the
+label's own serving-size x servings-per-container math, the
+corroborated total wins over the badge -- but keeps the badge's own
+real unit word, not Net Content's bare "N". Deliberately narrow: this
+does NOT become a general "prefer Net Content" rule -- a badge with
+only ONE disagreeing signal (no serving-math corroboration either way)
+still keeps winning, exactly as before, confirmed by its own dedicated
+test. 4 new tests, all passing; no existing package_size test's
+expectation changed.
+
+**nutrition_table %DV.** The code has, since early in this project,
+deliberately thrown away a nutrition row's extra %DV/%RDA column
+("170 mg **100%**") to avoid capturing an unrelated Children/Teens/
+Adults age-group breakdown as if it were the row's own value. The
+ground-truth review found this was too broad: plenty of real rows
+print exactly ONE %DV figure for that same value, genuinely belongs to
+it, and the reviewed answer key now expects it, formatted as
+"170 mg (100% DV)". Fixed narrowly, mirroring the same caution as the
+package_size fix above: a row with exactly one extra %-figure now
+keeps it, appended in that "(<value> DV)" form; a row with two or more
+(an actual Children/Teens/Adults-style multi-column split) is still
+left dropped, unchanged -- which figure belongs to which age group
+isn't recoverable from the row alone, a different, unattempted piece
+of work. Applies the same way whether the row came from the PDF text
+layer (two separate code paths there: side-by-side cells, and one
+merged string with the %DV run stripped by regex) or from OCR word
+boxes on a rasterized page. 4 new tests, all passing; one existing
+test's expectation updated to match (it had asserted the old drop-it
+behavior for exactly this single-extra-column shape).
+
+Both fixes: `npx tsc --noEmit` clean, their own test files pass in
+full, and the broader regression suite (package_size + real-PDF
+`labels.extract` + `packageSizeOcr`, 38 tests) also passes in full,
+unrelated to this session's own changes.
+
+## The combined measurement, in again: 36.5% / 48.6%
+
+Real `--mode pipeline` run (AI model on, all 45 labels), with both
+fixes above in place. **36.5% exact match / 48.6% fair match** --
+overall exact-match accuracy up 1.8 points (34.7% -> 36.5%, 735 -> 773
+correct, 434 -> 396 wrong, missing unchanged). The 13-text-field
+"new metric" moved the same way: 37.1% -> 39.1% exact match, fair
+match flat at 48.6%.
+
+Field-level, both fixes did exactly what they were built to do:
+- `package_size`: 16 -> 19 correct (strict), 26 -> 23 wrong. The
+  fair-match count for this field didn't move (stayed 20) -- meaning
+  these 3 were already being counted as basically-right under fuzzy
+  matching before today; the fix made them byte-for-byte right too.
+- `nutrition_table`: 94 -> 129 correct (strict), 167 -> 132 wrong. Same
+  shape as package_size -- fair-match count stayed flat at 228, so
+  fuzzy matching had already been forgiving this exact gap. The real
+  win here is the STRICT number, the one a client reading the table
+  literally would trust, closing a big chunk of the gap between "the
+  fuzzy metric thinks this is fine" and "the text is actually correct."
+
+So fair match (the 80% target metric) hasn't moved today -- both fixes
+closed a strict/fuzzy gap that fuzzy matching was already smoothing
+over, not new ground fuzzy didn't already cover. That's still real,
+useful progress (a client reading the raw extracted text now sees the
+literally-correct value far more often), just not the lever that moves
+the 48.6% number itself. The remaining room, per the by-source and
+new-metric tables in this run's `RESULTS.md` row, is still mostly
+brand_name/product_name (identity fields, the two fields Step 6 -- a
+bigger AI model -- was specifically proposed for) and claims/
+nutrition_table's still-missing rows (fields genuinely absent from the
+label vs. not yet found).

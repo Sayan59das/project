@@ -277,7 +277,9 @@ test('extractNutritionTableFromPanels: header + two two-cell rows and one three-
     // Row 2: Protein | 0.5 g
     span({ text: 'Protein', x: 0, y: 176, width: 50, fontSize: 8 }),
     span({ text: '0.5 g', x: 200, y: 176, width: 50, fontSize: 8 }),
-    // Row 3: Vitamin C | 40 mg | 66% (three cells; %RDA column should be dropped)
+    // Row 3: Vitamin C | 40 mg | 66% (three cells; the one %RDA column is
+    // now kept, appended as "(66% DV)" -- see the %DV-append tests below
+    // for why this changed from the old drop-it behavior).
     span({ text: 'Vitamin C', x: 0, y: 164, width: 60, fontSize: 8 }),
     span({ text: '40 mg', x: 200, y: 164, width: 50, fontSize: 8 }),
     span({ text: '66%', x: 270, y: 164, width: 30, fontSize: 8 }),
@@ -288,7 +290,47 @@ test('extractNutritionTableFromPanels: header + two two-cell rows and one three-
   assert.deepEqual(result, {
     Energy: '12 kcal',
     Protein: '0.5 g',
-    'Vitamin C': '40 mg',
+    'Vitamin C': '40 mg (66% DV)',
+  });
+});
+
+// Step 6-prep (accuracy plan follow-up): the ground-truth review found
+// several nutrition tables where a real single %DV/%RDA column WAS being
+// dropped even though it's genuinely printed and the ground truth records
+// it (e.g. "0 g (0% DV)", "170 mg (100% DV)"). A single extra column is
+// unambiguous -- there's only one number it could be -- so it's now kept.
+// A row with TWO OR MORE extra columns (e.g. separate Kids/Teens figures)
+// is deliberately left as before: which column belongs to which age group
+// would need the header row's own labels read and matched positionally,
+// a real, separate piece of work not attempted here.
+test('extractNutritionTableFromPanels: a single extra %DV/%RDA column is kept, appended as "(<value> DV)"', () => {
+  const allSpans = [
+    span({ text: 'Nutritional Information', x: 0, y: 200, width: 300, fontSize: 8 }),
+    span({ text: 'Iron', x: 0, y: 188, width: 50, fontSize: 8 }),
+    span({ text: '13 mg', x: 200, y: 188, width: 50, fontSize: 8 }),
+    span({ text: '<0.5%', x: 270, y: 188, width: 40, fontSize: 8 }),
+  ];
+  const panels = segmentPanels(allSpans);
+  const result = extractNutritionTableFromPanels(panels);
+
+  assert.deepEqual(result, {
+    Iron: '13 mg (<0.5% DV)',
+  });
+});
+
+test('extractNutritionTableFromPanels: two extra columns (e.g. Kids/Teens) are left dropped, not guessed at', () => {
+  const allSpans = [
+    span({ text: 'Nutritional Information', x: 0, y: 200, width: 300, fontSize: 8 }),
+    span({ text: 'Iron', x: 0, y: 188, width: 50, fontSize: 8 }),
+    span({ text: '13 mg', x: 200, y: 188, width: 50, fontSize: 8 }),
+    span({ text: '100%', x: 270, y: 188, width: 40, fontSize: 8 }),
+    span({ text: '50%', x: 320, y: 188, width: 40, fontSize: 8 }),
+  ];
+  const panels = segmentPanels(allSpans);
+  const result = extractNutritionTableFromPanels(panels);
+
+  assert.deepEqual(result, {
+    Iron: '13 mg',
   });
 });
 
@@ -531,6 +573,39 @@ test('extractNutritionTableFromPanels: value with parenthesized % is left alone'
   }, 'Value with parenthesized % should not be stripped');
 });
 
+// Step 6-prep (accuracy plan follow-up): the single-cell counterpart to the
+// multi-cell "single extra %DV/%RDA column is kept" test above -- same
+// underlying situation (a real %DV figure right after the amount), just
+// reaching stripTrailingPercentColumns via the single merged-string parse
+// path instead of splitLineIntoCells's gap-based columns.
+test('extractNutritionTableFromPanels: a single trailing %-figure (single-cell row) is kept, appended as "(<value> DV)"', () => {
+  const allSpans = [
+    span({ text: 'Nutritional Information', x: 0, y: 200, width: 300, fontSize: 8 }),
+    span({ text: 'Zinc 4 mg <0.5%', x: 0, y: 188, width: 300, fontSize: 8 }),
+  ];
+  const panels = segmentPanels(allSpans);
+  const result = extractNutritionTableFromPanels(panels);
+
+  assert.deepEqual(result, {
+    Zinc: '4 mg (<0.5% DV)',
+  });
+});
+
+test('extractNutritionTableFromPanels: multiple trailing %-figures (single-cell row) still get dropped, not guessed at', () => {
+  // Same "7.5 kcal <0.5% <0.5% <0.5%" shape as the brief's own test above,
+  // just confirming the new single-figure exception doesn't fire here too.
+  const allSpans = [
+    span({ text: 'Nutritional Information', x: 0, y: 200, width: 300, fontSize: 8 }),
+    span({ text: 'Some Other Nutrient 7.5 kcal <0.5% <0.5% <0.5%', x: 0, y: 188, width: 300, fontSize: 8 }),
+  ];
+  const panels = segmentPanels(allSpans);
+  const result = extractNutritionTableFromPanels(panels);
+
+  assert.deepEqual(result, {
+    'Some Other Nutrient': '7.5 kcal',
+  });
+});
+
 function ocrWord(props: { text: string; x0: number; y0: number; x1: number; y1: number; confidence?: number }): OcrWord {
   return {
     text: props.text,
@@ -565,8 +640,8 @@ test('extractNutritionTableFromOcrWords: recovers a nutrition table from OCR wor
   // on the real text layer returns {} no matter what. This is the OCR
   // fallback: the same header+rows table, but built from a rasterized
   // page's OCR word boxes (pixel, y-down) instead of PDF spans (points,
-  // y-up) — three rows, one row's value has a trailing %DV column that
-  // should be stripped exactly like the PDF-text-layer path already does.
+  // y-up) — three rows, one row's value has a single trailing %DV column
+  // that should be kept exactly like the PDF-text-layer path already does.
   const words = [
     ocrWord({ text: 'Nutrition', x0: 20, y0: 40, x1: 90, y1: 52 }),
     ocrWord({ text: 'Information', x0: 92, y0: 40, x1: 170, y1: 52 }),
@@ -587,6 +662,6 @@ test('extractNutritionTableFromOcrWords: recovers a nutrition table from OCR wor
   assert.deepEqual(result, {
     Energy: '12 kcal',
     Protein: '0.5 g',
-    'Vitamin C': '40 mg',
+    'Vitamin C': '40 mg (66% DV)',
   });
 });

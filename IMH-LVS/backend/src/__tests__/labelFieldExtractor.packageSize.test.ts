@@ -73,3 +73,61 @@ test('still falls back to the Net Content declaration when no form-word badge ex
   const text = 'Net Content: 30 N\nSupport for Strong, Healthy Bones and Teeth';
   assert.equal(extractLabelFields(text).packageSize, '30 N');
 });
+
+// Step 6-prep (accuracy plan follow-up): the first-pass ground-truth review
+// found a real, different situation from the Cal. Vit D case above — on a
+// handful of labels (Riofill Fe Next, Sleeprio Gummies x2, Femirio
+// Gummies), the front-of-pack badge and the label's OWN back-panel numbers
+// don't just use different wording for the same count — they give a
+// genuinely different NUMBER. "10 GUMMIES" is printed as a badge, but the
+// same label's serving-size × servings-per-container math, AND a separate
+// Net Content declaration, both independently say 30. Since two
+// independent back-panel numbers corroborate each other against one badge
+// number, and the badge phrase is an identical generic ribbon reused
+// unchanged across otherwise-unrelated product lines (the signature of a
+// stale shared design template, not a deliberately-set count), the
+// corroborated count wins — but keeps the badge's own real unit word
+// ("Gummies"), not the Net Content declaration's bare "N".
+test('a badge count contradicted by BOTH the Net Content declaration and the serving-count math is treated as stale, not the real count', () => {
+  const text = [
+    '10',
+    'GUMMIES',
+    'RIOFILL fe Next Iron Gummies',
+    'Serving Size: 2 Gummies',
+    'No. of Serving: per container 15',
+    'Net Content: 30 N'
+  ].join('\n');
+  // Casing kept exactly as printed ("GUMMIES", matching this test's own
+  // input badge text), same convention as the sibling badge-wins test
+  // above — only the NUMBER is corrected, not the badge's own casing.
+  assert.equal(extractLabelFields(text).packageSize, '30 GUMMIES');
+});
+
+test('the same conflict resolves correctly when serving size is 1 (servings-per-container IS the total)', () => {
+  const text = [
+    '10',
+    'GUMMIES',
+    'Sleeprio Relax Gummies',
+    'Serving Size: 1 Gummy',
+    'No. of Serving per container: 30',
+    'Net Content: 30 N'
+  ].join('\n');
+  assert.equal(extractLabelFields(text).packageSize, '30 GUMMIES');
+});
+
+test('a badge count is kept when only the WORDING differs from Net Content, not the number (no serving-math corroboration)', () => {
+  // Same shape as the Cal. Vit D IRN120-1 case above, just confirming the
+  // new conflict-detection logic does not fire without a genuine number
+  // disagreement -- Net Content and the badge already agree on "30" here,
+  // so this must behave exactly as before.
+  const text = 'Net Content: 30 N\n30\nGUMMIES\nServing Size: 1 Gummy\nNo. of Serving per container: 30';
+  assert.equal(extractLabelFields(text).packageSize, '30 GUMMIES');
+});
+
+test('a badge/Net-Content number conflict with no serving-count math to corroborate either side keeps the badge, unresolved', () => {
+  // Without the independent second signal, this stays exactly the
+  // existing, already-shipped, human-confirmed behavior (badge wins) --
+  // the new logic must not become a blanket "prefer Net Content" rule.
+  const text = '10\nGUMMIES\nNet Content: 30 N';
+  assert.equal(extractLabelFields(text).packageSize, '10 GUMMIES');
+});

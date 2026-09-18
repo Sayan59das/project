@@ -581,6 +581,46 @@ function isFollowedByDosageWording(text: string, matchEndIndex: number): boolean
 const NET_CONTENT_COUNT_PATTERN =
   /\bnet\s*(?:content|qty|quantity)\s*[:\-]?\s*(\d{1,4})\s*(n|nos?|no\.?|units?|pieces?|gummies|gummy|tablets?|capsules?)\b/i;
 
+// Step 6-prep (accuracy plan follow-up): a handful of labels print a
+// front-of-pack count badge that genuinely DISAGREES on the number (not
+// just the wording) with the label's own back-panel figures — "10
+// GUMMIES" as the badge, while "Serving Size: 2 Gummies" x "No. of
+// Serving: per container 15" and a separate "Net Content: 30 N" both
+// independently say 30. Confirmed by direct review that this is a real
+// printing inconsistency (the badge is stale shared-template text), not
+// a misread — so when the regulatory serving-count math and the Net
+// Content declaration corroborate EACH OTHER against the badge, that
+// corroborated count is used instead of the badge's own number. Requires
+// both independent back-panel signals to agree; a badge/Net-Content
+// mismatch with no serving-count math to corroborate either side is left
+// alone (falls through to the existing, already-shipped badge-wins
+// behavior) — this is deliberately narrow, not a blanket "prefer Net
+// Content" rule.
+const SERVING_SIZE_COUNT_PATTERN = new RegExp(
+  `serving\\s*size\\s*:?\\s*(\\d{1,3}(?:\\.\\d+)?)\\s*(?:${PRODUCT_FORM_WORDS})`,
+  'i'
+);
+const SERVINGS_PER_CONTAINER_PATTERN =
+  /no\.?\s*of\s*servings?\s*:?\s*per\s*container\s*:?\s*(\d{1,3})|servings?\s*per\s*container\s*:?\s*(\d{1,3})/i;
+
+// The count the serving-size/servings-per-container math implies, or null
+// when either piece is missing or the label states a fractional serving
+// size too irregular to trust a multiplication from (only whole and
+// half-unit serving sizes are multiplied; anything odder is left alone
+// rather than guessed at).
+function servingCountMathTotal(text: string): number | null {
+  const servingsMatch = text.match(SERVINGS_PER_CONTAINER_PATTERN);
+  if (!servingsMatch) return null;
+  const servingsPerContainer = Number(servingsMatch[1] ?? servingsMatch[2]);
+  if (!Number.isFinite(servingsPerContainer) || servingsPerContainer <= 0) return null;
+
+  const sizeMatch = text.match(SERVING_SIZE_COUNT_PATTERN);
+  const perServing = sizeMatch ? Number(sizeMatch[1]) : 1; // "Serving Size: 1 Gummy" often omitted when 1
+  if (!Number.isFinite(perServing) || perServing <= 0 || perServing % 0.5 !== 0) return null;
+
+  return servingsPerContainer * perServing;
+}
+
 function extractPackageSize(text: string): string {
   // Step 5 follow-up (accuracy plan): tried BEFORE the Net Content
   // declaration below, reversing the original Step 5.1 order. Real
@@ -609,6 +649,27 @@ function extractPackageSize(text: string): string {
       debugLog(`packageSize: rejected "${match[1]}" from "${match[0].trim()}" — followed by dosage wording ("daily"/"per day"/...), a per-day dose, not the total pack count.`);
       continue;
     }
+    // Before trusting the badge number, check whether it's actually
+    // contradicted by two independent back-panel signals agreeing with
+    // each other (see servingCountMathTotal's own comment above) — a real,
+    // narrow exception to "badge wins", not a reordering of the general
+    // rule.
+    const badgeCount = Number(match[1]);
+    const netContentForConflictCheck = text.match(NET_CONTENT_COUNT_PATTERN);
+    const netContentCount = netContentForConflictCheck ? Number(netContentForConflictCheck[1]) : null;
+    if (netContentCount !== null && netContentCount !== badgeCount) {
+      const corroboratedTotal = servingCountMathTotal(text);
+      if (corroboratedTotal !== null && corroboratedTotal === netContentCount) {
+        const corroboratedValue = `${corroboratedTotal} ${match[2]}`;
+        debugLog(
+          `packageSize: badge "${match[1]} ${match[2]}" contradicted by Net Content ` +
+            `(${netContentCount}) AND serving-count math (${corroboratedTotal}) agreeing with each ` +
+            `other — using "${corroboratedValue}" instead of the badge.`
+        );
+        return corroboratedValue;
+      }
+    }
+
     // Reconstructed as "<number> <unit>" rather than returning match[0]
     // verbatim, so irregular OCR spacing ("30Gummies", "30  Gummies")
     // still normalizes to one space, the same shape the ground truth uses.

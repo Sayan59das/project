@@ -437,6 +437,14 @@ export function extractNutritionTableFromPanels(panels: readonly Panel[]): Recor
   // parenthetical -- "0.5 mg (Children 1% / Teens 0.25% / Adults <0.5%
   // DV)" would otherwise lose everything from " 1%" onward, destroying a
   // real DV/RDA breakdown instead of a stray %RDA column.
+  //
+  // Step 6-prep (accuracy plan follow-up): when there is exactly ONE
+  // trailing %-figure being stripped, it's unambiguously that value's own
+  // %DV/%RDA figure -- kept, appended as "(<value> DV)" instead of
+  // silently discarded, mirroring the multi-cell case above. Two or more
+  // (a Children/Teens/Adults-style triple, still matched as one greedy
+  // trailing run) stay dropped exactly as before: no way to tell which
+  // figure is which from the value string alone.
   function stripTrailingPercentColumns(value: string): string {
     const match = value.match(/\s+[<>≤≥~]?\d[\d.,]*\s*%.*$/);
     if (!match || match.index === undefined) return value;
@@ -444,7 +452,14 @@ export function extractNutritionTableFromPanels(panels: readonly Panel[]): Recor
     const openParens = (before.match(/\(/g) || []).length;
     const closeParens = (before.match(/\)/g) || []).length;
     if (openParens > closeParens) return value;
-    return value.slice(0, match.index).trim();
+
+    const trimmedBefore = before.trim();
+    const tail = value.slice(match.index).trim();
+    const singlePercentFigure = /^([<>≤≥~]?\d[\d.,]*\s*%)$/.exec(tail);
+    if (singlePercentFigure) {
+      return `${trimmedBefore} (${singlePercentFigure[1]} DV)`;
+    }
+    return trimmedBefore;
   }
 
   let headerPanelIndex = -1;
@@ -491,9 +506,23 @@ export function extractNutritionTableFromPanels(panels: readonly Panel[]): Recor
     let value: string | null = null;
 
     if (cells.length >= 2) {
-      // Multi-cell row: name = cells[0], value = cells[1] ONLY (cells[2+] are %RDA/%DV columns)
+      // Multi-cell row: name = cells[0], value = cells[1]. A single extra
+      // column (cells.length === 3) is unambiguously that same value's
+      // %DV/%RDA figure -- kept, appended as "(<value> DV)" rather than
+      // silently discarded (Step 6-prep accuracy-plan fix; ground-truth
+      // review found real rows where this was genuinely printed and
+      // recorded, e.g. "170 mg (100% DV)"). Two or more extra columns
+      // (e.g. separate Kids/Teens figures) are left dropped as before --
+      // which one belongs to which age group isn't recoverable from the
+      // row alone, a different, unattempted piece of work.
       name = cells[0].trim();
       value = cells[1];
+      if (cells.length === 3) {
+        const extraColumn = cells[2].trim();
+        if (/^[<>≤≥~]?\d[\d.,]*\s*%$/.test(extraColumn)) {
+          value = `${cells[1]} (${extraColumn} DV)`;
+        }
+      }
     } else if (cells.length === 1) {
       // Single-cell row: try regex extraction
       const match = singleCellRegex.exec(cells[0]);
