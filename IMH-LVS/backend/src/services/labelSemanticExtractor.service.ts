@@ -153,10 +153,19 @@ const CLAIM_BADGES: readonly { pattern: RegExp; claim: string }[] = [
   { pattern: /\bno\s+artificial\s+colou?rs?\b/i, claim: 'No Artificial Colours' },
   { pattern: /\b(100%\s*)?vegetarian\b/i, claim: 'Vegetarian' },
   { pattern: /\bnon[\s-]?gmo\b/i, claim: 'Non GMO' },
-  { pattern: /\bhealth\s+supplement\b/i, claim: 'Health Supplement' },
   { pattern: /\busfda\s+registered\s+facility\b/i, claim: 'USFDA Registered Facility' },
   { pattern: /\bgmp\s+certified\b/i, claim: 'GMP Certified' },
   { pattern: /\bhalal\b/i, claim: 'Halal' }
+  // Deliberately NOT here: 'Health Supplement'. It used to be, on the
+  // reasoning that it reads like a badge the same way 'Vegetarian' or
+  // 'Halal' does. A real 45-label run (eval/diff.py --mode pipeline
+  // --field claims) showed that reasoning was wrong: it fired as WRONG on
+  // 20 different labels and was never once CORRECT. Every reviewed label
+  // treats it as the product's regulatory CATEGORY (the same kind of
+  // designation as "Dietary Supplement", required by law to appear
+  // somewhere on the pack) rather than a claim the marketer chose to make
+  // — the same distinction that already keeps a plain ingredients
+  // declaration out of this list.
 ];
 
 // THERE IS DELIBERATELY NO GENERIC 'Supports X' MATCHER HERE.
@@ -246,10 +255,42 @@ export function extractClaims(text: string, knownClaims: readonly string[] = [])
   // of real allergen/dietary words fixes this the same way the rest of
   // this matcher already works: generic across any label, never built
   // from one label's specific text.
+  // Step 6-follow-up (accuracy plan): a THIRD real shape was found the same
+  // way, on the HSN/Iron/PMS label family — "FREE FROM GLUTEN MILK SOY"
+  // printed as one design element, which the reviewed ground truth records
+  // as ONE combined claim, 'Free From Gluten | Milk | Soy'. A matcher for
+  // that shape was written and deliberately NOT kept: this codebase joins
+  // a label's separate claims into one string with ' | ' EVERYWHERE (see
+  // CLAIM_DELIMITER in scripts/extract-pipeline.ts, used by score.py) —
+  // the exact same character sequence the ground truth chose to use
+  // INSIDE this one claim's own text. A combined claim built that way
+  // would round-trip correctly through this function's own return value.
+  // It would not survive scoring: the delimiter-based parser downstream
+  // splits it back into three meaningless fragments ('Free From Gluten',
+  // 'Milk', 'Soy'), none of which match anything, so the fix could only
+  // ever relabel three WRONG claims as three MISSING ones — no actual
+  // accuracy gain — without a wider, deliberate change to how claims are
+  // delimited project-wide, which is a bigger decision than this one bug
+  // warrants making unilaterally.
+
+  // Real regression found the same way (Cal. Vit D/Iron/PMS/HSN families
+  // again): "This food is by its nature gluten free." is a standard
+  // regulatory disclaimer sentence, not a printed claim badge, but reads
+  // identically to a real "gluten free" badge to this matcher. Every label
+  // that carries it ALSO carries the real badge elsewhere in a different,
+  // correct wording ("NO\nGLUTEN"), so left unguarded this sentence adds
+  // nothing but a second, wrong, redundant claim for an allergen already
+  // correctly found. A disclaimer-sentence SHAPE, not this client's
+  // specific wording — "by nature"/"by its nature" is the generic tell,
+  // and only excludes an "X free" match that directly follows it, not the
+  // phrase "X free" anywhere else (a real, standalone "Gluten Free" badge
+  // with no such lead-in still has to be reported, and is).
+  const BY_NATURE_DISCLAIMER = /\bby\s+(its\s+)?nature\s*$/i;
   const FREE_CLAIM = /\b([A-Za-z]+)[\s-]free\b/gi;
   for (const match of flat.matchAll(FREE_CLAIM)) {
     const word = match[1];
     if (!ALLERGEN_DIETARY_WORDS.has(word.toLowerCase())) continue;
+    if (BY_NATURE_DISCLAIMER.test(flat.slice(Math.max(0, match.index - 20), match.index))) continue;
     const claim = `${word[0].toUpperCase()}${word.slice(1).toLowerCase()} Free`;
     const alreadyKnown = [...found.keys()].some((existing) => existing.toLowerCase() === claim.toLowerCase());
     if (!alreadyKnown) found.set(claim, isKnown(claim, knownClaims));

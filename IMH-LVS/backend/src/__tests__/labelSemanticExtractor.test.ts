@@ -121,13 +121,9 @@ test('never lifts a claim out of marketing prose', () => {
 });
 
 test('reports badge claims present on the label', () => {
-  const text = 'NATURAL COLOURS & FLAVOURS\nHEALTH SUPPLEMENT\nThis food is by nature gluten free.';
+  const text = 'NATURAL COLOURS & FLAVOURS\nGLUTEN FREE\nGMP CERTIFIED';
   const result = extractClaims(text, MASTER_CLAIMS);
-  assert.deepEqual(result.claims.split(' | ').sort(), [
-    'Gluten Free',
-    'Health Supplement',
-    'Natural Colours & Flavours'
-  ]);
+  assert.deepEqual(result.claims.split(' | ').sort(), ['GMP Certified', 'Gluten Free', 'Natural Colours & Flavours']);
 });
 
 // Step 5.3 (accuracy plan): claims are barely found at all (327 of 383
@@ -208,6 +204,33 @@ test('does not treat ordinary "no <word>" label prose as an allergen claim', () 
   // the same way it rejects OCR garbage before "free".
   const result = extractClaims('No returns will be accepted once the seal is broken. No warranty is implied.');
   assert.equal(result.claims, '');
+});
+
+// Real bug found reading claims' real wrong-answer list (eval/diff.py
+// --mode pipeline --field claims, a real 45-label run): "This food is by
+// its nature gluten free." is a standard regulatory disclaimer sentence
+// printed verbatim (or near enough) on several of this client's labels
+// (Cal. Vit D, Iron, PMS, HSN families all carry it) — a descriptive
+// phrase inside ordinary prose, not a printed claim badge. The "X Free"
+// shape matcher can't tell "gluten free" here from a real standalone
+// badge, and on every one of those labels the real badge ALREADY exists
+// elsewhere in the correct wording ("NO\nGLUTEN"), so the sentence just
+// adds a second, WRONG, redundant "Gluten Free" claim alongside the
+// correct "No Gluten" one. A disclaimer phrase, not a specific client's
+// wording, so excluding it is generic the same way "Toll Free" already is.
+test('does not report "X free" inside the standard "by (its) nature ... free" disclaimer sentence as a claim', () => {
+  const result = extractClaims(
+    'NO GLUTEN NO MILK. This food is by its nature gluten free. Free of: Proteins, Total Fat.'
+  );
+  assert.deepEqual(result.claims.split(' | ').sort(), ['No Gluten', 'No Milk']);
+});
+
+test('the disclaimer-sentence exclusion is specific to "by nature", not a blanket "X free" refusal', () => {
+  // The same sentence shape without the disclaimer lead-in is still a real
+  // claim shape and must still be reported — this isn't a ban on "gluten
+  // free" as a phrase, only on this one specific prose construction.
+  const result = extractClaims('This product is gluten free.');
+  assert.deepEqual(result.claims.split(' | '), ['Gluten Free']);
 });
 
 // Real bug found the same way: a real label (EYE WELLNESS DOMESTIC LABEL

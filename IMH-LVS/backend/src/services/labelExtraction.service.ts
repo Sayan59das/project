@@ -1180,7 +1180,16 @@ async function postProcessExtractionResult(
   //
   // A no-op unless AI_EXTRACTION_URL is set, and never throws — see
   // aiExtraction.service.ts.
-  const ai = await applyAiFallback(scrubbed, { buffer: fileBuffer, mimeType, isPdf });
+  // brand/productName are the two fields a wrong-but-non-empty guess is known
+  // to squat on (see nameFieldMissing's own comment for the vocabulary of
+  // things that are never a name). Every earlier recovery pass already treats
+  // such a value as blank; telling the model's fallback the same thing is what
+  // stops '12.00 mm' from permanently blocking a correct brand name.
+  const overwritable = (['brand', 'productName'] as const).filter((field) =>
+    nameFieldMissing(scrubbed[field])
+  );
+
+  const ai = await applyAiFallback(scrubbed, { buffer: fileBuffer, mimeType, isPdf }, overwritable);
   if (ai.filled.length > 0) {
     console.warn(
       `[labelExtraction] Filled from the vision model rather than the label's own text: ${ai.filled.join(', ')}. ` +

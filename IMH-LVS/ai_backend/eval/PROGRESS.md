@@ -885,3 +885,147 @@ brand_name/product_name (identity fields, the two fields Step 6 -- a
 bigger AI model -- was specifically proposed for) and claims/
 nutrition_table's still-missing rows (fields genuinely absent from the
 label vs. not yet found).
+
+## Is 80% even reachable? A real ceiling, measured
+
+Before spending more effort chasing 80%, checked whether it's actually
+possible on these 45 files. For every value currently wrong or
+missing, checked whether that value exists ANYWHERE in text a machine
+can read (the PDF's own text layer, or OCR of the rasterized page) --
+a narrower, more honest question than "did the extractor find it."
+
+**Real result: only 53% of the entire gap (556 of 1050 non-visual
+wrong/missing values) is present in machine-readable text at all.**
+The other 47% only exists as artwork pixels -- stylised logos,
+outlined display type, nutrition panels baked into the image -- text
+no parser can ever reach, however good the code gets.
+
+Translated into the metric itself: even a PERFECT extractor that
+recovered every single readable value would only raise strict-match
+accuracy from 37.6% to about **66.6%**. Not 80%. That is a hard
+ceiling set by the label files themselves, confirmed by measurement,
+not a guess.
+
+Field-level, the readable-but-missed room is very unevenly spread:
+ingredients is the best bet (74% of its gap is genuinely readable),
+nutrition_table and claims are closer to a coin flip (~50%/42%
+readable). Also found, inside the "14 labels with a 100% blank
+nutrition_table" list: 4 of them have their ENTIRE table readable --
+that's a pure extraction bug on those specific files, not a content
+problem, and the cheapest kind of fix to chase next.
+
+**Conclusion: 80% is not realistically reachable through extraction
+improvements alone on these 45 files.** A real, meaningfully higher
+number than today is reachable; 80% specifically would need a vision
+model that can actually read the artwork-only 47% well -- and that
+has now been tried twice (Step 6's bigger local model, and the vision-
+model fallback below) with two failures, not two successes.
+
+## The vision-model fallback: real gains, real fabrication, both fixed
+
+`AI_EXTRACTION_URL` -- a SECOND, separate AI fallback (its own local
+Python service, `ai_backend/`, running Qwen2-VL-2B) has existed in the
+code and been configured in `backend/.env` this whole project, but the
+service itself was never once running during any measurement so far.
+Started it and tested it for real, on one of the 14 blank-nutrition
+labels (HSN VF IRN75-1.pdf).
+
+**Real gains, checked against the actual answer key**: brand_name
+"BioFaith" (exactly right; the text-layer pipeline reads garbage,
+"12.00 mm", there instead), and 3 of 8 real claims recovered that the
+main pipeline finds zero of.
+
+**Real fabrication, same check**: ingredients invented outright
+("Lactose, 120 mg" -- not on the label at all), a nutrition table with
+4 of 17 rows and wrong numbers, and refusal text ("No Marketing
+Company Provided", "Not Available") stored as if it were a real value.
+
+Fixed all three, test-driven (`aiExtraction.fallback.test.ts`, 9
+tests):
+- The fallback may no longer supply ingredients or a nutrition table
+  at all -- both already have grounded readers, and this model doesn't
+  read either faithfully. A blank stays a MISSING a reviewer can
+  investigate; it no longer becomes a convincing lie.
+- A small set of "this is not an answer" phrase shapes (`None`,
+  `N/A`, `Not Available`, `No <X> Provided`, ...) are rejected outright
+  rather than stored, narrow enough that real content starting with
+  "No" ("No Added Sugar", "Novocal") still passes.
+- The fallback may now OVERWRITE a field the caller has already judged
+  to be garbage (a bare measurement, OCR debris, print-shop jargon --
+  the same `nameFieldMissing` judgement every other recovery pass in
+  this codebase already honours), which is what let "BioFaith" replace
+  "12.00 mm" instead of being silently blocked by it forever.
+
+## Two more real claims bugs, found reading the real wrong-answer list
+
+- `Health Supplement` was in the fixed badge list on the reasoning
+  that it reads like `Vegetarian` or `Halal`. A real 45-label run
+  showed that reasoning was wrong: WRONG on 20 different labels,
+  correct on precisely zero. Every reviewed label treats it as the
+  product's regulatory CATEGORY, not a claim the marketer chose to
+  make. Removed.
+- "This food is by its nature gluten free." -- a standard disclaimer
+  sentence printed on several labels in this client's catalog, not a
+  claim badge -- was being read as a real "Gluten Free" claim, adding
+  a wrong, redundant entry right alongside the label's own correctly-
+  found "No Gluten" badge elsewhere. Excluded by the disclaimer's own
+  generic shape ("by (its) nature ... free"), narrow enough that a
+  real standalone "Gluten Free" badge with no such lead-in still gets
+  reported, confirmed by its own test.
+
+A THIRD real pattern was found and deliberately NOT shipped: several
+labels print a combined "FREE FROM GLUTEN MILK SOY" declaration that
+the reviewed ground truth records as one claim, 'Free From Gluten |
+Milk | Soy'. A matcher for this was built and worked correctly as a
+function -- then turned out to be unshippable, because this whole
+codebase joins a label's separate claims into one string with the
+same ' | ' character (see `CLAIM_DELIMITER` in
+`scripts/extract-pipeline.ts`) that the ground truth chose to use
+INSIDE this one claim's own text. Downstream scoring would split the
+combined claim back into three meaningless fragments, so the fix could
+only ever relabel three WRONG claims as three MISSING ones -- no real
+accuracy gain -- without a separate, deliberate decision to change how
+claims are delimited project-wide. Caught by the fix's own test before
+it shipped; backed out rather than pretend it works.
+
+## Real, measured result: 36.5% / 48.6% -> 36.7% / 49.0%
+
+Ran the full real `--mode pipeline` measurement three times to get an
+honest before/after/after-again:
+
+1. **vlm off, `ai_backend` fallback ON** (isolates the fallback's own
+   fixes from Ollama): ingredients and nutrition_table came back
+   BYTE-FOR-BYTE IDENTICAL to the no-fallback baseline -- real,
+   measured confirmation that the "never supply ingredients/nutrition"
+   fix holds under load, not just in a unit test. Fabrication rate on
+   both: 0%.
+2. **vlm on, `ai_backend` ON, claims fixes not yet in** -- not run
+   separately; folded straight into the final combined run below.
+3. **vlm on + `ai_backend` on + both claims fixes** (the real,
+   final combined state): **36.7% exact match / 49.0% fair match**,
+   up from 36.5% / 48.6%. claims moved the most: wrong count 43 -> 15,
+   exactly the size of drop the two claims fixes predicted.
+   ingredients and nutrition_table: unchanged again, confirming zero
+   fabrication under the full, real, stressed pipeline, not just OCR
+   fallback in isolation.
+
+**One honest cost, not hidden**: brand_name got WORSE in that same
+final run (35.6% -> 28.9%), and none of today's code changes touch
+brand_name at all. The by-source table shows the drop is entirely
+inside `vlm-role-resolution` (Ollama), whose own success count fell
+from 15 correct to 12. This run also spent long stretches under 500MB
+of free system memory -- Ollama and `ai_backend` sharing one 6GB GPU
+-- confirmed twice already this session to cause real memory-pressure
+failures (see `hardware-has-gpu` memory note). The likely explanation
+is resource contention degrading the AI model's own responses under
+load, not a code regression.
+
+**Real, concrete finding from this: `ai_backend` provides close to
+ZERO benefit when Ollama is also running.** Ollama fills brand/product
+name first on almost every label, so `ai_backend`'s own fallback
+condition (only fires when those specific fields are still blank)
+almost never triggers -- confirmed by the by-source table showing no
+`vlm-fallback` entries at all for identity fields in the combined run.
+Running both together buys nothing measurable while actively risking
+the contention/crash behavior seen three times this session.
+Recommendation: run one or the other, never both at once.
