@@ -885,3 +885,43 @@ brand_name/product_name (identity fields, the two fields Step 6 -- a
 bigger AI model -- was specifically proposed for) and claims/
 nutrition_table's still-missing rows (fields genuinely absent from the
 label vs. not yet found).
+
+## Step 6, tried: a bigger AI model made brand_name WORSE, not better
+
+Pulled `qwen2.5vl:7b` (roughly double `qwen2.5vl:3b`, the model used
+for every run so far) and re-ran the exact same real `--mode pipeline`
+measurement against all 45 labels, changing nothing else -- same code
+as the `d19d68a` commit above, just `OLLAMA_VLM_MODEL=qwen2.5vl:7b`
+instead of the default. On branch `feat/accuracy-step6`, branched off
+`feat/accuracy-step5` so all of today's fixes carry forward.
+
+**Real, confirmed result: 36.1% exact match / 48.1% fair match --
+both SLIGHTLY WORSE than the 3b baseline (36.5% / 48.6%), not
+better.** This is the honest number; not spun.
+
+The real story is worse than the headline drop suggests once you look
+at the one field this was specifically meant to fix. **brand_name fell
+from 35.6% to 17.8%** (16 correct -> 8 correct, out of 45) -- roughly
+halved. Traced to the by-source breakdown in this run's `RESULTS.md`
+row: the `vlm-role-resolution` source (the AI model picking the brand
+name from a list of real candidates already found on the label) is
+still 100% accurate whenever it actually answers -- but it now only
+answers confidently on 7 labels instead of 15. On the other 8 labels
+where the smaller model used to commit to a real candidate, the bigger
+model instead comes back empty or unconvinced, and a weaker fallback
+source (`text-layer-flattened`, 5.6% accuracy on its own) has to guess
+instead and gets it wrong. So the bigger model isn't reading labels
+better -- it's answering the same underlying question more
+cautiously, and that caution is actively hurting accuracy here because
+the fallback path it leaves behind is worse than just trusting the
+smaller model's confident guess. product_name barely moved (4.4% exact
+match on both), so it doesn't rescue the result either.
+
+**Conclusion: Step 6, as tried, is not worth keeping.** Reverting to
+`qwen2.5vl:3b` (already the default -- nothing to undo in code, this
+was purely an environment variable for the one test run) rather than
+carrying this forward. The identity-field problem (brand_name,
+product_name) is real and still unsolved, but "a bigger model with the
+same prompt" is not the fix -- worth trying a better-targeted prompt
+or stricter candidate-list grounding instead, a genuinely different
+lever than just model size.
