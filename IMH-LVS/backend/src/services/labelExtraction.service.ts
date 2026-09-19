@@ -47,6 +47,7 @@ import { extractMarketingCompanyAndAddressFromRegion } from './regionOcr.service
 import { recoverProductTitleFromRegion, type OcrSource } from './titleRegionOcr.service';
 import { recoverPackageSizeFromBadge } from './packageSizeOcr.service';
 import { ExtractedLabelFields, extractLabelFields, isGenericProductFormWord, setLabelFieldExtractorDebug } from './labelFieldExtractor.service';
+import { snapToMaster } from './masterSnap.service';
 import { extractColourTheme } from './colourTheme.service';
 import { looksLikeOcrGarbage, scrubPlaceholders } from './placeholderText.service';
 import { applyAiFallback } from './aiExtraction.service';
@@ -144,7 +145,8 @@ export type FieldSource =
   | 'package-size-ocr'
   | 'display-candidates'
   | 'vlm-role-resolution'
-  | 'vlm-fallback';
+  | 'vlm-fallback'
+  | 'master-snap';
 
 /**
  * Phase F (widened for Step 2): which pass produced this field's value, for
@@ -458,7 +460,8 @@ export function fillBlanksFrom(
 async function extractFieldsFromTextLayer(
   pdfBuffer: Buffer,
   textLayerText: string,
-  knownFlavours: readonly string[]
+  knownFlavours: readonly string[],
+  knownBrands: readonly string[] = []
 ): Promise<{
   orderedText: string;
   fields: ExtractedLabelFields;
@@ -504,10 +507,52 @@ async function extractFieldsFromTextLayer(
         }
       }
 
+      // Master-snap for brand (Step 2, accuracy2 plan). Once a real master
+      // list is loaded, this source's own by-source history is roughly 1
+      // correct / 13 wrong — a candidate that doesn't match anything in the
+      // client's real catalogue has no business filling the field, and one
+      // that does is snapped to the MASTER's own spelling (not the
+      // candidate's OCR-noisy text), tagged 'master-snap' below so two
+      // labels for the same brand always compare identically.
+      let flattenedBrandSnapped = false;
+      let orderedBrandSnapped = false;
+      if (knownBrands.length > 0) {
+        if (cleanedFlattenedFields.brand) {
+          const snap = snapToMaster(cleanedFlattenedFields.brand, knownBrands);
+          if (snap) {
+            cleanedFlattenedFields.brand = snap.value;
+            flattenedBrandSnapped = true;
+          } else {
+            debugLog(`brand "${cleanedFlattenedFields.brand}" does not snap to any master brand — blanking before fillBlanks`);
+            cleanedFlattenedFields.brand = '';
+          }
+        }
+        if (cleanedOrderedFields.brand) {
+          const snap = snapToMaster(cleanedOrderedFields.brand, knownBrands);
+          if (snap) {
+            cleanedOrderedFields.brand = snap.value;
+            orderedBrandSnapped = true;
+          } else {
+            cleanedOrderedFields.brand = '';
+          }
+        }
+      }
+
       const flattenedMeta = tagFilledFields(cleanedFlattenedFields, 'text-layer-flattened');
       const merged = fillBlanksFrom(cleanedFlattenedFields, cleanedOrderedFields, 'text-layer-reading-order', flattenedMeta);
       fields = merged.fields;
       fieldMeta = merged.meta;
+
+      // The merge above tags every field by WHICH PASS produced it, not
+      // whether that pass's value was grounded against a master -- override
+      // brand's own source afterward, to whichever pass's snapped value
+      // actually won the merge (flattened wins if non-empty; ordered only
+      // if it filled a blank left by flattened).
+      if (flattenedBrandSnapped && cleanedFlattenedFields.brand) {
+        fieldMeta.brand = { ...fieldMeta.brand, source: 'master-snap', needsReview: false };
+      } else if (orderedBrandSnapped && !cleanedFlattenedFields.brand && cleanedOrderedFields.brand) {
+        fieldMeta.brand = { ...fieldMeta.brand, source: 'master-snap', needsReview: false };
+      }
 
       // Extract nutrition table from the geometry structure (Task 5)
       const extractedTable = extractNutritionTableFromPanels(panels);
@@ -982,7 +1027,7 @@ async function resolveBlankDisplayRoles(
   }
 }
 
-async function extractFieldsFromPdf(pdfBuffer: Buffer, knownFlavours: readonly string[]): Promise<FieldPass> {
+async function extractFieldsFromPdf(pdfBuffer: Buffer, knownFlavours: readonly string[], knownBrands: readonly string[] = []): Promise<FieldPass> {
   const { text: textLayerText } = await extractPdfText(pdfBuffer);
   debugLog(`PDF text layer (${textLayerText.length} chars):\n${textLayerText}`);
 
@@ -996,7 +1041,7 @@ async function extractFieldsFromPdf(pdfBuffer: Buffer, knownFlavours: readonly s
   let spans: TextSpan[] = [];
 
   if (textLayerUsable) {
-    const result = await extractFieldsFromTextLayer(pdfBuffer, textLayerText, knownFlavours);
+    const result = await extractFieldsFromTextLayer(pdfBuffer, textLayerText, knownFlavours, knownBrands);
     orderedText = result.orderedText;
     textLayerFields = result.fields;
     textLayerFieldMeta = result.fieldMeta;
@@ -1222,7 +1267,8 @@ async function postProcessExtractionResult(
 export async function extractLabelFromTextLayerOnly(
   pdfBuffer: Buffer,
   knownFlavours: readonly string[] = [],
-  knownClaims: readonly string[] = []
+  knownClaims: readonly string[] = [],
+  knownBrands: readonly string[] = []
 ): Promise<LabelExtractionResult> {
   try {
     const { text: textLayerText } = await extractPdfText(pdfBuffer);
@@ -1237,7 +1283,7 @@ export async function extractLabelFromTextLayerOnly(
     let nutritionTable: Record<string, string> | undefined;
 
     if (textLayerUsable) {
-      const result = await extractFieldsFromTextLayer(pdfBuffer, textLayerText, knownFlavours);
+      const result = await extractFieldsFromTextLayer(pdfBuffer, textLayerText, knownFlavours, knownBrands);
       text = result.orderedText;
       fields = result.fields;
       nutritionTable = result.nutritionTable;
@@ -1278,9 +1324,10 @@ export async function extractLabelFromFile(
   filePath: string,
   mimeType: string,
   knownClaims: readonly string[] = [],
-  knownFlavours: readonly string[] = []
+  knownFlavours: readonly string[] = [],
+  knownBrands: readonly string[] = []
 ): Promise<LabelExtractionResult> {
-  return (await extractLabelReportFromFile(filePath, mimeType, knownClaims, knownFlavours)).result;
+  return (await extractLabelReportFromFile(filePath, mimeType, knownClaims, knownFlavours, knownBrands)).result;
 }
 
 /**
@@ -1299,13 +1346,23 @@ export async function extractLabelReportFromFile(
   filePath: string,
   mimeType: string,
   knownClaims: readonly string[] = [],
-  knownFlavours: readonly string[] = []
+  knownFlavours: readonly string[] = [],
+  // Only the PDF text-layer path snaps brand to a master today (see
+  // masterSnap.service.ts) — that's where the regression this was built to
+  // fix (text-layer-flattened brand at ~1 correct / 13 wrong) actually
+  // lives. Tesseract full-page OCR (extractFieldsFromImage, and the
+  // rasterized-page loop inside extractFieldsFromPdf) isn't snapped yet;
+  // extending master-snap to OCR-sourced brand reads is deferred alongside
+  // the PP-OCR-line and VLM-transcript snap points (accuracy2 plan Steps 3/5).
+  knownBrands: readonly string[] = []
 ): Promise<LabelExtractionReport> {
   try {
     const fileBuffer = fs.readFileSync(filePath);
     const isPdf = mimeType === 'application/pdf';
 
-    const pass = isPdf ? await extractFieldsFromPdf(fileBuffer, knownFlavours) : await extractFieldsFromImage(fileBuffer, knownFlavours);
+    const pass = isPdf
+      ? await extractFieldsFromPdf(fileBuffer, knownFlavours, knownBrands)
+      : await extractFieldsFromImage(fileBuffer, knownFlavours);
 
     debugLog(`Parsed fields: ${JSON.stringify(pass.fields)}`);
 

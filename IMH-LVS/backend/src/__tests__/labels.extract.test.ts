@@ -117,9 +117,15 @@ test('PDF with a selectable text layer: extracts fields without OCR', { skip: SK
   // this fixture DOES rasterize and OCR one field (title-region recovery),
   // it was just invisible before fieldMeta could see non-VLM sources. Every
   // other field really is a text-layer-flattened read, no OCR involved.
-  for (const field of ['marketingCompany', 'address', 'fssaiNumber', 'email', 'customerCareNumber', 'brand', 'flavour']) {
+  for (const field of ['marketingCompany', 'address', 'fssaiNumber', 'email', 'customerCareNumber', 'flavour']) {
     assert.deepEqual(body.fieldMeta[field], { source: 'text-layer-flattened', needsReview: false });
   }
+  // Step 2 (accuracy2 plan): brand now snaps to the Masters catalogue when
+  // it's available (loadKnownMasterNames() now also loads Active brands —
+  // see labels.controller.ts) — this fixture's own text-layer brand read is
+  // an exact match for the seeded 'VitaFit' brand (src/db/seed.ts), so the
+  // real source is master-snap, not a bare text-layer read.
+  assert.deepEqual(body.fieldMeta.brand, { source: 'master-snap', needsReview: false });
   assert.deepEqual(body.fieldMeta.productName, { source: 'tesseract-title-region', needsReview: false });
   assert.deepEqual(Object.keys(body.fieldMeta).sort(), [
     'address', 'brand', 'customerCareNumber', 'email', 'flavour', 'fssaiNumber', 'marketingCompany', 'productName'
