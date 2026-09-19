@@ -3089,3 +3089,236 @@ Also decided (Step 1.2, `STEP1_FAILURE_ANALYSIS.md`):
 - `LXIR Shilajit gummy VF IRN18-1.pdf` — layout: ['Bottle label (wraparound + cap circles)', 'Blank die-line/dimension template']
 - `LXIR Shilajit STICK VF IRN19-1.pdf` — layout: ['Sachet/stick box label (wraparound + cap circles)', 'Blank die-line/dimension template']
 - `PMS VF IRN71-1.pdf` — layout: ['Bottle label (jar cap circles + wraparound body label)', 'UV varnish separation proof']
+
+## 2026-09-19 20:06 UTC — mode `pipeline (vlm on, masters on)` — 2f68c15
+
+**5 labels, 241 fields scored.** Overall accuracy: **51.5%** (124 correct / 58 wrong / 59 missing)
+
+| field | correct | wrong | missing | accuracy |
+|---|---|---|---|---|
+| brand_name | 3 | 1 | 1 | 60.0% |
+| product_name | 1 | 2 | 2 | 20.0% |
+| colour_theme | 4 | 2 | 6 | 33.3% |
+| flavour | 2 | 3 | 0 | 40.0% |
+| claims | 24 | 14 | 9 | 51.1% |
+| logo | 1 | 0 | 4 | 20.0% |
+| layout | 0 | 0 | 5 | 0.0% |
+| nutrition_table | 32 | 12 | 15 | 54.2% |
+| fssai_number | 2 | 2 | 1 | 40.0% |
+| ingredients | 37 | 11 | 15 | 58.7% |
+| marketing_company | 2 | 3 | 0 | 40.0% |
+| address | 2 | 3 | 0 | 40.0% |
+| customer_care_number | 4 | 1 | 0 | 80.0% |
+| customer_care_email | 4 | 0 | 1 | 80.0% |
+| package_size | 1 | 4 | 0 | 20.0% |
+| manufacturing_company | 5 | 0 | 0 | 100.0% |
+
+**Accuracy by source** (which pass produced each field's value — a source with more wrong than correct is actively hurting that field and is a candidate to gate off; MISSING cells have no source and aren't counted here):
+| field | source | correct | wrong | accuracy |
+|---|---|---|---|---|
+| address | tesseract-full-page | 0 | 1 | 0.0% |
+| address | tesseract-region-ocr | 0 | 2 | 0.0% |
+| address | text-layer-flattened | 2 | 0 | 100.0% |
+| brand_name | tesseract-full-page | 0 | 1 | 0.0% |
+| brand_name | vlm-role-resolution | 3 | 0 | 100.0% |
+| customer_care_email | tesseract-full-page | 2 | 0 | 100.0% |
+| customer_care_email | text-layer-flattened | 2 | 0 | 100.0% |
+| customer_care_number | tesseract-full-page | 2 | 1 | 66.7% |
+| customer_care_number | text-layer-flattened | 2 | 0 | 100.0% |
+| flavour | tesseract-full-page | 0 | 1 | 0.0% |
+| flavour | text-layer-flattened | 2 | 2 | 50.0% |
+| fssai_number | tesseract-full-page | 0 | 2 | 0.0% |
+| fssai_number | text-layer-flattened | 2 | 0 | 100.0% |
+| marketing_company | tesseract-full-page | 0 | 1 | 0.0% |
+| marketing_company | tesseract-region-ocr | 0 | 2 | 0.0% |
+| marketing_company | text-layer-flattened | 2 | 0 | 100.0% |
+| package_size | tesseract-full-page | 1 | 0 | 100.0% |
+| package_size | text-layer-flattened | 0 | 4 | 0.0% |
+| product_name | text-layer-flattened | 0 | 2 | 0.0% |
+| product_name | vlm-role-resolution | 1 | 0 | 100.0% |
+
+**New metric — text fields only** (13 fields; logo/layout/colour_theme are scored separately below, per the brief comparing them as images, not text). Accuracy: **69.4%** (fuzzy/normalized — the 80% target) / 57.8% (strict, for comparison to the row above)
+
+| field | correct (strict) | correct (fuzzy) | wrong | missing | accuracy (fuzzy) |
+|---|---|---|---|---|---|
+| brand_name | 3 | 3 | 1 | 1 | 60.0% |
+| product_name | 1 | 1 | 2 | 2 | 20.0% |
+| flavour | 2 | 2 | 3 | 0 | 40.0% |
+| claims | 24 | 26 | 12 | 7 | 57.8% |
+| nutrition_table | 32 | 43 | 1 | 10 | 79.6% |
+| fssai_number | 2 | 4 | 0 | 1 | 80.0% |
+| ingredients | 37 | 43 | 5 | 9 | 75.4% |
+| marketing_company | 2 | 3 | 2 | 0 | 60.0% |
+| address | 2 | 3 | 2 | 0 | 60.0% |
+| customer_care_number | 4 | 5 | 0 | 0 | 100.0% |
+| customer_care_email | 4 | 4 | 0 | 1 | 80.0% |
+| package_size | 1 | 1 | 4 | 0 | 20.0% |
+| manufacturing_company | 5 | 5 | 0 | 0 | 100.0% |
+
+**Visual fields** (logo, layout, colour_theme — compared as images per the brief §9, not part of the 80% text target; strict matching only): 22.7%
+
+| field | correct | wrong | missing | accuracy |
+|---|---|---|---|---|
+| colour_theme | 4 | 2 | 6 | 33.3% |
+| logo | 1 | 0 | 4 | 20.0% |
+| layout | 0 | 0 | 5 | 0.0% |
+
+**Fabrication rate** (predicted a value for a field the label genuinely doesn't have one for — must never go up in exchange for accuracy):
+| field | fabricated | opportunities | rate |
+|---|---|---|---|
+| logo | 0 | 1 | 0.0% |
+
+## 2026-09-19 20:09 UTC — mode `pipeline (vlm on, masters on)` — 2f68c15
+
+**5 labels, 241 fields scored.** Overall accuracy: **52.3%** (126 correct / 57 wrong / 58 missing)
+
+| field | correct | wrong | missing | accuracy |
+|---|---|---|---|---|
+| brand_name | 5 | 0 | 0 | 100.0% |
+| product_name | 1 | 2 | 2 | 20.0% |
+| colour_theme | 4 | 2 | 6 | 33.3% |
+| flavour | 2 | 3 | 0 | 40.0% |
+| claims | 24 | 14 | 9 | 51.1% |
+| logo | 1 | 0 | 4 | 20.0% |
+| layout | 0 | 0 | 5 | 0.0% |
+| nutrition_table | 32 | 12 | 15 | 54.2% |
+| fssai_number | 2 | 2 | 1 | 40.0% |
+| ingredients | 37 | 11 | 15 | 58.7% |
+| marketing_company | 2 | 3 | 0 | 40.0% |
+| address | 2 | 3 | 0 | 40.0% |
+| customer_care_number | 4 | 1 | 0 | 80.0% |
+| customer_care_email | 4 | 0 | 1 | 80.0% |
+| package_size | 1 | 4 | 0 | 20.0% |
+| manufacturing_company | 5 | 0 | 0 | 100.0% |
+
+**Accuracy by source** (which pass produced each field's value — a source with more wrong than correct is actively hurting that field and is a candidate to gate off; MISSING cells have no source and aren't counted here):
+| field | source | correct | wrong | accuracy |
+|---|---|---|---|---|
+| address | tesseract-full-page | 0 | 1 | 0.0% |
+| address | tesseract-region-ocr | 0 | 2 | 0.0% |
+| address | text-layer-flattened | 2 | 0 | 100.0% |
+| brand_name | vlm-role-resolution | 5 | 0 | 100.0% |
+| customer_care_email | tesseract-full-page | 2 | 0 | 100.0% |
+| customer_care_email | text-layer-flattened | 2 | 0 | 100.0% |
+| customer_care_number | tesseract-full-page | 2 | 1 | 66.7% |
+| customer_care_number | text-layer-flattened | 2 | 0 | 100.0% |
+| flavour | tesseract-full-page | 0 | 1 | 0.0% |
+| flavour | text-layer-flattened | 2 | 2 | 50.0% |
+| fssai_number | tesseract-full-page | 0 | 2 | 0.0% |
+| fssai_number | text-layer-flattened | 2 | 0 | 100.0% |
+| marketing_company | tesseract-full-page | 0 | 1 | 0.0% |
+| marketing_company | tesseract-region-ocr | 0 | 2 | 0.0% |
+| marketing_company | text-layer-flattened | 2 | 0 | 100.0% |
+| package_size | tesseract-full-page | 1 | 0 | 100.0% |
+| package_size | text-layer-flattened | 0 | 4 | 0.0% |
+| product_name | text-layer-flattened | 0 | 1 | 0.0% |
+| product_name | vlm-role-resolution | 1 | 1 | 50.0% |
+
+**New metric — text fields only** (13 fields; logo/layout/colour_theme are scored separately below, per the brief comparing them as images, not text). Accuracy: **70.4%** (fuzzy/normalized — the 80% target) / 58.7% (strict, for comparison to the row above)
+
+| field | correct (strict) | correct (fuzzy) | wrong | missing | accuracy (fuzzy) |
+|---|---|---|---|---|---|
+| brand_name | 5 | 5 | 0 | 0 | 100.0% |
+| product_name | 1 | 1 | 2 | 2 | 20.0% |
+| flavour | 2 | 2 | 3 | 0 | 40.0% |
+| claims | 24 | 26 | 12 | 7 | 57.8% |
+| nutrition_table | 32 | 43 | 1 | 10 | 79.6% |
+| fssai_number | 2 | 4 | 0 | 1 | 80.0% |
+| ingredients | 37 | 43 | 5 | 9 | 75.4% |
+| marketing_company | 2 | 3 | 2 | 0 | 60.0% |
+| address | 2 | 3 | 2 | 0 | 60.0% |
+| customer_care_number | 4 | 5 | 0 | 0 | 100.0% |
+| customer_care_email | 4 | 4 | 0 | 1 | 80.0% |
+| package_size | 1 | 1 | 4 | 0 | 20.0% |
+| manufacturing_company | 5 | 5 | 0 | 0 | 100.0% |
+
+**Visual fields** (logo, layout, colour_theme — compared as images per the brief §9, not part of the 80% text target; strict matching only): 22.7%
+
+| field | correct | wrong | missing | accuracy |
+|---|---|---|---|---|
+| colour_theme | 4 | 2 | 6 | 33.3% |
+| layout | 0 | 0 | 5 | 0.0% |
+| logo | 1 | 0 | 4 | 20.0% |
+
+**Fabrication rate** (predicted a value for a field the label genuinely doesn't have one for — must never go up in exchange for accuracy):
+| field | fabricated | opportunities | rate |
+|---|---|---|---|
+| logo | 0 | 1 | 0.0% |
+
+## 2026-09-19 20:12 UTC — mode `pipeline (vlm on, masters on)` — 2f68c15
+
+**5 labels, 241 fields scored.** Overall accuracy: **51.5%** (124 correct / 58 wrong / 59 missing)
+
+| field | correct | wrong | missing | accuracy |
+|---|---|---|---|---|
+| brand_name | 3 | 1 | 1 | 60.0% |
+| product_name | 1 | 2 | 2 | 20.0% |
+| colour_theme | 4 | 2 | 6 | 33.3% |
+| flavour | 2 | 3 | 0 | 40.0% |
+| claims | 24 | 14 | 9 | 51.1% |
+| logo | 1 | 0 | 4 | 20.0% |
+| layout | 0 | 0 | 5 | 0.0% |
+| nutrition_table | 32 | 12 | 15 | 54.2% |
+| fssai_number | 2 | 2 | 1 | 40.0% |
+| ingredients | 37 | 11 | 15 | 58.7% |
+| marketing_company | 2 | 3 | 0 | 40.0% |
+| address | 2 | 3 | 0 | 40.0% |
+| customer_care_number | 4 | 1 | 0 | 80.0% |
+| customer_care_email | 4 | 0 | 1 | 80.0% |
+| package_size | 1 | 4 | 0 | 20.0% |
+| manufacturing_company | 5 | 0 | 0 | 100.0% |
+
+**Accuracy by source** (which pass produced each field's value — a source with more wrong than correct is actively hurting that field and is a candidate to gate off; MISSING cells have no source and aren't counted here):
+| field | source | correct | wrong | accuracy |
+|---|---|---|---|---|
+| address | tesseract-full-page | 0 | 1 | 0.0% |
+| address | tesseract-region-ocr | 0 | 2 | 0.0% |
+| address | text-layer-flattened | 2 | 0 | 100.0% |
+| brand_name | tesseract-full-page | 0 | 1 | 0.0% |
+| brand_name | vlm-role-resolution | 3 | 0 | 100.0% |
+| customer_care_email | tesseract-full-page | 2 | 0 | 100.0% |
+| customer_care_email | text-layer-flattened | 2 | 0 | 100.0% |
+| customer_care_number | tesseract-full-page | 2 | 1 | 66.7% |
+| customer_care_number | text-layer-flattened | 2 | 0 | 100.0% |
+| flavour | tesseract-full-page | 0 | 1 | 0.0% |
+| flavour | text-layer-flattened | 2 | 2 | 50.0% |
+| fssai_number | tesseract-full-page | 0 | 2 | 0.0% |
+| fssai_number | text-layer-flattened | 2 | 0 | 100.0% |
+| marketing_company | tesseract-full-page | 0 | 1 | 0.0% |
+| marketing_company | tesseract-region-ocr | 0 | 2 | 0.0% |
+| marketing_company | text-layer-flattened | 2 | 0 | 100.0% |
+| package_size | tesseract-full-page | 1 | 0 | 100.0% |
+| package_size | text-layer-flattened | 0 | 4 | 0.0% |
+| product_name | text-layer-flattened | 0 | 2 | 0.0% |
+| product_name | vlm-role-resolution | 1 | 0 | 100.0% |
+
+**New metric — text fields only** (13 fields; logo/layout/colour_theme are scored separately below, per the brief comparing them as images, not text). Accuracy: **69.4%** (fuzzy/normalized — the 80% target) / 57.8% (strict, for comparison to the row above)
+
+| field | correct (strict) | correct (fuzzy) | wrong | missing | accuracy (fuzzy) |
+|---|---|---|---|---|---|
+| brand_name | 3 | 3 | 1 | 1 | 60.0% |
+| product_name | 1 | 1 | 2 | 2 | 20.0% |
+| flavour | 2 | 2 | 3 | 0 | 40.0% |
+| claims | 24 | 26 | 12 | 7 | 57.8% |
+| nutrition_table | 32 | 43 | 1 | 10 | 79.6% |
+| fssai_number | 2 | 4 | 0 | 1 | 80.0% |
+| ingredients | 37 | 43 | 5 | 9 | 75.4% |
+| marketing_company | 2 | 3 | 2 | 0 | 60.0% |
+| address | 2 | 3 | 2 | 0 | 60.0% |
+| customer_care_number | 4 | 5 | 0 | 0 | 100.0% |
+| customer_care_email | 4 | 4 | 0 | 1 | 80.0% |
+| package_size | 1 | 1 | 4 | 0 | 20.0% |
+| manufacturing_company | 5 | 5 | 0 | 0 | 100.0% |
+
+**Visual fields** (logo, layout, colour_theme — compared as images per the brief §9, not part of the 80% text target; strict matching only): 22.7%
+
+| field | correct | wrong | missing | accuracy |
+|---|---|---|---|---|
+| layout | 0 | 0 | 5 | 0.0% |
+| colour_theme | 4 | 2 | 6 | 33.3% |
+| logo | 1 | 0 | 4 | 20.0% |
+
+**Fabrication rate** (predicted a value for a field the label genuinely doesn't have one for — must never go up in exchange for accuracy):
+| field | fabricated | opportunities | rate |
+|---|---|---|---|
+| logo | 0 | 1 | 0.0% |
