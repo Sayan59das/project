@@ -68,6 +68,12 @@ import {
 } from './textLayerGeometry.service';
 import { projectSpanToPixels, findOutlinedLines, planOcrStrips, dropStripEdgeLines, dedupeOverlappingLines, type OcrLineLike } from './outlinedText.service';
 import { isVlmEnabled, prepareImage, ollamaClient, type VlmImage, type VlmClient } from './ollamaVlm.service';
+import {
+  findNutritionPanelFromSpans,
+  findNutritionPanelFromWords,
+  padCropBox,
+  readNutritionTableFromCrop
+} from './nutritionCropReader.service';
 import { resolveDisplayRoles, type DisplayCandidateIn } from './displayRoleResolver.service';
 
 setLabelFieldExtractorDebug(env.labelExtractionDebug);
@@ -1505,6 +1511,52 @@ export async function extractLabelReportFromFile(
           nutritionTable,
           pass.displayTextCandidates,
           pass.flattenedText
+        );
+      }
+    }
+
+    // Step 7 (accuracy2 plan): the VLM as a grounded reader on a crop of
+    // just the nutrition panel -- last resort, after the text layer,
+    // Tesseract, and PP-OCR body-text passes above all had their turn and
+    // nutrition_table is STILL empty. Validated in
+    // eval/STEP7_CROP_DIAGNOSTIC.md: the whole page squeezed to
+    // prepareImage()'s fixed 1008px width reads small nutrition-panel
+    // print so poorly the model hallucinates a plausible-looking but
+    // wrong table; the same model reading a real-resolution crop of just
+    // the panel reads it correctly, at no extra latency cost. Every row
+    // is grounded before being trusted (readNutritionTableFromCrop), so a
+    // crop that doesn't hold up leaves the field MISSING, same as today,
+    // never WRONG for the sake of filling something in.
+    if (!hasNutritionTable(nutritionTable) && isVlmEnabled() && pass.pageImages[0]) {
+      try {
+        const pageImageBuffer = pass.pageImages[0];
+        const meta = await sharp(pageImageBuffer).metadata();
+        const pageWidth = meta.width!;
+        const pageHeight = meta.height!;
+        const dpi = env.pdfRasterDpi;
+
+        let box = findNutritionPanelFromSpans(pass.spans ?? [], pageHeight / (dpi / 72), dpi);
+        if (!box) {
+          const { words } = await recognizePageWithWords(pageImageBuffer);
+          box = findNutritionPanelFromWords(words, pageWidth, pageHeight);
+        }
+
+        if (box) {
+          const padded = padCropBox(box, 20, pageWidth, pageHeight);
+          const recovered = await readNutritionTableFromCrop(pageImageBuffer, padded, ollamaClient);
+          if (recovered) {
+            nutritionTable = recovered;
+            // Only this one value changed -- extractExtendedFields also
+            // recomputes colour theme (real image processing) and re-runs
+            // claims/ingredients, neither of which depends on
+            // nutritionTable, so a full re-call would be pure waste here.
+            extended = { ...extended, values: { ...extended.values, nutritionTable: JSON.stringify(recovered) } };
+          }
+        }
+      } catch (error) {
+        console.warn(
+          '[labelExtraction] Nutrition-panel crop recovery failed: ' +
+            (error instanceof Error ? error.message : String(error))
         );
       }
     }
