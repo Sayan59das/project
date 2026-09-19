@@ -44,6 +44,17 @@ Environment variables:
                             machine — a single process holding Ollama and the OCR engine
                             resident for every label at once has been observed getting
                             killed by the OS for running out of memory.
+    EVAL_LABEL_SUBSET_FILE  Restricts scoring to the sourceFile names listed one per line
+                            in this text file (blank lines and lines starting with # are
+                            skipped) — every other ground-truth label is left out of this
+                            run entirely, not just hidden from the printed report. Exists
+                            for a real held-out accuracy check (eval/holdout_labels.txt):
+                            every fix in this project so far was found by reading real
+                            wrong answers FROM the same 45 labels used to measure it, so
+                            the headline number has never actually shown how well the
+                            code does on a label no fix was ever tuned against. Unset
+                            (the default) scores every label, exactly as before this
+                            variable existed.
 """
 import argparse
 import json
@@ -584,6 +595,22 @@ def load_ground_truth():
         merged, conflicts = merge_label_pages([d.get("label", {}) for d in docs])
         pages = [(d["_slug"], d.get("page", 0)) for d in docs]
         grouped[source_file] = (merged, pages, conflicts)
+
+    subset_path = os.environ.get("EVAL_LABEL_SUBSET_FILE")
+    if subset_path:
+        wanted = {
+            line.strip()
+            for line in Path(subset_path).read_text(encoding="utf-8").splitlines()
+            if line.strip() and not line.strip().startswith("#")
+        }
+        missing = wanted - grouped.keys()
+        if missing:
+            raise SystemExit(
+                f"EVAL_LABEL_SUBSET_FILE names {len(missing)} file(s) with no ground truth: "
+                f"{sorted(missing)}"
+            )
+        grouped = {source_file: v for source_file, v in grouped.items() if source_file in wanted}
+
     return grouped
 
 

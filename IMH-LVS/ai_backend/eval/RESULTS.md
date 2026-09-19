@@ -3089,3 +3089,90 @@ Also decided (Step 1.2, `STEP1_FAILURE_ANALYSIS.md`):
 - `LXIR Shilajit gummy VF IRN18-1.pdf` — layout: ['Bottle label (wraparound + cap circles)', 'Blank die-line/dimension template']
 - `LXIR Shilajit STICK VF IRN19-1.pdf` — layout: ['Sachet/stick box label (wraparound + cap circles)', 'Blank die-line/dimension template']
 - `PMS VF IRN71-1.pdf` — layout: ['Bottle label (jar cap circles + wraparound body label)', 'UV varnish separation proof']
+
+## 2026-09-18 19:02 UTC — mode `pipeline (vlm on)` — 8ebd2be
+
+**10 labels, 485 fields scored.** Overall accuracy: **40.0%** (194 correct / 66 wrong / 225 missing)
+
+| field | correct | wrong | missing | accuracy |
+|---|---|---|---|---|
+| brand_name | 2 | 4 | 4 | 20.0% |
+| product_name | 1 | 8 | 1 | 10.0% |
+| colour_theme | 10 | 6 | 8 | 41.7% |
+| flavour | 4 | 3 | 3 | 40.0% |
+| claims | 36 | 1 | 54 | 39.6% |
+| logo | 5 | 0 | 5 | 50.0% |
+| layout | 0 | 0 | 10 | 0.0% |
+| nutrition_table | 27 | 19 | 75 | 22.3% |
+| fssai_number | 6 | 1 | 3 | 60.0% |
+| ingredients | 65 | 18 | 46 | 50.4% |
+| marketing_company | 5 | 2 | 3 | 50.0% |
+| address | 5 | 1 | 4 | 50.0% |
+| customer_care_number | 3 | 2 | 5 | 30.0% |
+| customer_care_email | 8 | 0 | 2 | 80.0% |
+| package_size | 7 | 1 | 2 | 70.0% |
+| manufacturing_company | 10 | 0 | 0 | 100.0% |
+
+**Accuracy by source** (which pass produced each field's value — a source with more wrong than correct is actively hurting that field and is a candidate to gate off; MISSING cells have no source and aren't counted here):
+| field | source | correct | wrong | accuracy |
+|---|---|---|---|---|
+| address | tesseract-region-ocr | 1 | 1 | 50.0% |
+| address | text-layer-flattened | 4 | 0 | 100.0% |
+| brand_name | tesseract-full-page | 0 | 1 | 0.0% |
+| brand_name | text-layer-flattened | 0 | 1 | 0.0% |
+| brand_name | text-layer-reading-order | 0 | 2 | 0.0% |
+| brand_name | vlm-role-resolution | 2 | 0 | 100.0% |
+| customer_care_email | tesseract-full-page | 3 | 0 | 100.0% |
+| customer_care_email | text-layer-flattened | 4 | 0 | 100.0% |
+| customer_care_number | tesseract-full-page | 0 | 2 | 0.0% |
+| customer_care_number | text-layer-flattened | 2 | 0 | 100.0% |
+| flavour | tesseract-full-page | 1 | 1 | 50.0% |
+| flavour | text-layer-flattened | 3 | 2 | 60.0% |
+| fssai_number | tesseract-full-page | 1 | 1 | 50.0% |
+| fssai_number | text-layer-flattened | 5 | 0 | 100.0% |
+| marketing_company | tesseract-full-page | 0 | 1 | 0.0% |
+| marketing_company | tesseract-region-ocr | 1 | 1 | 50.0% |
+| marketing_company | text-layer-flattened | 4 | 0 | 100.0% |
+| package_size | tesseract-full-page | 3 | 1 | 75.0% |
+| package_size | text-layer-flattened | 4 | 0 | 100.0% |
+| product_name | tesseract-full-page | 0 | 1 | 0.0% |
+| product_name | tesseract-title-region | 0 | 1 | 0.0% |
+| product_name | text-layer-flattened | 0 | 4 | 0.0% |
+| product_name | vlm-role-resolution | 1 | 2 | 33.3% |
+
+**New metric — text fields only** (13 fields; logo/layout/colour_theme are scored separately below, per the brief comparing them as images, not text). Accuracy: **48.6%** (fuzzy/normalized — the 80% target) / 41.8% (strict, for comparison to the row above)
+
+| field | correct (strict) | correct (fuzzy) | wrong | missing | accuracy (fuzzy) |
+|---|---|---|---|---|---|
+| brand_name | 2 | 2 | 4 | 4 | 20.0% |
+| product_name | 1 | 5 | 4 | 1 | 50.0% |
+| flavour | 4 | 5 | 2 | 3 | 50.0% |
+| claims | 36 | 36 | 1 | 54 | 39.6% |
+| nutrition_table | 27 | 38 | 8 | 73 | 31.9% |
+| fssai_number | 6 | 6 | 1 | 3 | 60.0% |
+| ingredients | 65 | 76 | 7 | 35 | 64.4% |
+| marketing_company | 5 | 5 | 2 | 3 | 50.0% |
+| address | 5 | 5 | 1 | 4 | 50.0% |
+| customer_care_number | 3 | 5 | 0 | 5 | 50.0% |
+| customer_care_email | 8 | 8 | 0 | 2 | 80.0% |
+| package_size | 7 | 7 | 1 | 2 | 70.0% |
+| manufacturing_company | 10 | 10 | 0 | 0 | 100.0% |
+
+**Visual fields** (logo, layout, colour_theme — compared as images per the brief §9, not part of the 80% text target; strict matching only): 34.1%
+
+| field | correct | wrong | missing | accuracy |
+|---|---|---|---|---|
+| layout | 0 | 0 | 10 | 0.0% |
+| colour_theme | 10 | 6 | 8 | 41.7% |
+| logo | 5 | 0 | 5 | 50.0% |
+
+**Fabrication rate** (predicted a value for a field the label genuinely doesn't have one for — must never go up in exchange for accuracy):
+| field | fabricated | opportunities | rate |
+|---|---|---|---|
+| logo | 0 | 5 | 0.0% |
+| customer_care_number | 0 | 1 | 0.0% |
+| customer_care_email | 0 | 1 | 0.0% |
+
+**Ground-truth conflicts found** (a field printed differently on two pages of the same label — resolved by keeping the first page's value; worth a human look):
+- `AM7 GUMMIES - ORANGE  FLAVOUR (2).pdf` — layout: ['Carton (flattened, front and back content together)', 'Circular cap face']
+- `Dr. Chewitals Vision IRN13-1.pdf` — layout: ['Wraparound bottle/pouch label', 'Circular cap face (top); blank base template']
