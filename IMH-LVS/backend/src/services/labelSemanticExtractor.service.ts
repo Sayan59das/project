@@ -129,6 +129,18 @@ export const ALLERGEN_DIETARY_WORDS = new Set([
   'sulphate', 'sulphates', 'sulfate', 'sulfates', 'fragrance', 'artificial', 'cruelty'
 ]);
 
+// Text that reads like a claim but is a mandatory regulatory CATEGORY
+// designation, not something the marketer chose to say -- the same kind of
+// designation as "Dietary Supplement" in the US. Checked against EVERY
+// match source below (Masters list included), not just CLAIM_BADGES: a
+// real 45-label run (accuracy2 Step 4) showed 'Health Supplement' scores
+// 21 wrong / 0 correct once a real knownClaims list flows through, because
+// it's boilerplate text on nearly every label in this category but only
+// 2 of 45 ground-truth reviews happened to record it as a claim. Case-
+// insensitive exact match only -- this is a denylist for one specific,
+// evidenced false positive, not a broad pattern.
+const NEVER_A_CLAIM = new Set(['health supplement']);
+
 // This list exists because the Claims master cannot be assumed complete — the
 // seeded master has four entries and the real artwork carries claims none of
 // them cover — and because a claim present on the label but absent from the
@@ -219,9 +231,11 @@ export function extractClaims(text: string, knownClaims: readonly string[] = [])
   const found = new Map<string, boolean>(); // claim -> matched a master record
 
   for (const known of knownClaims) {
-    const escaped = known.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s+/g, '\\s+');
+    const trimmed = known.trim();
+    if (NEVER_A_CLAIM.has(trimmed.toLowerCase())) continue;
+    const escaped = trimmed.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s+/g, '\\s+');
     if (escaped.length > 0 && new RegExp(`\\b${escaped}\\b`, 'i').test(flat)) {
-      found.set(known.trim(), true);
+      found.set(trimmed, true);
     }
   }
 

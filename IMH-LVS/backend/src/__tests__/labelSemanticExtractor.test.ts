@@ -292,6 +292,25 @@ test('matches a master claim broken across lines by the PDF', () => {
   assert.deepEqual(result.matched, ['High in Vitamin C']);
 });
 
+// Step 4 (accuracy2 plan): 'Health Supplement' was already deliberately kept
+// OUT of CLAIM_BADGES (see that list's own comment) after a real 45-label
+// run showed it fires as WRONG everywhere and is never CORRECT -- every
+// reviewed label treats it as the product's mandatory regulatory CATEGORY,
+// the same kind of designation as "Dietary Supplement", not a claim the
+// marketer chose to make. But the Masters-matching loop above has no
+// equivalent guard: once accuracy2 Step 2 wired a real knownClaims list
+// through, and exactly 2 of 45 ground-truth labels happened to record
+// 'Health Supplement' as a claim, it started firing as a false positive on
+// every OTHER label whose OCR text also carries this boilerplate category
+// text (confirmed: 21 wrong / 0 correct in a real masters-on pipeline run).
+// The same policy decision has to hold regardless of which path found the
+// match.
+test('never reports "Health Supplement" as a claim, even when it is in the Masters list', () => {
+  const result = extractClaims('Health Supplement. Gluten Free.', ['Health Supplement', 'Gluten Free']);
+  assert.deepEqual(result.matched, ['Gluten Free']);
+  assert.equal(result.claims, 'Gluten Free');
+});
+
 test('reads the serving basis a nutrition panel declares', () => {
   const panel =
     'Nutritional Facts\nServing size: 1 Gummy | No. of servings per pack: 30\n' +
