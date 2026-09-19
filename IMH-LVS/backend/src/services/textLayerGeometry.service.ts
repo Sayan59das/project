@@ -1,5 +1,6 @@
 import type { TextSpan } from './pdf.service';
 import type { OcrWord } from './tesseract.service';
+import type { OcrLine } from './paddleOcr.service';
 
 export type TextLine = {
   page: number;
@@ -378,6 +379,42 @@ export function extractNutritionTableFromOcrWords(words: readonly OcrWord[], pag
   const spans = ocrWordsToTextSpans(words, page);
   const lines = groupSpansIntoLines(spans);
   const panel: Panel = { page, rotation: 0, lines };
+  return extractNutritionTableFromPanels([panel]);
+}
+
+// Same adaptation as ocrWordsToTextSpans, for PP-OCR's line-level detections
+// (accuracy2 plan Step 3) rather than Tesseract's word-level boxes. PP-OCR
+// (recognizeLines, paddleOcr.service.ts) detects contiguous TEXT REGIONS, not
+// individual words -- confirmed on real label dumps (see ceiling.py's own
+// comment) that a genuine nutrition row usually comes back as ONE line
+// ("Energy 16 kcal <1% <1%"), though a wide enough visual gutter can still
+// split name and value into two regions at the same baseline. Both shapes
+// are handled downstream: groupSpansIntoLines rejoins same-baseline regions
+// into one row (the split case), and extractNutritionTableFromPanels' own
+// single-cell regex already parses a whole "name value %" run as one row
+// (the contiguous case) -- this adapter exists only to reuse both untouched.
+export function ppOcrLinesToTextSpans(lines: readonly OcrLine[], page: number = 1): TextSpan[] {
+  return lines
+    .filter((line) => line.text.trim().length > 0)
+    .map((line) => ({
+      page,
+      text: line.text,
+      x: line.box.x0,
+      y: -line.box.y0,
+      width: line.box.x1 - line.box.x0,
+      height: line.box.y1 - line.box.y0,
+      fontSize: line.box.y1 - line.box.y0,
+      rotation: 0,
+      fontName: 'ppocr',
+    }));
+}
+
+// Convenience wrapper mirroring extractNutritionTableFromOcrWords, for
+// PP-OCR's line-level output instead of Tesseract's word-level boxes.
+export function extractNutritionTableFromPpOcrLines(lines: readonly OcrLine[], page: number = 1): Record<string, string> {
+  const spans = ppOcrLinesToTextSpans(lines, page);
+  const textLines = groupSpansIntoLines(spans);
+  const panel: Panel = { page, rotation: 0, lines: textLines };
   return extractNutritionTableFromPanels([panel]);
 }
 

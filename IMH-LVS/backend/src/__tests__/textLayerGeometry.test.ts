@@ -12,11 +12,14 @@ import {
   extractNutritionTableFromPanels,
   ocrWordsToTextSpans,
   extractNutritionTableFromOcrWords,
+  ppOcrLinesToTextSpans,
+  extractNutritionTableFromPpOcrLines,
   type TextLine,
 } from '../services/textLayerGeometry.service';
 import { extractTextSpans } from '../services/pdf.service';
 import type { TextSpan } from '../services/pdf.service';
 import type { OcrWord } from '../services/tesseract.service';
+import type { OcrLine } from '../services/paddleOcr.service';
 
 const FIXTURES = path.join(__dirname, 'fixtures');
 const load = (name: string) => readFileSync(path.join(FIXTURES, name));
@@ -663,5 +666,70 @@ test('extractNutritionTableFromOcrWords: recovers a nutrition table from OCR wor
     Energy: '12 kcal',
     Protein: '0.5 g',
     'Vitamin C': '40 mg (66% DV)',
+  });
+});
+
+function ppOcrLine(props: { text: string; x0: number; y0: number; x1: number; y1: number; confidence?: number }): OcrLine {
+  return {
+    text: props.text,
+    box: { x0: props.x0, y0: props.y0, x1: props.x1, y1: props.y1 },
+    confidence: props.confidence ?? 0.9,
+  };
+}
+
+test('ppOcrLinesToTextSpans: pixel (y-down) line boxes convert to PDF-style (y-up) spans, same as ocrWordsToTextSpans', () => {
+  const lines = [
+    ppOcrLine({ text: 'Top', x0: 10, y0: 20, x1: 40, y1: 32 }),
+    ppOcrLine({ text: 'Bottom', x0: 10, y0: 200, x1: 60, y1: 212 }),
+  ];
+  const spans = ppOcrLinesToTextSpans(lines);
+  const top = spans.find((s) => s.text === 'Top')!;
+  const bottom = spans.find((s) => s.text === 'Bottom')!;
+  assert.ok(top.y > bottom.y, 'the line nearer the top of the image should have the larger (PDF-style) y');
+  assert.equal(top.rotation, 0);
+  assert.equal(top.width, 30);
+});
+
+test('extractNutritionTableFromPpOcrLines: recovers a table when PP-OCR reads each row as ONE contiguous line (the real, confirmed shape -- see ceiling.py)', () => {
+  // Step 1 of the accuracy2 plan confirmed on real label dumps that a PP-OCR
+  // line reads a whole nutrition row -- name, value, and %DV columns -- as
+  // one contiguous string ("Energy 16 kcal <1% <1%"), not split into
+  // separate name/value regions. A single-span "line" here exercises
+  // extractNutritionTableFromPanels' existing single-cell regex path, the
+  // same one a PDF text layer's own single-run rows already go through --
+  // no new table-parsing logic, just a new way to reach the tested one.
+  const lines = [
+    ppOcrLine({ text: 'Nutrition Information', x0: 20, y0: 40, x1: 220, y1: 55 }),
+    ppOcrLine({ text: 'Energy 16 kcal', x0: 20, y0: 65, x1: 150, y1: 80 }),
+    ppOcrLine({ text: 'Protein 0.5 g', x0: 20, y0: 85, x1: 150, y1: 100 }),
+    ppOcrLine({ text: 'Vitamin C 40 mg 66%', x0: 20, y0: 105, x1: 170, y1: 120 }),
+  ];
+  const result = extractNutritionTableFromPpOcrLines(lines);
+
+  assert.deepEqual(result, {
+    Energy: '16 kcal',
+    Protein: '0.5 g',
+    'Vitamin C': '40 mg (66% DV)',
+  });
+});
+
+test('extractNutritionTableFromPpOcrLines: also recovers a table when PP-OCR DOES split name/value into separate regions on the same row', () => {
+  // Not every label's visual gutter is narrow enough for PP-OCR's text
+  // detector to keep as one region -- when it does split, each piece lands
+  // as its own line at the same baseline, and groupSpansIntoLines (the same
+  // baseline-proximity grouping the Tesseract-word path already relies on)
+  // rejoins them into one row before the cell-split regex ever runs.
+  const lines = [
+    ppOcrLine({ text: 'Nutrition Information', x0: 20, y0: 40, x1: 220, y1: 55 }),
+    ppOcrLine({ text: 'Energy', x0: 20, y0: 60, x1: 70, y1: 72 }),
+    ppOcrLine({ text: '12 kcal', x0: 220, y0: 60, x1: 270, y1: 72 }),
+    ppOcrLine({ text: 'Protein', x0: 20, y0: 80, x1: 75, y1: 92 }),
+    ppOcrLine({ text: '0.5 g', x0: 220, y0: 80, x1: 255, y1: 92 }),
+  ];
+  const result = extractNutritionTableFromPpOcrLines(lines);
+
+  assert.deepEqual(result, {
+    Energy: '12 kcal',
+    Protein: '0.5 g',
   });
 });
