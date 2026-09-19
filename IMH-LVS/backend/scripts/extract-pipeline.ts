@@ -98,6 +98,23 @@ function parseNutritionTable(jsonString: string): Record<string, string> | null 
   }
 }
 
+// The client's Masters catalogue (accuracy2 plan Step 2) -- a list read at
+// runtime from a JSON file (see ai_backend/eval/build_masters.py /
+// masters.json), never a string literal here. Unset EVAL_MASTERS_JSON runs
+// exactly as before: masters-off, every candidate list empty.
+type Masters = { knownClaims: string[]; knownFlavours: string[]; knownBrands: string[] };
+
+function loadMasters(): Masters {
+  const jsonPath = process.env.EVAL_MASTERS_JSON;
+  if (!jsonPath) return { knownClaims: [], knownFlavours: [], knownBrands: [] };
+  const raw = JSON.parse(fs.readFileSync(jsonPath, 'utf-8'));
+  return {
+    knownClaims: Array.isArray(raw.claims) ? raw.claims : [],
+    knownFlavours: Array.isArray(raw.flavours) ? raw.flavours : [],
+    knownBrands: Array.isArray(raw.brands) ? raw.brands : []
+  };
+}
+
 function nullRecordFor(filePath: string): OutputRecord {
   return {
     source_file: path.basename(filePath),
@@ -152,6 +169,7 @@ async function main() {
   }
 
   const results: OutputRecord[] = [];
+  const masters = loadMasters();
 
   // Suppress console.log so library/debug output never mixes with the JSON
   // on stdout (console.warn/error still go to stderr, unaffected).
@@ -161,7 +179,13 @@ async function main() {
   try {
     for (const pdfPath of pdfPaths) {
       try {
-        const report = await extractLabelReportFromFile(pdfPath, 'application/pdf');
+        const report = await extractLabelReportFromFile(
+          pdfPath,
+          'application/pdf',
+          masters.knownClaims,
+          masters.knownFlavours,
+          masters.knownBrands
+        );
         results.push(toOutputRecord(pdfPath, report.result, report.fieldMeta));
       } catch (error) {
         console.error(`Warning: failed to extract ${pdfPath}: ${error instanceof Error ? error.message : String(error)}`);
