@@ -334,6 +334,156 @@ test('extractNutritionTableFromPanels: two extra columns (e.g. Kids/Teens) are l
   });
 });
 
+// Step 6-follow-up (accuracy plan): a real, different multi-column shape
+// found on the Calcimax family of labels (Calcimax Pack 30/60, Final
+// New-Calcimax) -- a genuinely two-value table, not one value with an
+// extra %DV column. Each row prints a Kids dose AND an Adults dose side
+// by side, each with its own %RDA figure: real cells (via
+// splitLineIntoCells on the label's actual geometry) look like
+// ["Elemental Calcium", "125 mg", "19.50", "250 mg", "25.00"] -- five
+// cells, not the three the single-extra-column case above handles.
+// Distinguished safely from a %DV-style extra column (which always
+// prints a literal "%" in its own cell, e.g. "100%"/"50%" above) by
+// requiring the middle/last cells to be BARE numbers or "#" (the real
+// label's own footnote symbol for "RDA not established") -- confirmed
+// against a second, unrelated product (CALRIO Gummies) that prints a
+// genuinely different three-group shape (Children/Teens/Adults, one
+// shared value with three "%"-suffixed figures) and must NOT trigger
+// this path; its own percentage cells all carry a literal "%" or "<",
+// so the bare-number gate rejects them and the row falls back to the
+// existing single-value behavior, unchanged.
+test('extractNutritionTableFromPanels: a two-value Kids/Adults row is combined, not just the first value kept', () => {
+  const allSpans = [
+    span({ text: 'Nutritional Information', x: 0, y: 200, width: 400, fontSize: 8 }),
+    span({ text: 'Elemental Calcium', x: 0, y: 188, width: 90, fontSize: 8 }),
+    span({ text: '125 mg', x: 150, y: 188, width: 50, fontSize: 8 }),
+    span({ text: '19.50', x: 220, y: 188, width: 40, fontSize: 8 }),
+    span({ text: '250 mg', x: 280, y: 188, width: 50, fontSize: 8 }),
+    span({ text: '25.00', x: 350, y: 188, width: 40, fontSize: 8 }),
+  ];
+  const panels = segmentPanels(allSpans);
+  const result = extractNutritionTableFromPanels(panels);
+
+  assert.deepEqual(result, {
+    'Elemental Calcium': 'Kids: 125 mg (19.50% RDA); Adults: 250 mg (25.00% RDA)',
+  });
+});
+
+test('extractNutritionTableFromPanels: a Kids/Adults row with no established RDA (the "#" footnote) omits the percentage, not "(#% RDA)"', () => {
+  const allSpans = [
+    span({ text: 'Nutritional Information', x: 0, y: 200, width: 400, fontSize: 8 }),
+    span({ text: 'Total Sugars', x: 0, y: 188, width: 70, fontSize: 8 }),
+    span({ text: '0.33 g', x: 150, y: 188, width: 50, fontSize: 8 }),
+    span({ text: '#', x: 220, y: 188, width: 20, fontSize: 8 }),
+    span({ text: '0.66 g', x: 280, y: 188, width: 50, fontSize: 8 }),
+    span({ text: '#', x: 350, y: 188, width: 20, fontSize: 8 }),
+  ];
+  const panels = segmentPanels(allSpans);
+  const result = extractNutritionTableFromPanels(panels);
+
+  assert.deepEqual(result, {
+    'Total Sugars': 'Kids: 0.33 g; Adults: 0.66 g',
+  });
+});
+
+test('extractNutritionTableFromPanels: a Kids/Adults row where a trailing unrelated panel bled onto the same line is unaffected', () => {
+  // Real shape (Calcimax Pack 30 IRN168-2.pdf): a warning banner from a
+  // different part of the artwork ("NOT FOR MEDICINAL USE.") shares this
+  // row's baseline and lands as a sixth cell after a wide gap -- same
+  // "extra trailing cell gets ignored" rule already applied elsewhere in
+  // this function, just confirmed for the six-cell case here too.
+  const allSpans = [
+    span({ text: 'Nutritional Information', x: 0, y: 200, width: 400, fontSize: 8 }),
+    span({ text: 'Elemental Calcium', x: 0, y: 188, width: 90, fontSize: 8 }),
+    span({ text: '125 mg', x: 150, y: 188, width: 50, fontSize: 8 }),
+    span({ text: '19.50', x: 220, y: 188, width: 40, fontSize: 8 }),
+    span({ text: '250 mg', x: 280, y: 188, width: 50, fontSize: 8 }),
+    span({ text: '25.00', x: 350, y: 188, width: 40, fontSize: 8 }),
+    span({ text: 'NOT FOR MEDICINAL USE.', x: 405, y: 188, width: 120, fontSize: 8 }),
+  ];
+  const panels = segmentPanels(allSpans);
+  const result = extractNutritionTableFromPanels(panels);
+
+  assert.deepEqual(result, {
+    'Elemental Calcium': 'Kids: 125 mg (19.50% RDA); Adults: 250 mg (25.00% RDA)',
+  });
+});
+
+// Real shape (CALRIO Gummies (2).pdf): ONE value shared by three age
+// groups, each column repeating the same "%"-suffixed figure because that
+// nutrient's percentage doesn't differ by age. The reviewed ground truth
+// records exactly one figure for such a row ("12 kcal (<0.6% DV)"), so
+// identical columns collapse to the same shape a single column produces --
+// they are one fact printed three times, not three facts. This must not be
+// confused with the two-value Kids/Adults shape above (whose own gate
+// requires BARE numbers, which "<0.6%" is not).
+test('extractNutritionTableFromPanels: three identical %-columns collapse to one "(<value> DV)", not three facts', () => {
+  const allSpans = [
+    span({ text: 'Nutritional Information', x: 0, y: 200, width: 400, fontSize: 8 }),
+    span({ text: 'Calories', x: 0, y: 188, width: 60, fontSize: 8 }),
+    span({ text: '12 kcal', x: 150, y: 188, width: 50, fontSize: 8 }),
+    span({ text: '<0.6%', x: 220, y: 188, width: 40, fontSize: 8 }),
+    span({ text: '<0.6%', x: 280, y: 188, width: 40, fontSize: 8 }),
+    span({ text: '<0.6%', x: 340, y: 188, width: 40, fontSize: 8 }),
+  ];
+  const panels = segmentPanels(allSpans);
+  const result = extractNutritionTableFromPanels(panels);
+
+  assert.deepEqual(result, {
+    Calories: '12 kcal (<0.6% DV)',
+  });
+});
+
+test('extractNutritionTableFromPanels: two identical %-columns collapse too (the real Kids/Teens two-column labels)', () => {
+  // Real shape (Iron IRN121-1.pdf): ["Energy", "16 kcal", "<1%", "<1%"]
+  // across its Kids and Teens columns; ground truth is "16 kcal (<1% DV)".
+  const allSpans = [
+    span({ text: 'Nutritional Information', x: 0, y: 200, width: 400, fontSize: 8 }),
+    span({ text: 'Energy', x: 0, y: 188, width: 50, fontSize: 8 }),
+    span({ text: '16 kcal', x: 150, y: 188, width: 50, fontSize: 8 }),
+    span({ text: '<1%', x: 220, y: 188, width: 30, fontSize: 8 }),
+    span({ text: '<1%', x: 270, y: 188, width: 30, fontSize: 8 }),
+  ];
+  const panels = segmentPanels(allSpans);
+  const result = extractNutritionTableFromPanels(panels);
+
+  assert.deepEqual(result, { Energy: '16 kcal (<1% DV)' });
+});
+
+test('extractNutritionTableFromPanels: footnote-marker columns ("*") mean no percentage at all, not "(* DV)"', () => {
+  // Real shape (Iron IRN121-1.pdf): ["Total Carbohydrate", "4.4 g", "*", "*"]
+  // -- the label's own "RDA not established" marker; ground truth is the
+  // bare value, "4.4 g".
+  const allSpans = [
+    span({ text: 'Nutritional Information', x: 0, y: 200, width: 400, fontSize: 8 }),
+    span({ text: 'Total Carbohydrate', x: 0, y: 188, width: 90, fontSize: 8 }),
+    span({ text: '4.4 g', x: 150, y: 188, width: 50, fontSize: 8 }),
+    span({ text: '*', x: 220, y: 188, width: 20, fontSize: 8 }),
+    span({ text: '*', x: 270, y: 188, width: 20, fontSize: 8 }),
+  ];
+  const panels = segmentPanels(allSpans);
+  const result = extractNutritionTableFromPanels(panels);
+
+  assert.deepEqual(result, { 'Total Carbohydrate': '4.4 g' });
+});
+
+test('extractNutritionTableFromPanels: a stray percentage past unrelated trailing text is never reached across to', () => {
+  // The scan stops at the first cell that is neither a percentage nor a
+  // footnote marker, so a percentage belonging to some other panel that
+  // happens to share this baseline can't be attached to this row.
+  const allSpans = [
+    span({ text: 'Nutritional Information', x: 0, y: 200, width: 460, fontSize: 8 }),
+    span({ text: 'Protein', x: 0, y: 188, width: 50, fontSize: 8 }),
+    span({ text: '0.5 g', x: 150, y: 188, width: 50, fontSize: 8 }),
+    span({ text: 'Keep out of reach of children', x: 220, y: 188, width: 150, fontSize: 8 }),
+    span({ text: '55%', x: 400, y: 188, width: 30, fontSize: 8 }),
+  ];
+  const panels = segmentPanels(allSpans);
+  const result = extractNutritionTableFromPanels(panels);
+
+  assert.deepEqual(result, { Protein: '0.5 g' });
+});
+
 test('extractNutritionTableFromPanels: stop at Ingredients', () => {
   // Header + 2 rows, then "Ingredients:" stops the table
   const allSpans = [
