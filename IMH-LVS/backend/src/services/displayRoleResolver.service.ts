@@ -272,13 +272,21 @@ export const TRANSCRIBE_SCHEMA = {
 export const TRANSCRIBE_PROMPT =
   "This is the print artwork of a food-supplement label. Transcribe the BRAND name (the maker's mark, usually next to the logo and repeated on several panels) EXACTLY as printed, letter for letter, and the PRODUCT name exactly as printed. Use an empty string if unreadable. confidence is 0..1.";
 
-/** The model's own transcription of the display text, '' when it gave none or the call failed. */
-export async function transcribeDisplayText(image: VlmImage, client: VlmClient): Promise<string> {
+export type DisplayTranscript = {
+  /** brandAsPrinted + productAsPrinted joined, for the whole-words veto check (transcriptCorroborates). */
+  text: string;
+  /** brandAsPrinted alone, trimmed -- the Step 5 (accuracy2 plan) grounded-source candidate when the brand gets vetoed. '' when the model gave none. */
+  brandAsPrinted: string;
+};
+
+/** The model's own transcription of the display text; '' fields when it gave none or the call failed. */
+export async function transcribeDisplayText(image: VlmImage, client: VlmClient): Promise<DisplayTranscript> {
   const raw = await client.askJson(image, TRANSCRIBE_PROMPT, TRANSCRIBE_SCHEMA);
-  if (typeof raw !== 'object' || raw === null) return '';
+  if (typeof raw !== 'object' || raw === null) return { text: '', brandAsPrinted: '' };
   const obj = raw as Record<string, unknown>;
+  const brandAsPrinted = typeof obj.brandAsPrinted === 'string' ? obj.brandAsPrinted.trim() : '';
   const parts = [obj.brandAsPrinted, obj.productAsPrinted].filter((v): v is string => typeof v === 'string');
-  return parts.join(' ').trim();
+  return { text: parts.join(' ').trim(), brandAsPrinted };
 }
 
 /** True when `text` appears in `transcript` as whole words (case- and hyphen-insensitive). */
@@ -286,6 +294,22 @@ export function transcriptCorroborates(transcript: string, text: string): boolea
   const t = ` ${norm(transcript)} `;
   const needle = ` ${norm(text)} `;
   return needle.trim().length > 0 && t.includes(needle);
+}
+
+// Step 5 (accuracy2 plan): the transcript's own brandAsPrinted must clear
+// the SAME bar a real OCR candidate has to (see isRoleEligible/NON_NAME_LINE
+// above) before it can stand in for a vetoed brand -- not a weight/
+// regulatory/flavour/category line, and not so long it reads like a
+// transcribed SENTENCE rather than a wordmark (a real brand is 1-5 words;
+// a model padding its answer with surrounding text is a real failure mode
+// the enum-grounded path never has to worry about, since it can only ever
+// echo back a candidate the OCR pipeline actually offered).
+function isPlausibleTranscriptBrand(text: string): boolean {
+  const trimmed = text.trim();
+  if (!trimmed) return false;
+  if (NON_NAME_LINE.some((re) => re.test(trimmed))) return false;
+  const tokens = norm(trimmed).split(/\s+/).filter(Boolean);
+  return tokens.length >= 1 && tokens.length <= 5;
 }
 
 /**
@@ -378,10 +402,26 @@ export async function resolveDisplayRoles(
   let brandVetoedBy: string | null = null;
   if (finalBrand) {
     const transcript = await transcribeDisplayText(image, client);
-    if (transcript && !transcriptCorroborates(transcript, finalBrand)) {
-      brandVetoedBy = transcript;
+    if (transcript.text && !transcriptCorroborates(transcript.text, finalBrand)) {
+      brandVetoedBy = transcript.text;
       finalBrand = null;
       finalBrandConf = 1.0;
+
+      // Step 5 (accuracy2 plan): a veto doesn't have to mean blank. The
+      // transcript was asked with NO knowledge of the OCR candidates (see
+      // the prompt-isolation test) -- it's an independent grounded read of
+      // the label, not just a rubber stamp on whatever OCR guessed. When
+      // its own brandAsPrinted clears the same plausibility bar a real OCR
+      // candidate has to, use IT as the brand instead of discarding the
+      // information entirely. Lower confidence than an exact/corroborated
+      // grounding (this is free text, not grounded against a candidate the
+      // deterministic pipeline actually detected) but still comfortably
+      // above resolveBlankDisplayRoles' 0.6 acceptance floor, and always
+      // needsReview via the usual vlm-role-resolution tagging downstream.
+      if (transcript.brandAsPrinted && isPlausibleTranscriptBrand(transcript.brandAsPrinted)) {
+        finalBrand = transcript.brandAsPrinted;
+        finalBrandConf = 0.65;
+      }
     }
   }
 
