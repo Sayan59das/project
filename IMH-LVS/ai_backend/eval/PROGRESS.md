@@ -1085,3 +1085,70 @@ not confirmed.
 PR: `feat/accuracy3-step1` (#10). Steps 2-6 of the accuracy3 plan
 (ingredients/claims generalization, the extended crop reader, scalar
 leftovers, the honesty passes) are still ahead.
+
+## accuracy3 Step 2: ingredients -- one gap fixed clean, one regression caught and fixed, one deeper bug found and fixed
+
+Generalized `extractIngredients`'s anchor beyond a mandatory colon on the
+bare English word (`ingredients`, `ingredientes` -- Spanish, `ingredient
+list`, `composition`, colon now optional, gated on line-start position).
+Real gap fixed: `Immunogum 4S IRN131-1.pdf` (a scored label) is
+Spanish-language and uses `Ingredientes:`, which the old anchor never
+matched at all -- its real 15-item list was silently missed. Deliberately
+did NOT implement `each <unit> contains` as an anchor, despite the
+original directive naming it: real evidence (`Calcimax Pack 30/60`) shows
+that phrase introduces the NUTRITION TABLE on this client's labels, not
+ingredients -- shipping it would have fabricated nutrition data as
+ingredients.
+
+**A measurement caught a real regression before it shipped further.** The
+first version (colon-optional, line-start-gated) scored WORSE than the
+Step 1 baseline (52.8% fuzzy vs. 54.3%), not better. Traced to
+`Calcimax pack 60 IRN169-2.pdf`: a disclaimer sentence -- "...All claims
+are\ningredient-based and not based on the final product." -- happens to
+wrap the word "ingredient" onto its own line as part of the compound word
+"ingredient-based". Line-start position alone can't tell that apart from a
+real heading, so the anchor matched there instead of the label's real
+declaration further down. Fixed with a negative lookahead rejecting a
+hyphen immediately after the anchor word.
+
+**Investigating that regression surfaced a second, deeper, pre-existing
+bug** -- the exact "cross-panel declaration" problem the original Step 2
+directive named, just found by a different path. Even with the anchor
+fix, Calcimax pack 60's list was STILL wrong: 3 items correct, 5 real
+items missing, one garbled fragment reported wrong. Root cause: the
+label's ingredients paragraph sits at the same Y-coordinates as a narrow
+MRP/pricing side column, so the geometry-based reading-order
+reconstruction (`toReadingOrderText`) zigzags between the two columns,
+splicing "M.R.P. (Inclusive of All taxes)" fragments into the middle of
+the ingredients list and truncating it early. The PDF's own flattened
+(draw-order) text doesn't reconstruct columns at all, so it isn't
+vulnerable to this failure mode -- confirmed directly: reading-order text
+recovered a broken 4-item list, flattened text recovered a clean, complete
+7-item list. Fixed with `mergeIngredientsResults`, the same reading-order-
+vs-flattened-text rescue `mergeClaimsResults` already applies to claims
+(itself built for an earlier, similar scrambling bug -- Cal. Vit D
+IRN120-2.pdf), adapted for a single ordered declaration: picks whichever
+source recovers strictly more items, rather than unioning fragments the
+way claims safely can.
+
+**This turned out to be a much broader fix than one label.** Scanned all
+45 real labels comparing before/after item counts: 12 labels improved
+(more real items recovered), zero regressions -- including some large
+recoveries (0->16 items, 4->23 items). The column-interleaving bug
+apparently affects several labels' layouts, not just Calcimax's.
+
+**Honest status on the numbers**: the first (broken) version measured
+42.8% strict / 52.8% fuzzy (worse than Step 1's 43.0% / 54.3%). Both
+fixes are code-level validated (53 unit tests across the three
+ingredients-related test files, the regression oracle 14/14, a direct
+real-PDF pipeline check confirming Calcimax pack 60 now extracts cleanly,
+and the 45-label item-count scan above) but NOT yet re-confirmed with a
+fresh aggregate score.py measurement -- that run was started and then
+killed by the harness's own memory-pressure safeguard mid-run. Per that
+safeguard's own instruction, it is not being restarted without being
+asked; the honest expectation (12 labels improved, 0 regressed, two real
+bugs fixed) is that the aggregate number recovers past the Step 1
+baseline, but this is not yet a RESULTS.md row and should not be quoted
+as one until it is.
+
+PR: `feat/accuracy3-step2` (#11).
