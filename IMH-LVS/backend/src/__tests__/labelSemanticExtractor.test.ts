@@ -41,6 +41,79 @@ test('does not mistake a cross-reference for a declaration', () => {
   assert.equal(extractIngredients('For allergens see ingredients: overleaf.'), '');
 });
 
+// accuracy3 Step 2: generalizing the anchor beyond a mandatory colon on the
+// bare English word. Real, ground-truth-verified gap: Immunogum 4S
+// IRN131-1.pdf (one of the 45 scored labels) is a Spanish-language label
+// whose declaration reads "Ingredientes:", which the old
+// /\bingredients?\s*:/i anchor never matched (it isn't "ingredient" or
+// "ingredients" as a whole word) -- the label's real 15-item ingredients
+// list was silently missed entirely.
+test('recognizes the Spanish spelling "Ingredientes" as an anchor (real gap: Immunogum 4S IRN131-1.pdf)', () => {
+  const ingredients = extractIngredients(
+    'Ingredientes: Ácido Cítrico, sabor a mango, extracto de saúco, vitamina E, Pectina, zinc.'
+  );
+  assert.match(ingredients, /^Ácido Cítrico, sabor a mango/);
+  assert.equal(ingredients.includes('Ingredientes'), false, 'the anchor word itself is stripped from the declaration');
+});
+
+test('recognizes "Composition" as an anchor, not just "Ingredients"', () => {
+  const ingredients = extractIngredients('Composition: Vitamin C, Zinc, Magnesium, Calcium.');
+  assert.match(ingredients, /^Vitamin C, Zinc, Magnesium/);
+});
+
+test('recognizes "Ingredient List" as an anchor', () => {
+  const ingredients = extractIngredients('Ingredient List: Honey, Ginger Extract, Black Pepper Extract, Cardamom.');
+  assert.match(ingredients, /^Honey, Ginger Extract/);
+});
+
+// accuracy3 Step 2: colon becomes optional -- some artwork uses a
+// heading-style layout ("Ingredients" alone on its own line, the list on
+// the line(s) after) rather than "Ingredients: <list>" on one line. Colon
+// still works when present (every other test in this file already proves
+// that); this proves the anchor also fires without one, as long as it's
+// genuinely at the start of a line.
+test('recognizes a colon-less heading-style anchor ("Ingredients" alone on its own line)', () => {
+  const ingredients = extractIngredients('Ingredients\nCorn Syrup, Sugar, Water, Pectin.');
+  assert.match(ingredients, /^Corn Syrup, Sugar, Water/);
+});
+
+// accuracy3 Step 2's own directive text suggested "each <unit> contains" as
+// a fourth anchor phrase -- deliberately NOT implemented. Real, ground-
+// truth-verified conflict: Calcimax Pack 30/60 IRN168-2/169-2.pdf (both
+// scored labels) use "Each serving contains:" to introduce the NUTRITION
+// TABLE, not ingredients. Adding it as an ingredients anchor would capture
+// nutrition data as a fabricated "ingredients" value on real client
+// labels -- this test pins that the anchor is NOT recognized, so a future
+// change doesn't reintroduce it by accident.
+test('does NOT treat "each ... contains" as an ingredients anchor -- real conflict with the nutrition table (Calcimax Pack 30/60)', () => {
+  const text = 'Each serving contains: Kids % RDA Children % RDA\nElemental Calcium 125 mg 19.50 250 mg 25.00';
+  assert.equal(extractIngredients(text), '');
+});
+
+// accuracy3 Step 2: without the line-start requirement, a bare mid-sentence
+// mention of the word "ingredients" followed by an unrelated comma list
+// (an address, a claims list, anything) could be mistaken for a
+// declaration once the colon stopped being mandatory. Line-start anchoring
+// is what keeps that safe.
+test('a mid-sentence mention of "ingredients" with no colon is NOT mistaken for a declaration', () => {
+  const text = 'Made with only natural ingredients sourced from trusted farms, Acme Wellness, Mumbai, India.';
+  assert.equal(extractIngredients(text), '');
+});
+
+// accuracy3 Step 2: a real over-capture bug found while investigating the
+// anchor gap above (pre-existing, not introduced by this change) -- a
+// dosage/usage-instruction sentence right after the ingredients list on
+// several real labels (e.g. a Shilajit honey-stick artwork) has no
+// terminator word in the old list, so the declaration ran straight into
+// "Usage Instruction: 1 stick a day...".
+test('stops at "Usage Instruction" -- a real over-capture bug on honey-stick-style artwork', () => {
+  const text = 'Ingredients: Honey, Proprietary Blend (Tulsi Extract, Guava Extract), Natural Vitamin C.\nUsage Instruction: 1 stick a day for children.';
+  const ingredients = extractIngredients(text);
+  assert.equal(ingredients.includes('Usage Instruction'), false);
+  assert.equal(ingredients.includes('stick a day'), false);
+  assert.match(ingredients, /Natural Vitamin C\.$/);
+});
+
 // Step 5.2 (accuracy plan): splitting an ingredients declaration into
 // discrete items on every comma breaks any item whose own name contains a
 // comma inside parentheses/brackets -- an INS food-additive code list being

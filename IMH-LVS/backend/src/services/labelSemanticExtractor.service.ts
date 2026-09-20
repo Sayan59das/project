@@ -34,21 +34,56 @@ function flatten(text: string): string {
 // to another section, and these are the openers seen on real labels — plus the
 // disclaimer sentences that habitually follow the list ('This food is by nature
 // gluten free.' trails the ingredients on the NutriBears artwork).
+// 'usage\s+instruction' (accuracy3 Step 2): a real over-capture bug found on
+// honey-stick-style artwork -- a dosage sentence right after the list had
+// no terminator to stop at, so the declaration ran straight into it.
 const INGREDIENTS_TERMINATORS =
-  /\b(nutritional\s+(facts|information)|recommended\s+usage|duration\s+of\s+usage|storage|store\s+in|keep\s+(out|away)|marketed\s+by|manufactured\s+by|packed\s+by|fssai|customer\s+care|consumer\s+care|net\s+(content|wt)|batch\s+no|mfg\.?\s*date|use\s+by|m\.?r\.?p|best\s+before|this\s+food\s+is|allergen|contains\s+permitted|not\s+for\s+medicinal|to\s+be\s+sold|images?\s+are|pouches?\s+not)/i;
+  /\b(nutritional\s+(facts|information)|recommended\s+usage|duration\s+of\s+usage|usage\s+instruction|storage|store\s+in|keep\s+(out|away)|marketed\s+by|manufactured\s+by|packed\s+by|fssai|customer\s+care|consumer\s+care|net\s+(content|wt)|batch\s+no|mfg\.?\s*date|use\s+by|m\.?r\.?p|best\s+before|this\s+food\s+is|allergen|contains\s+permitted|not\s+for\s+medicinal|to\s+be\s+sold|images?\s+are|pouches?\s+not)/i;
+
+// accuracy3 Step 2: the anchor phrases that introduce an ingredients
+// declaration, generalized beyond the old "ingredients:" -- a mandatory
+// colon on the bare English word only. Each alternative is whole-word
+// matched (\b...\b) so "ingredients?" can't steal a prefix match off
+// "ingredientes" (the Spanish spelling) before the longer alternative gets
+// a chance.
+//
+// Deliberately NOT included: "each <unit> contains", despite it appearing
+// in an earlier draft of this generalization. Real, ground-truth-verified
+// conflict found while building this: Calcimax Pack 30/60 IRN168-2/
+// 169-2.pdf (both scored labels) use "Each serving contains:" to introduce
+// the NUTRITION TABLE, not ingredients -- adding it here would capture
+// nutrition data as a fabricated ingredients value on real client labels,
+// with no offsetting real-world case found where it actually introduces
+// ingredients. See the test pinning this exclusion.
+// Longer/more-specific alternatives listed first: regex alternation tries
+// left-to-right and takes the first match at a position, not the longest,
+// so "ingredient\s+list" and "ingredientes" must come before the bare
+// "ingredients?" or it steals a prefix match first (e.g. "ingredient" out
+// of "ingredient list", leaving "list:" as if it were part of the value).
+const INGREDIENTS_ANCHOR = /(^|\n)\s*\b(ingredient\s+list|ingredientes|ingredients?|composition)\b\s*:?\s*/i;
 
 /**
  * The ingredients declaration, or '' when the label has none.
  *
  * '' is absence, and the caller stores it as NULL — the comparison then reports
  * MISSING rather than matching one unread label against another.
+ *
+ * accuracy3 Step 2: the anchor search runs on newline-preserving normalised
+ * text, not the fully flattened text the rest of this function uses --
+ * INGREDIENTS_ANCHOR requires a line start (or string start), which is how
+ * a bare colon-less "Ingredients" heading is told apart from the same word
+ * appearing mid-sentence ('Made with only natural ingredients sourced
+ * from...'). Validated against all 45 real scored labels' currently-
+ * working extractions before shipping: zero regressions, plus one real,
+ * previously-silent gap fixed (Immunogum 4S IRN131-1.pdf's Spanish-
+ * language "Ingredientes:" declaration).
  */
 export function extractIngredients(text: string): string {
-  const flat = flatten(text);
-  const anchor = flat.search(/\bingredients?\s*:/i);
-  if (anchor === -1) return '';
+  const normalised = normalise(text);
+  const anchorMatch = normalised.match(INGREDIENTS_ANCHOR);
+  if (!anchorMatch) return '';
 
-  const afterAnchor = flat.slice(anchor).replace(/^\s*ingredients?\s*:\s*/i, '');
+  const afterAnchor = flatten(normalised.slice(anchorMatch.index! + anchorMatch[0].length));
 
   // Cut at the next section, then at the last full stop before it — an
   // ingredients list ends on a period, and keeping a trailing sentence
