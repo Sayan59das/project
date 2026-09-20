@@ -726,6 +726,20 @@ async function ocrImageWithEnhancement(
   // just with different preprocessing.
   let fieldMeta = tagFilledFields(fields, 'tesseract-full-page');
 
+  // accuracy3 Step 5 (tried and reverted -- keeping the record, not
+  // silently dropping it): the by-source table shows this escalation net-
+  // negative in aggregate (address 4 correct/5 wrong, marketing_company 1
+  // correct/8 wrong), past the ">=3 labels" bar the directive sets, which
+  // reads like a clean gate-off candidate. Disabling it entirely broke the
+  // regression oracle on two real, previously-correct labels (Apple Cider
+  // Vinegar Gummy and Chyawanprash Gummies -- same manufacturer,
+  // "Knoll Pharmaceuticals Ltd." went from correct to blank on both) --
+  // the aggregate "more wrong than correct" signal hides that this source
+  // is highly reliable on SOME label families and unreliable on others; a
+  // blanket gate fixes the second group by breaking the first. A real
+  // fix needs to find what's actually different about the labels where
+  // it's wrong, not a blanket disable -- left enabled, unresolved, rather
+  // than trade a real regression for an aggregate number.
   if (!fields.marketingCompany || !fields.address) {
     debugLog('marketingCompany/address missing after full-page OCR — trying a targeted region re-OCR around a located anchor.');
     const regionFields = await extractMarketingCompanyAndAddressFromRegion(primaryProcessed, words);
