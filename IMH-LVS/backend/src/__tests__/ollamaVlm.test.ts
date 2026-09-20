@@ -191,6 +191,78 @@ test('prepareImage resizes correctly and preserves original dimensions', async (
   assert(result.base64.length > 0, 'base64 should not be empty');
 });
 
+// accuracy3 Step 4: generalizing prepareImage beyond the fixed 1008px
+// width -- a targetWidth option (a crop reader wants a different default
+// than a whole-page read), and an upscale rule when the caller reports the
+// text would render too small to read reliably at that width. Same 32px
+// threshold Step 1.3's per-strip PP-OCR upscale rule already uses, applied
+// here to the image actually sent to the VLM.
+test('prepareImage: a custom targetWidth is used instead of the 1008 default', async () => {
+  const service = requireFresh('../services/ollamaVlm.service');
+  const { prepareImage } = service;
+  const png = await sharp({
+    create: { width: 2000, height: 1500, channels: 3, background: { r: 100, g: 100, b: 100 } }
+  }).png().toBuffer();
+
+  const result = await prepareImage(png, { targetWidth: 1400 });
+  assert.equal(result.sentWidth, 1400);
+  // 1500 * 1400 / 2000 = 1050, rounded down to the nearest multiple of 28 (1036)
+  assert.equal(result.sentHeight, 1036);
+});
+
+test('prepareImage: upscales when medianLineHeightPx is below 32px, by the ratio needed to reach 32px', async () => {
+  const service = requireFresh('../services/ollamaVlm.service');
+  const { prepareImage } = service;
+  const png = await sharp({
+    create: { width: 2000, height: 1500, channels: 3, background: { r: 100, g: 100, b: 100 } }
+  }).png().toBuffer();
+
+  // medianLineHeightPx: 24 -> needs 32/24 = 1.3333x -> targetWidth 1008 * 1.3333 = 1344
+  // (kept comfortably under the 1568 long-side cap, tested separately below)
+  const result = await prepareImage(png, { medianLineHeightPx: 24 });
+  assert.equal(result.sentWidth, 1344);
+});
+
+test('prepareImage: does NOT upscale when medianLineHeightPx already meets the 32px threshold', async () => {
+  const service = requireFresh('../services/ollamaVlm.service');
+  const { prepareImage } = service;
+  const png = await sharp({
+    create: { width: 2000, height: 1500, channels: 3, background: { r: 100, g: 100, b: 100 } }
+  }).png().toBuffer();
+
+  const result = await prepareImage(png, { medianLineHeightPx: 32 });
+  assert.equal(result.sentWidth, 1008);
+});
+
+test('prepareImage: the upscale is capped so the long side never exceeds 1568px', async () => {
+  const service = requireFresh('../services/ollamaVlm.service');
+  const { prepareImage } = service;
+  // 3200x2400 (wide, width is the long side)
+  const png = await sharp({
+    create: { width: 3200, height: 2400, channels: 3, background: { r: 100, g: 100, b: 100 } }
+  }).png().toBuffer();
+
+  // Needs 1008 * (32/16) = 2016, which would still be under the cap;
+  // use a smaller medianLineHeightPx so the uncapped need clearly exceeds it.
+  const result = await prepareImage(png, { medianLineHeightPx: 8 });
+  // Uncapped need: 1008 * (32/8) = 4032 -- must be capped to 1568.
+  assert.equal(result.sentWidth, 1568);
+  assert.ok(result.sentHeight <= 1568, `sentHeight ${result.sentHeight} must not exceed the 1568 long-side cap either`);
+});
+
+test('prepareImage: the long-side cap applies to height on a tall (portrait) image, not width', async () => {
+  const service = requireFresh('../services/ollamaVlm.service');
+  const { prepareImage } = service;
+  // 1200x3600 (tall, height is the long side)
+  const png = await sharp({
+    create: { width: 1200, height: 3600, channels: 3, background: { r: 100, g: 100, b: 100 } }
+  }).png().toBuffer();
+
+  const result = await prepareImage(png, { medianLineHeightPx: 8 });
+  assert.ok(result.sentHeight <= 1568, `sentHeight ${result.sentHeight} must not exceed 1568`);
+  assert.ok(result.sentWidth <= 1568, `sentWidth ${result.sentWidth} must not exceed 1568`);
+});
+
 // Test: live mode (skipped if OLLAMA_URL not set)
 test('live: askJson on red PNG returns colour matching /red/i', { skip: !process.env.OLLAMA_URL }, async () => {
   const service = requireFresh('../services/ollamaVlm.service');
