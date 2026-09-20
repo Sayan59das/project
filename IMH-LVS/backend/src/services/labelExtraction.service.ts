@@ -66,7 +66,17 @@ import {
   extractNutritionTableFromPpOcrLines,
   medianFontSize
 } from './textLayerGeometry.service';
-import { projectSpanToPixels, findOutlinedLines, planOcrStrips, dropStripEdgeLines, dedupeOverlappingLines, type OcrLineLike } from './outlinedText.service';
+import {
+  projectSpanToPixels,
+  findOutlinedLines,
+  planOcrStrips,
+  dropStripEdgeLines,
+  dedupeOverlappingLines,
+  medianLineHeight,
+  mapRotatedBoxToPage,
+  type OcrLineLike
+} from './outlinedText.service';
+import { createHash } from 'crypto';
 import { isVlmEnabled, prepareImage, ollamaClient, type VlmImage, type VlmClient } from './ollamaVlm.service';
 import {
   findNutritionPanelFromSpans,
@@ -153,7 +163,20 @@ export type FieldSource =
   | 'display-candidates'
   | 'vlm-role-resolution'
   | 'vlm-fallback'
-  | 'master-snap';
+  | 'master-snap'
+  // accuracy3 Step 1.6: PP-OCR as a first-class, separately-tagged source.
+  // 'ppocr-nutrition' and 'ppocr-text' are both produced by
+  // recoverBodyTextViaPpOcr's single scan (nutrition table vs. everything
+  // else); kept as two source tags rather than one because the by-source
+  // accuracy table (score.py) needs to be able to gate one off per-field
+  // without gating the other -- a source can read a nutrition table well
+  // and a scalar field badly, or vice versa. 'ppocr-crop' is reserved for
+  // Step 4's crop-reader extension (vlm-read-ingredients/claims/identity);
+  // no producer yet, same "reserve the tag before the widen" reasoning
+  // 'display-candidates' above already used for Step 5.6.
+  | 'ppocr-nutrition'
+  | 'ppocr-text'
+  | 'ppocr-crop';
 
 /**
  * Phase F (widened for Step 2): which pass produced this field's value, for
@@ -776,121 +799,242 @@ type FieldPass = {
 // text across neighbouring panels, which would hide the front panel's display text.
 // Returns top 8 ranked by height, since brand graphics are typically the
 // largest text on the page.
-type PpOcrPageScan = {
+export type PpOcrPageScan = {
   deduped: OcrLineLike[];
   spanRects: ReturnType<typeof projectSpanToPixels>[];
   occurrenceMap: Map<string, number>;
 };
 
-// The shared strip-based PP-OCR page scan (accuracy2 plan Step 3): plans
-// strips from text-layer panel geometry (or a blind full-width strip when
-// no spans exist), OCRs each strip, dedupes overlapping reads, and counts
-// occurrences. Two different consumers need exactly this same expensive
-// pass: recoverDisplayTextCandidates (the top OUTLINED lines, for brand/
-// product name) and recoverBodyTextViaPpOcr (EVERY line, for nutrition/
-// claims/ingredients -- the body text recoverDisplayTextCandidates itself
-// used to read and then simply discard, keeping only its own top 10).
-// Fail-soft like every OCR escalation in this module: null, never a throw.
-async function scanPageWithPpOcr(
+// accuracy3 Step 1.4: scanPageWithPpOcr is the single most expensive read in
+// this pipeline (one recognizeLines call per strip, now potentially times
+// three angles -- see below), and recoverDisplayTextCandidates and
+// recoverBodyTextViaPpOcr both call it on the SAME page image within one
+// extraction. Cached per sha256(page bytes) for the process lifetime --
+// deliberately not per-request or LRU-bounded, since this is a single label
+// extraction's own page image, never re-used across different labels, so
+// the cache cannot grow unbounded within one process's real workload.
+const ppOcrScanCache = new Map<string, Promise<PpOcrPageScan | null>>();
+
+function hashPageImage(pageImage: Buffer): string {
+  return createHash('sha256').update(pageImage).digest('hex');
+}
+
+// OCRs one strip of one (possibly already-rotated) page image, applying the
+// accuracy3 Step 1.3 upscale rule to THIS strip alone: PP-OCR's recogniser
+// works at ~48px line height; 300 DPI of 6.8pt body text (a real nutrition
+// panel's print size) renders at ~28px, below that. Re-running a whole page
+// at 2x (scripts/dump-readable-text.ts's own proxy) is a blunt fix -- most
+// pages don't need it, and the ones that do usually only need it for the
+// one small-print strip, not the large front-panel wordmark strip sitting
+// right next to it. Re-runs just the strip whose OWN median line height is
+// below the threshold, then halves that strip's boxes back to 1x before the
+// caller offsets them onto the page.
+async function ocrOneStrip(
+  pageImage: Buffer,
+  strip: { left: number; width: number },
+  pageWidth: number,
+  pageHeightPx: number
+): Promise<OcrLineLike[]> {
+  const crop = await sharp(pageImage)
+    .extract({ left: Math.round(strip.left), top: 0, width: Math.round(strip.width), height: Math.round(pageHeightPx) })
+    .png()
+    .toBuffer();
+  const lines = await recognizeLines(crop);
+  let trimmed = dropStripEdgeLines(lines, strip, pageWidth);
+
+  const height = medianLineHeight(trimmed);
+  if (height > 0 && height < 32) {
+    try {
+      const upscaledCrop = await sharp(pageImage)
+        .extract({ left: Math.round(strip.left), top: 0, width: Math.round(strip.width), height: Math.round(pageHeightPx) })
+        .resize({ width: Math.round(strip.width) * 2 })
+        .png()
+        .toBuffer();
+      const upscaledLines = await recognizeLines(upscaledCrop);
+      const halved = upscaledLines.map((l) => ({
+        ...l,
+        box: { x0: l.box.x0 / 2, y0: l.box.y0 / 2, x1: l.box.x1 / 2, y1: l.box.y1 / 2 }
+      }));
+      const trimmedUpscaled = dropStripEdgeLines(halved, strip, pageWidth);
+      // Same tie-break dump-readable-text.ts already validated: more lines
+      // recovered means the upscale genuinely helped; fewer or equal means
+      // the retry found nothing the first pass didn't, so keep the cheaper
+      // 1x read rather than trust a strictly-worse-or-equal one.
+      if (trimmedUpscaled.length > trimmed.length) {
+        trimmed = trimmedUpscaled;
+      }
+    } catch (upscaleError) {
+      debugLog(`Strip upscale retry failed: ${upscaleError instanceof Error ? upscaleError.message : String(upscaleError)}`);
+    }
+  }
+
+  return trimmed.map((line) => ({
+    text: line.text,
+    box: {
+      x0: line.box.x0 + strip.left,
+      y0: line.box.y0,
+      x1: line.box.x1 + strip.left,
+      y1: line.box.y1
+    },
+    confidence: line.confidence
+  }));
+}
+
+// OCRs every strip of one page image (already rotated or not) and returns
+// every line found, still in THAT image's own coordinate space -- the
+// caller is responsible for remapping rotated-pass lines back onto the
+// original page. Fail-soft per strip, matching every other OCR escalation
+// in this module: one bad strip does not lose the others.
+async function ocrAllStrips(
+  pageImage: Buffer,
+  strips: readonly { left: number; width: number }[],
+  pageWidth: number,
+  pageHeightPx: number
+): Promise<OcrLineLike[]> {
+  const allLines: OcrLineLike[] = [];
+  for (const strip of strips) {
+    try {
+      const lines = await ocrOneStrip(pageImage, strip, pageWidth, pageHeightPx);
+      allLines.push(...lines);
+    } catch (stripError) {
+      debugLog(`OCR strip [${strip.left}, ${strip.left + strip.width}) failed: ${
+        stripError instanceof Error ? stripError.message : String(stripError)
+      }`);
+    }
+  }
+  return allLines;
+}
+
+// The shared strip-based PP-OCR page scan (accuracy2 plan Step 3, extended
+// by accuracy3 Step 1): plans strips from text-layer panel geometry (or a
+// blind full-width strip when no spans exist), OCRs each strip -- upscaling
+// any strip whose own print is too small to read reliably (Step 1.3) --
+// additionally scans the page rotated +/-90 degrees when the label's own
+// text layer says some panel is rotated, or there is no text layer to say
+// otherwise (Step 1.2, since a label with no readable text layer is exactly
+// the case most likely to be a sideways-printed panel baked into artwork),
+// dedupes overlapping reads across all angles, and counts occurrences. Two
+// different consumers need exactly this same expensive pass:
+// recoverDisplayTextCandidates (the top OUTLINED lines, for brand/product
+// name) and recoverBodyTextViaPpOcr (EVERY line, for nutrition/claims/
+// ingredients -- the body text recoverDisplayTextCandidates itself used to
+// read and then simply discard, keeping only its own top 10). Cached per
+// page (Step 1.4). Fail-soft like every OCR escalation in this module:
+// null, never a throw.
+export async function scanPageWithPpOcr(
   pageImage: Buffer,
   spans: readonly TextSpan[],
-  dpi: number
+  dpi: number,
+  pageNumber = 1
+): Promise<PpOcrPageScan | null> {
+  const cacheKey = `${hashPageImage(pageImage)}:${dpi}:${pageNumber}`;
+  const cached = ppOcrScanCache.get(cacheKey);
+  if (cached) return cached;
+
+  const scanPromise = scanPageWithPpOcrUncached(pageImage, spans, dpi, pageNumber);
+  ppOcrScanCache.set(cacheKey, scanPromise);
+  return scanPromise;
+}
+
+async function scanPageWithPpOcrUncached(
+  pageImage: Buffer,
+  spans: readonly TextSpan[],
+  dpi: number,
+  pageNumber: number
 ): Promise<PpOcrPageScan | null> {
   try {
     // Compute image metadata once
     const metadata = await sharp(pageImage).metadata();
     const pageHeightPt = metadata.height! / (dpi / 72);
     const width = metadata.width!;
+    const heightPx = metadata.height!;
 
     // Identify which text spans are "covered" by the geometry layer, so we can
     // focus on text regions not already in the text layer.
     let spanRects: ReturnType<typeof projectSpanToPixels>[] = [];
     if (spans.length > 0) {
-      // Project only first page's spans to pixel rectangles
+      // Project only THIS page's spans to pixel rectangles -- accuracy3
+      // Step 1.1: recoverBodyTextViaPpOcr now scans every page, and a page 2
+      // scanned against page 1's spans would plan strips from the wrong
+      // panel geometry entirely.
       spanRects = spans
-        .filter((s) => s.page === 1)
+        .filter((s) => s.page === pageNumber)
         .map((s) => projectSpanToPixels(s, pageHeightPt, dpi));
     }
 
     // Compute panel X ranges from text-layer geometry (rotation-0 only)
-    const page1Spans = spans.filter((s) => s.page === 1);
+    const thisPageSpans = spans.filter((s) => s.page === pageNumber);
     let panelXRanges: Array<{ left: number; right: number }> = [];
+    let anyPanelRotated = false;
 
-    if (page1Spans.length > 0) {
-      const panels = segmentPanels(page1Spans);
+    if (thisPageSpans.length > 0) {
+      const panels = segmentPanels(thisPageSpans);
       const s = dpi / 72;
 
-      // Filter to rotation-0 panels and extract their X ranges
       for (const panel of panels) {
-        if (Math.abs(panel.rotation) < 0.01) {
-          let minX = Infinity;
-          let maxX = -Infinity;
+        if (Math.abs(panel.rotation) >= 0.01) {
+          anyPanelRotated = true;
+          continue;
+        }
+        let minX = Infinity;
+        let maxX = -Infinity;
 
-          for (const line of panel.lines) {
-            for (const span of line.spans) {
-              minX = Math.min(minX, span.x);
-              maxX = Math.max(maxX, span.x + span.width);
-            }
+        for (const line of panel.lines) {
+          for (const span of line.spans) {
+            minX = Math.min(minX, span.x);
+            maxX = Math.max(maxX, span.x + span.width);
           }
+        }
 
-          if (minX !== Infinity && maxX !== -Infinity) {
-            panelXRanges.push({
-              left: minX * s,
-              right: maxX * s
-            });
-          }
+        if (minX !== Infinity && maxX !== -Infinity) {
+          panelXRanges.push({ left: minX * s, right: maxX * s });
         }
       }
     }
 
     // Compute padding: 40px or 1.5 * median font size, whichever is larger
     const s = dpi / 72;
-    const medianFontSizeVal = page1Spans.length > 0 ? medianFontSize(page1Spans) : 0;
+    const medianFontSizeVal = thisPageSpans.length > 0 ? medianFontSize(thisPageSpans) : 0;
     const padPx = Math.max(40, Math.round(1.5 * medianFontSizeVal * s));
 
-    // Plan OCR strips (panels + gaps)
+    // Plan OCR strips (panels + gaps) and OCR the 0-degree pass.
     const strips = planOcrStrips(panelXRanges, width, padPx);
+    const allLines: OcrLineLike[] = await ocrAllStrips(pageImage, strips, width, heightPx);
 
-    // OCR each strip and collect all lines
-    const allLines: OcrLineLike[] = [];
-
-    for (const strip of strips) {
-      try {
-        const crop = await sharp(pageImage).extract({
-          left: Math.round(strip.left),
-          top: 0,
-          width: Math.round(strip.width),
-          height: Math.round(metadata.height!)
-        }).png().toBuffer();
-
-        const lines = await recognizeLines(crop);
-
-        // Drop lines cut by the strip boundary (fragment removal)
-        const trimmedLines = dropStripEdgeLines(lines, strip, width);
-
-        // Offset every box by +strip.left on x
-        for (const line of trimmedLines) {
-          allLines.push({
-            text: line.text,
-            box: {
-              x0: line.box.x0 + strip.left,
-              y0: line.box.y0,
-              x1: line.box.x1 + strip.left,
-              y1: line.box.y1
-            },
-            confidence: line.confidence
-          });
+    // accuracy3 Step 1.2: rotated passes. Triggered when the text layer
+    // itself says a panel is printed sideways, or when there's no text
+    // layer at all to say either way (an image upload, or a scanned PDF --
+    // both cases where "is anything rotated" is simply unknown, so it's
+    // checked for rather than assumed absent). Each rotated pass reads the
+    // WHOLE page as one blind strip (panelXRanges=[]) -- text-layer panel
+    // geometry doesn't line up once the image itself has been rotated,
+    // same reasoning scripts/dump-readable-text.ts already uses for its own
+    // rotation passes.
+    const needsRotation = thisPageSpans.length === 0 || anyPanelRotated;
+    if (needsRotation) {
+      for (const angle of [90, 270] as const) {
+        try {
+          const rotated = await sharp(pageImage).rotate(angle).png().toBuffer();
+          const rotatedMeta = await sharp(rotated).metadata();
+          const rotatedStrips = planOcrStrips([], rotatedMeta.width!, padPx);
+          const rotatedLines = await ocrAllStrips(rotated, rotatedStrips, rotatedMeta.width!, rotatedMeta.height!);
+          for (const line of rotatedLines) {
+            allLines.push({
+              text: line.text,
+              box: mapRotatedBoxToPage(line.box, angle, width, heightPx),
+              confidence: line.confidence
+            });
+          }
+        } catch (rotateError) {
+          debugLog(`Rotated (${angle}deg) PP-OCR pass failed: ${rotateError instanceof Error ? rotateError.message : String(rotateError)}`);
         }
-      } catch (stripError) {
-        // Strip OCR failure is fail-soft; continue with other strips
-        debugLog(`OCR strip [${strip.left}, ${strip.left + strip.width}) failed: ${
-          stripError instanceof Error ? stripError.message : String(stripError)
-        }`);
       }
     }
 
     // Dedupe: two lines whose boxes have IoU > 0.7 are one line read by two
-    // overlapping strips (the padding) → keep the higher-confidence read.
+    // overlapping strips or angles (the padding, or a rotated pass reading
+    // the same text the 0-degree pass already got) → keep the
+    // higher-confidence read.
     const deduped = dedupeOverlappingLines(allLines);
 
     // Compute occurrence count before filtering: across all collected lines (after strip-edge
@@ -947,24 +1091,81 @@ async function recoverDisplayTextCandidates(
 // value as two separate PP-OCR detections at the same baseline) still
 // lands adjacent to itself in that order, which is what groupSpansIntoLines
 // downstream (extractNutritionTableFromPpOcrLines) needs to rejoin it.
-// Returns null (fail-soft) when the scan itself failed; an empty-but-real
-// scan (nothing detected) returns text: '' and no nutritionTable, which
-// callers treat as "nothing new to add," not an error.
-async function recoverBodyTextViaPpOcr(
-  pageImage: Buffer,
+//
+// accuracy3 Step 1.1: runs over EVERY rasterized page, not just the first --
+// a real client label's nutrition table, ingredient list, or claims can sit
+// on page 2 of a multi-page PDF (a back-panel scan, or a second artwork
+// page), and the single-page version of this function could never reach
+// it. Nutrition table: first page with a non-empty table wins, the same
+// "don't overwrite a value that's already there" rule
+// extractNutritionTableFromOcrWords's own caller already follows. Body
+// text: every page's text concatenated in page order, since claims/
+// ingredients extraction reads the whole string and a real ingredient list
+// or claim can be split across the panel boundary a page break happens to
+// fall on. Capped by PPOCR_MAX_PAGES (default 4) so a very long PDF can't
+// turn one label's extraction into dozens of full-page PP-OCR scans.
+//
+// Returns null (fail-soft) only when EVERY page's scan failed; an
+// empty-but-real scan (nothing detected anywhere) returns text: '' and no
+// nutritionTable, which callers treat as "nothing new to add," not an
+// error.
+export async function recoverBodyTextViaPpOcr(
+  pageImages: readonly Buffer[],
   spans: readonly TextSpan[],
   dpi: number
 ): Promise<{ text: string; nutritionTable?: Record<string, string> } | null> {
-  const scan = await scanPageWithPpOcr(pageImage, spans, dpi);
-  if (!scan) return null;
+  const pagesToScan = pageImages.slice(0, env.ppOcrMaxPages);
+  const texts: string[] = [];
+  let nutritionTable: Record<string, string> | undefined;
+  let anyScanSucceeded = false;
 
-  const ordered = [...scan.deduped].sort((a, b) => a.box.y0 - b.box.y0 || a.box.x0 - b.box.x0);
-  const text = ordered.map((l) => l.text).join('\n');
-  const nutritionTable = extractNutritionTableFromPpOcrLines(ordered);
-  return {
-    text,
-    nutritionTable: Object.keys(nutritionTable).length > 0 ? nutritionTable : undefined
-  };
+  for (let i = 0; i < pagesToScan.length; i++) {
+    const scan = await scanPageWithPpOcr(pagesToScan[i], spans, dpi, i + 1);
+    if (!scan) continue;
+    anyScanSucceeded = true;
+
+    const ordered = [...scan.deduped].sort((a, b) => a.box.y0 - b.box.y0 || a.box.x0 - b.box.x0);
+    const pageText = ordered.map((l) => l.text).join('\n');
+    if (pageText) texts.push(pageText);
+
+    if (!nutritionTable) {
+      const pageNutritionTable = extractNutritionTableFromPpOcrLines(ordered);
+      if (Object.keys(pageNutritionTable).length > 0) nutritionTable = pageNutritionTable;
+    }
+  }
+
+  if (!anyScanSucceeded) return null;
+  return { text: texts.join('\n'), nutritionTable };
+}
+
+// accuracy3 Step 1.6: which of recoverBodyTextViaPpOcr's own scalar reads
+// are safe to route into the fillBlanks cascade as source 'ppocr-text'.
+// brand/productName are excluded unconditionally -- PP-OCR's raw strip-
+// order text is exactly the source that produced this project's 0-correct/
+// 13-wrong flattened-text brand guess (see recoverNamesViaVlm/
+// recoverDisplayTextCandidates for the only path allowed to touch those
+// two fields). The other four exclusions come from the first real by-
+// source measurement of this source (2026-09-20, RESULTS.md `84b3695` row,
+// pipeline vlm-off/masters-on, 45 real labels): address 0 correct/3 wrong,
+// customer_care_number 0/3, flavour 0/2, marketing_company 0/6 -- net
+// harmful on all four, and the flavour misses included a NEW fabrication
+// (a value filled in on a label ground truth says has none), which this
+// project's own rule never allows in exchange for accuracy elsewhere.
+// customerCareEmail (6/0), fssaiNumber (3/1), and packageSize (1/1, not
+// "more wrong than correct") measured net-positive-or-neutral and stay
+// enabled. Per Step 1.6's own instruction: "let the by-source table
+// decide... name which ones in the report."
+export function ppOcrTextScalarPatch(candidates: ExtractedLabelFields): Partial<ExtractedLabelFields> {
+  const {
+    brand: _brand,
+    productName: _productName,
+    address: _address,
+    customerCareNumber: _customerCareNumber,
+    flavour: _flavour,
+    marketingCompany: _marketingCompany,
+    ...patch
+  } = candidates;
+  return patch;
 }
 
 // A bare measurement/dimension value — never a brand name, but a real
@@ -1480,24 +1681,73 @@ export async function extractLabelReportFromFile(
     //
     // Only escalates when at least one of the three is still genuinely
     // missing after every other source had its turn, and only when an
-    // OCR-RESOLUTION page image already exists (pass.pageImages[0] -- never
-    // the 72dpi colour-only `pageImage` fallback above, which is unreadable
-    // at OCR quality): same "don't pay for OCR you don't need" discipline
-    // every other escalation in this pipeline follows. A text-layer-only
-    // PDF that never needed rasterizing for its scalar fields (isComplete()
-    // was true in extractFieldsFromPdf) is not covered by this yet -- see
-    // the Step 3 report for why that's a deliberate, separate follow-up
-    // rather than a silent gap.
+    // OCR-RESOLUTION page image exists (never the 72dpi colour-only
+    // `pageImage` fallback above, which is unreadable at OCR quality): same
+    // "don't pay for OCR you don't need" discipline every other escalation
+    // in this pipeline follows.
     const stillMissingBodyText =
       !hasNutritionTable(nutritionTable) || !extended.values.ingredients || extended.values.claims === '';
-    if (stillMissingBodyText && pass.pageImages[0]) {
-      const recovered = await recoverBodyTextViaPpOcr(pass.pageImages[0], pass.spans ?? [], env.pdfRasterDpi);
+
+    // accuracy3 Step 1.5: extractFieldsFromPdf's isComplete() fast path
+    // returns pageImages: [] once every SCALAR field is resolved from the
+    // text layer -- it has no way to know nutrition_table/claims/
+    // ingredients are still empty, since those aren't part of isComplete()'s
+    // check. Before this fix, that meant a label whose scalars all came
+    // from the text layer NEVER reached the PP-OCR/crop side channels below,
+    // even when its nutrition table or claims were genuinely missing --
+    // permanently, since nothing downstream would ever ask for OCR-quality
+    // pages again. Rasterizing here -- only when actually needed -- gives
+    // the fast path the exact same escalation the slow path already has, by
+    // reusing this same code rather than duplicating it inside the fast
+    // path's own branch.
+    let ocrPageImages: Buffer[] = pass.pageImages;
+    if (ocrPageImages.length === 0 && isPdf && stillMissingBodyText) {
+      try {
+        ocrPageImages = await rasterizePdfPages(fileBuffer);
+      } catch (error) {
+        console.warn(
+          '[labelExtraction] Fast-path OCR-quality rasterization failed: ' +
+            (error instanceof Error ? error.message : String(error))
+        );
+      }
+    }
+
+    if (stillMissingBodyText && ocrPageImages[0]) {
+      const recovered = await recoverBodyTextViaPpOcr(ocrPageImages, pass.spans ?? [], env.pdfRasterDpi);
       if (recovered && (recovered.text || recovered.nutritionTable)) {
         if (recovered.nutritionTable && !hasNutritionTable(nutritionTable)) {
           nutritionTable = recovered.nutritionTable;
         }
         if (recovered.text) {
           bodyText = [bodyText, recovered.text].filter((t) => t.trim().length > 0).join('\n');
+
+          // accuracy3 Step 1.6: route PP-OCR's own reading-order text
+          // through the same fillBlanks scalar cascade every other source
+          // uses -- blanks only (fillBlanks never overwrites a value
+          // that's already there), and explicitly NEVER into brand/
+          // productName: PP-OCR's raw strip-order text is exactly the
+          // source that produced this project's 0-correct/13-wrong
+          // flattened-text brand guess (see the comment on
+          // recoverNamesViaVlm/recoverDisplayTextCandidates for the only
+          // path allowed to touch those two fields).
+          //
+          // Also gated off address/customerCareNumber/flavour/
+          // marketingCompany: the first real by-source measurement of this
+          // source (2026-09-20, RESULTS.md `84b3695` row) found it net-
+          // harmful on exactly those four -- address 0/3, customer_care_
+          // number 0/3, flavour 0/2, marketing_company 0/6 (correct/wrong)
+          // -- and the flavour misses included a new fabrication (a value
+          // filled in on a label ground truth says has none), which this
+          // project's own rule never allows in exchange for accuracy
+          // elsewhere. customerCareEmail (6/0), fssaiNumber (3/1), and
+          // packageSize (1/1, not "more wrong than correct") stay enabled.
+          // Per Step 1.6's own instruction: "let the by-source table
+          // decide."
+          const ppOcrScalarCandidates = extractLabelFields(recovered.text, { knownFlavours });
+          const ppOcrScalarPatch = ppOcrTextScalarPatch(ppOcrScalarCandidates);
+          const ppOcrMerge = fillBlanksFrom(pass.fields, ppOcrScalarPatch, 'ppocr-text', pass.fieldMeta ?? {});
+          pass.fields = ppOcrMerge.fields;
+          pass.fieldMeta = ppOcrMerge.meta;
         }
         // Re-run once, over the enriched text/table together, rather than
         // patching claims/ingredients/nutritionTable individually -- claims
@@ -1527,9 +1777,9 @@ export async function extractLabelReportFromFile(
     // is grounded before being trusted (readNutritionTableFromCrop), so a
     // crop that doesn't hold up leaves the field MISSING, same as today,
     // never WRONG for the sake of filling something in.
-    if (!hasNutritionTable(nutritionTable) && isVlmEnabled() && pass.pageImages[0]) {
+    if (!hasNutritionTable(nutritionTable) && isVlmEnabled() && ocrPageImages[0]) {
       try {
-        const pageImageBuffer = pass.pageImages[0];
+        const pageImageBuffer = ocrPageImages[0];
         const meta = await sharp(pageImageBuffer).metadata();
         const pageWidth = meta.width!;
         const pageHeight = meta.height!;

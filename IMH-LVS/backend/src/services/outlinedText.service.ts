@@ -358,3 +358,55 @@ function boxIou(a: { x0: number; y0: number; x1: number; y1: number }, b: { x0: 
   const union = (a.x1 - a.x0) * (a.y1 - a.y0) + (b.x1 - b.x0) * (b.y1 - b.y0) - intersection;
   return union > 0 ? intersection / union : 0;
 }
+
+/**
+ * The per-strip/per-page median line height PP-OCR actually read — the
+ * accuracy3 Step 1.3 upscale trigger. PP-OCR's recogniser works reliably at
+ * ~48px line height; 300 DPI of 6.8pt body text (a real nutrition panel's
+ * print size) renders at ~28px, below that. Lifted from
+ * scripts/dump-readable-text.ts's own medianLineHeight (that script proved
+ * the rule at page granularity; production applies it per strip instead —
+ * see scanPageWithPpOcr).
+ */
+export function medianLineHeight(lines: readonly OcrLineLike[]): number {
+  if (lines.length === 0) return 0;
+  const heights = lines.map((l) => l.box.y1 - l.box.y0).sort((a, b) => a - b);
+  const mid = Math.floor(heights.length / 2);
+  return heights.length % 2 === 1 ? heights[mid] : (heights[mid - 1] + heights[mid]) / 2;
+}
+
+/**
+ * Maps a line box read off a page image that was rotated 90 or 270 degrees
+ * (clockwise, sharp's own rotate(angle) convention) back into the
+ * UN-rotated page's own pixel coordinates, so a rotated-pass PP-OCR read can
+ * be merged (dedupeOverlappingLines) with the 0-degree pass's lines in one
+ * shared coordinate space. `pageWidth`/`pageHeight` are the ORIGINAL page's
+ * dimensions (before rotation), not the rotated image's (which has them
+ * swapped for a 90/270 rotation).
+ *
+ * Derivation: sharp's rotate(90) sends source pixel (x, y) in a W x H image
+ * to destination pixel (H-1-y, x) in the resulting H x W image; rotate(270)
+ * (= rotate(-90)) sends (x, y) to (y, W-1-x). Inverting each and applying it
+ * to an axis-aligned box's two defining corners gives the formulas below.
+ */
+export function mapRotatedBoxToPage(
+  box: { x0: number; y0: number; x1: number; y1: number },
+  angle: 90 | 270,
+  pageWidth: number,
+  pageHeight: number
+): { x0: number; y0: number; x1: number; y1: number } {
+  if (angle === 90) {
+    return {
+      x0: box.y0,
+      x1: box.y1,
+      y0: pageHeight - box.x1,
+      y1: pageHeight - box.x0
+    };
+  }
+  return {
+    x0: pageWidth - box.y1,
+    x1: pageWidth - box.y0,
+    y0: box.x0,
+    y1: box.x1
+  };
+}

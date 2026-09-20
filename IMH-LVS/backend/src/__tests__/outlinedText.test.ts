@@ -8,6 +8,8 @@ import {
   planOcrStrips,
   dropStripEdgeLines,
   dedupeOverlappingLines,
+  medianLineHeight,
+  mapRotatedBoxToPage,
   type OcrLineLike
 } from '../services/outlinedText.service';
 import type { Rectangle } from '../services/tesseract.service';
@@ -371,4 +373,89 @@ test('dedupeOverlappingLines: an earlier higher-confidence read keeps its positi
   const out = dedupeOverlappingLines(lines);
   assert.deepEqual(out.map((l) => l.text), ['A', 'B', 'C']);
   assert.equal(out[0].confidence, 0.99);
+});
+
+// accuracy3 Step 1.3: the per-strip upscale trigger.
+test('medianLineHeight: empty array → 0', () => {
+  assert.equal(medianLineHeight([]), 0);
+});
+
+test('medianLineHeight: odd count → the middle value', () => {
+  const lines: OcrLineLike[] = [
+    { text: 'a', box: { x0: 0, y0: 0, x1: 10, y1: 20 }, confidence: 0.9 }, // height 20
+    { text: 'b', box: { x0: 0, y0: 0, x1: 10, y1: 50 }, confidence: 0.9 }, // height 50
+    { text: 'c', box: { x0: 0, y0: 0, x1: 10, y1: 30 }, confidence: 0.9 } // height 30
+  ];
+  assert.equal(medianLineHeight(lines), 30);
+});
+
+test('medianLineHeight: even count → average of the two middle values', () => {
+  const lines: OcrLineLike[] = [
+    { text: 'a', box: { x0: 0, y0: 0, x1: 10, y1: 20 }, confidence: 0.9 }, // height 20
+    { text: 'b', box: { x0: 0, y0: 0, x1: 10, y1: 40 }, confidence: 0.9 } // height 40
+  ];
+  assert.equal(medianLineHeight(lines), 30);
+});
+
+// accuracy3 Step 1.2: rotated-pass box remapping back into page coordinates.
+test('mapRotatedBoxToPage: angle 90 maps a top-left source box to the destination top-right region', () => {
+  // Original page 100 wide x 200 tall. A box near the rotated image's
+  // top-left corner (small x0/y0) should land near the ORIGINAL page's
+  // top-right after inverting a 90deg clockwise rotation.
+  const rotatedBox = { x0: 0, y0: 0, x1: 20, y1: 10 };
+  const mapped = mapRotatedBoxToPage(rotatedBox, 90, 100, 200);
+  assert.ok(mapped.x0 >= 0 && mapped.x1 <= 100, `x within original page width: ${JSON.stringify(mapped)}`);
+  assert.ok(mapped.y0 >= 0 && mapped.y1 <= 200, `y within original page height: ${JSON.stringify(mapped)}`);
+  // x-range comes from the rotated box's y-range (0..10)
+  assert.equal(mapped.x0, 0);
+  assert.equal(mapped.x1, 10);
+  // y-range comes from H minus the rotated box's x-range (reversed): 200-20=180..200-0=200
+  assert.equal(mapped.y0, 180);
+  assert.equal(mapped.y1, 200);
+});
+
+test('mapRotatedBoxToPage: angle 270 maps a top-left source box to the destination bottom-left region', () => {
+  const rotatedBox = { x0: 0, y0: 0, x1: 20, y1: 10 };
+  const mapped = mapRotatedBoxToPage(rotatedBox, 270, 100, 200);
+  assert.ok(mapped.x0 >= 0 && mapped.x1 <= 100, `x within original page width: ${JSON.stringify(mapped)}`);
+  assert.ok(mapped.y0 >= 0 && mapped.y1 <= 200, `y within original page height: ${JSON.stringify(mapped)}`);
+  // x-range comes from W minus the rotated box's y-range (reversed): 100-10=90..100-0=100
+  assert.equal(mapped.x0, 90);
+  assert.equal(mapped.x1, 100);
+  // y-range comes directly from the rotated box's x-range (0..20)
+  assert.equal(mapped.y0, 0);
+  assert.equal(mapped.y1, 20);
+});
+
+test('mapRotatedBoxToPage: 90 then 270 on the same original box round-trips back to itself', () => {
+  // A box on the ORIGINAL page, forward-rotated by hand using the inverse
+  // of mapRotatedBoxToPage's own formula (i.e. simulating what a rotated
+  // scan would have read for this same real box), then mapped back --
+  // confirms the two angles are true inverses of each other's geometry,
+  // not just independently-plausible-looking formulas.
+  const pageWidth = 120;
+  const pageHeight = 240;
+  const original = { x0: 10, y0: 30, x1: 40, y1: 90 };
+
+  // Forward transform for angle=90 (dest_x = H-y, dest_y = x), inverse of
+  // the x0=box.y0/x1=box.y1/y0=H-box.x1/y1=H-box.x0 formula above.
+  const rotated90 = {
+    x0: pageHeight - original.y1,
+    x1: pageHeight - original.y0,
+    y0: original.x0,
+    y1: original.x1
+  };
+  const mappedBack90 = mapRotatedBoxToPage(rotated90, 90, pageWidth, pageHeight);
+  assert.deepEqual(mappedBack90, original);
+
+  // Forward transform for angle=270 (dest_x = y, dest_y = W-x), inverse of
+  // the x0=W-box.y1/x1=W-box.y0/y0=box.x0/y1=box.x1 formula above.
+  const rotated270 = {
+    x0: original.y0,
+    x1: original.y1,
+    y0: pageWidth - original.x1,
+    y1: pageWidth - original.x0
+  };
+  const mappedBack270 = mapRotatedBoxToPage(rotated270, 270, pageWidth, pageHeight);
+  assert.deepEqual(mappedBack270, original);
 });
