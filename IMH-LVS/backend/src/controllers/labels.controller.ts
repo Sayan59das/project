@@ -4,10 +4,10 @@ import { buildPlaceholderExtraction, extractLabelFromFile, extractLabelReportFro
 import { compareLabels as compareLabelData, ComparisonStage } from '../services/labelComparison.service';
 import { compareFingerprints, fingerprintArtworkImage, type ArtworkVisualComparison } from '../services/imageSimilarity.service';
 import { identifyProduct as identifyProductWithAi, ProductIdentificationInput } from '../services/productIdentification.service';
-import { claims as claimsMaster, flavours as flavoursMaster } from '../repositories/masters.repository';
+import { claims as claimsMaster, flavours as flavoursMaster, brands as brandsMaster } from '../repositories/masters.repository';
 import { getProducts } from '../repositories/product.repository';
 
-type KnownMasterNames = { knownClaims: string[]; knownFlavours: string[] };
+type KnownMasterNames = { knownClaims: string[]; knownFlavours: string[]; knownBrands: string[] };
 
 // Short TTL, not "load once and keep forever": Master Data is edited
 // through its own admin page (activating/deactivating a Claim or Flavour,
@@ -41,22 +41,27 @@ export async function loadKnownMasterNames(): Promise<KnownMasterNames> {
   }
 
   try {
-    const [claimRecords, flavourRecords] = await Promise.all([claimsMaster.list(), flavoursMaster.list()]);
+    const [claimRecords, flavourRecords, brandRecords] = await Promise.all([
+      claimsMaster.list(),
+      flavoursMaster.list(),
+      brandsMaster.list()
+    ]);
     const value: KnownMasterNames = {
       knownClaims: claimRecords.filter((claim) => claim.status === 'Active').map((claim) => claim.claimText),
-      knownFlavours: flavourRecords.filter((flavour) => flavour.status === 'Active').map((flavour) => flavour.flavourName)
+      knownFlavours: flavourRecords.filter((flavour) => flavour.status === 'Active').map((flavour) => flavour.flavourName),
+      knownBrands: brandRecords.filter((brand) => brand.status === 'Active').map((brand) => brand.brandName)
     };
     masterNamesCache = { value, expiresAt: Date.now() + MASTER_NAMES_CACHE_TTL_MS };
     return value;
   } catch (error) {
     console.warn(
-      '[labels.controller] Could not load Claims/Flavours master data (no database configured, or unreachable) — ' +
+      '[labels.controller] Could not load Claims/Flavours/Brands master data (no database configured, or unreachable) — ' +
         'continuing with OCR-only extraction for those fields.',
       error instanceof Error ? error.message : error
     );
     // Not cached: a database outage should not lock this endpoint out of
     // trying again on the very next request once it recovers.
-    return { knownClaims: [], knownFlavours: [] };
+    return { knownClaims: [], knownFlavours: [], knownBrands: [] };
   }
 }
 
@@ -118,8 +123,8 @@ export async function extractLabel(req: Request, res: Response) {
   }
 
   try {
-    const { knownClaims, knownFlavours } = await loadKnownMasterNames();
-    const { result: data, fieldMeta } = await extractLabelReportFromFile(file.path, file.mimetype, knownClaims, knownFlavours);
+    const { knownClaims, knownFlavours, knownBrands } = await loadKnownMasterNames();
+    const { result: data, fieldMeta } = await extractLabelReportFromFile(file.path, file.mimetype, knownClaims, knownFlavours, knownBrands);
     // fieldMeta (Phase F): which fields, if any, were inferred by a model
     // rather than read off the label, so the intake form can flag them for
     // human confirmation instead of presenting every field with equal
@@ -167,10 +172,10 @@ export async function compareLabels(req: Request, res: Response) {
   }
 
   try {
-    const { knownClaims, knownFlavours } = await loadKnownMasterNames();
+    const { knownClaims, knownFlavours, knownBrands } = await loadKnownMasterNames();
     const [labelA, labelB, visualComparison] = await Promise.all([
-      extractLabelFromFile(fileA.path, fileA.mimetype, knownClaims, knownFlavours),
-      extractLabelFromFile(fileB.path, fileB.mimetype, knownClaims, knownFlavours),
+      extractLabelFromFile(fileA.path, fileA.mimetype, knownClaims, knownFlavours, knownBrands),
+      extractLabelFromFile(fileB.path, fileB.mimetype, knownClaims, knownFlavours, knownBrands),
       buildVisualComparison(fileA, fileB)
     ]);
     const comparison = compareLabelData(labelA, labelB);

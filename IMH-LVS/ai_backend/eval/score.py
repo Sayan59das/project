@@ -44,6 +44,17 @@ Environment variables:
                             machine — a single process holding Ollama and the OCR engine
                             resident for every label at once has been observed getting
                             killed by the OS for running out of memory.
+    EVAL_LABEL_SUBSET_FILE  Restricts scoring to the sourceFile names listed one per line
+                            in this text file (blank lines and lines starting with # are
+                            skipped) — every other ground-truth label is left out of this
+                            run entirely, not just hidden from the printed report. Exists
+                            for a real held-out accuracy check (eval/holdout_labels.txt):
+                            every fix in this project so far was found by reading real
+                            wrong answers FROM the same 45 labels used to measure it, so
+                            the headline number has never actually shown how well the
+                            code does on a label no fix was ever tuned against. Unset
+                            (the default) scores every label, exactly as before this
+                            variable existed.
 """
 import argparse
 import json
@@ -63,6 +74,12 @@ ANNOTATIONS_DIR = AI_BACKEND_DIR / "finetune" / "reviewed" / "annotations"
 IMAGES_DIR = AI_BACKEND_DIR / "finetune" / "images"
 RESULTS_MD = EVAL_DIR / "RESULTS.md"
 RUNS_DIR = EVAL_DIR / "runs"
+# The client's Masters catalogue (accuracy2 plan Step 2) -- built by
+# build_masters.py from the reviewed ground truth. A list read at runtime,
+# never a string literal in extraction code (see masterSnap.service.ts's own
+# note on why that's not hardcoding). Its mere presence on disk is what
+# --masters on (the default when it exists) picks up.
+MASTERS_JSON = EVAL_DIR / "masters.json"
 
 FIELDS = [
     "brand_name", "product_name", "colour_theme", "flavour", "claims", "logo",
@@ -584,6 +601,22 @@ def load_ground_truth():
         merged, conflicts = merge_label_pages([d.get("label", {}) for d in docs])
         pages = [(d["_slug"], d.get("page", 0)) for d in docs]
         grouped[source_file] = (merged, pages, conflicts)
+
+    subset_path = os.environ.get("EVAL_LABEL_SUBSET_FILE")
+    if subset_path:
+        wanted = {
+            line.strip()
+            for line in Path(subset_path).read_text(encoding="utf-8").splitlines()
+            if line.strip() and not line.strip().startswith("#")
+        }
+        missing = wanted - grouped.keys()
+        if missing:
+            raise SystemExit(
+                f"EVAL_LABEL_SUBSET_FILE names {len(missing)} file(s) with no ground truth: "
+                f"{sorted(missing)}"
+            )
+        grouped = {source_file: v for source_file, v in grouped.items() if source_file in wanted}
+
     return grouped
 
 
@@ -733,7 +766,7 @@ def _collect_ground_truth_pdfs(ground_truth):
     return pdf_paths
 
 
-def _subprocess_env(vlm):
+def _subprocess_env(vlm, masters="off"):
     """The Node CLI subprocess's environment: inherits everything the parent
     process has (so a real OLLAMA_URL already configured for --vlm on just
     keeps working, no extra setup needed), except when --vlm off explicitly
@@ -742,14 +775,26 @@ def _subprocess_env(vlm):
     that forces the VLM role-resolution step off regardless of what's
     configured in the ambient environment, which is the only way to measure
     the pipeline's own non-VLM accuracy against the exact same code path
-    used with it on."""
+    used with it on.
+
+    masters="on" points EVAL_MASTERS_JSON (read by extract-textlayer.ts /
+    extract-pipeline.ts, accuracy2 plan Step 2) at this eval directory's own
+    masters.json for THIS call only; masters="off" (the historical behavior,
+    still the default) removes it even if the ambient environment happens to
+    have it set, so a masters-off run is never accidentally contaminated by
+    whatever the shell was last configured for -- same isolation guarantee
+    the vlm lever already gives OLLAMA_URL."""
     env = os.environ.copy()
     if vlm == "off":
         env["OLLAMA_URL"] = ""
+    if masters == "on":
+        env["EVAL_MASTERS_JSON"] = str(MASTERS_JSON)
+    else:
+        env.pop("EVAL_MASTERS_JSON", None)
     return env
 
 
-def _run_node_extraction_cli_once(script_name, pdf_paths, mode_label, backend_dir, vlm="on"):
+def _run_node_extraction_cli_once(script_name, pdf_paths, mode_label, backend_dir, vlm="on", masters="off"):
     """One subprocess invocation of a backend/scripts/*.ts CLI over however
     many PDFs are passed. Returns predictions keyed by source file."""
     cmd = ["node", "-r", "tsx/cjs", f"scripts/{script_name}", *[str(p) for p in pdf_paths]]
@@ -764,7 +809,7 @@ def _run_node_extraction_cli_once(script_name, pdf_paths, mode_label, backend_di
         # as None rather than raising here.
         result = subprocess.run(
             cmd, cwd=backend_dir, capture_output=True, text=True, encoding="utf-8", check=True,
-            env=_subprocess_env(vlm)
+            env=_subprocess_env(vlm, masters)
         )
     except subprocess.CalledProcessError as e:
         raise SystemExit(f"{mode_label} extraction failed: {e.stderr}")
@@ -785,7 +830,7 @@ def _run_node_extraction_cli_once(script_name, pdf_paths, mode_label, backend_di
     return predictions_by_source
 
 
-def _run_node_extraction_cli(script_name, pdf_paths, mode_label, batch_size=None, vlm="on"):
+def _run_node_extraction_cli(script_name, pdf_paths, mode_label, batch_size=None, vlm="on", masters="off"):
     """Runs a backend/scripts/*.ts CLI (extract-textlayer.ts or
     extract-pipeline.ts — both accept the same <pdf>... argv and print the
     same JSON-array-of-records shape) and returns predictions keyed by
@@ -808,24 +853,32 @@ def _run_node_extraction_cli(script_name, pdf_paths, mode_label, batch_size=None
     predictions_by_source = {}
     for start in range(0, len(pdf_paths), batch_size):
         batch = pdf_paths[start : start + batch_size]
-        predictions_by_source.update(_run_node_extraction_cli_once(script_name, batch, mode_label, backend_dir, vlm))
+        predictions_by_source.update(
+            _run_node_extraction_cli_once(script_name, batch, mode_label, backend_dir, vlm, masters)
+        )
     return predictions_by_source
 
 
-def run_textlayer_mode():
+def run_textlayer_mode(masters="off"):
     """Runs the text-layer-only extraction pipeline (Node CLI via
     backend/scripts/extract-textlayer.ts) over every ground-truth label's PDF,
     merging predictions per sourceFile the same way merge_label_pages()
     combines ground truth, so the comparison is apples-to-apples. The CLI is
     invoked ONCE with all available PDFs and returns a JSON array of
-    extraction results."""
+    extraction results.
+
+    masters="on" points the CLI at this eval directory's own masters.json
+    (see _subprocess_env) so brand/flavour/claims candidates come from the
+    client's real catalogue instead of running anchor-less; "off" (the
+    default, and the only configuration every pre-Step-2 measurement ever
+    ran under) leaves those candidate lists empty."""
     ground_truth = load_ground_truth()
     pdf_paths = _collect_ground_truth_pdfs(ground_truth)
-    predictions_by_source = _run_node_extraction_cli("extract-textlayer.ts", pdf_paths, "Text layer")
+    predictions_by_source = _run_node_extraction_cli("extract-textlayer.ts", pdf_paths, "Text layer", masters=masters)
     return predictions_by_source, ground_truth
 
 
-def run_pipeline_mode(vlm="on"):
+def run_pipeline_mode(vlm="on", masters="off"):
     """Runs the FULL pipeline (Node CLI via backend/scripts/extract-pipeline.ts:
     text layer, then OCR with outlined-text detection, then Ollama VLM
     role-resolution for whatever is still blank — Phases C+D+E combined)
@@ -840,6 +893,8 @@ def run_pipeline_mode(vlm="on"):
     be measured from the exact same code path and land side by side in
     RESULTS.md (Step 2, accuracy plan).
 
+    masters="on"/"off" — see run_textlayer_mode's own note; same lever here.
+
     Runs in small batches (see _run_node_extraction_cli's own docstring) —
     this mode is the one that keeps Ollama and the OCR engine loaded, so
     it's the one that actually needs the memory headroom batching buys."""
@@ -847,7 +902,7 @@ def run_pipeline_mode(vlm="on"):
     pdf_paths = _collect_ground_truth_pdfs(ground_truth)
     batch_size = int(os.environ.get("EVAL_PIPELINE_BATCH_SIZE", "5"))
     predictions_by_source = _run_node_extraction_cli(
-        "extract-pipeline.ts", pdf_paths, "Full pipeline", batch_size=batch_size, vlm=vlm
+        "extract-pipeline.ts", pdf_paths, "Full pipeline", batch_size=batch_size, vlm=vlm, masters=masters
     )
     return predictions_by_source, ground_truth
 
@@ -970,17 +1025,32 @@ def main():
              "step off for this run regardless of the ambient environment, so both can be measured from "
              "the same code path and compared side by side in RESULTS.md (Step 2, accuracy plan)."
     )
+    parser.add_argument(
+        "--masters", choices=["on", "off"], default=None,
+        help="--mode textlayer/pipeline only: whether the extraction is handed the client's Masters "
+             "catalogue (eval/masters.json, from build_masters.py) as brand/flavour/claims candidates. "
+             "Defaults to 'on' if masters.json exists on disk, 'off' otherwise -- so an environment with "
+             "no masters.json built yet runs exactly as every pre-Step-2 measurement did. Pass explicitly "
+             "to get a masters-off row even when masters.json exists, for a side-by-side RESULTS.md "
+             "comparison (Step 2, accuracy plan)."
+    )
     args = parser.parse_args()
 
     if args.mode != "pipeline" and args.vlm == "off":
         parser.error("--vlm off only applies to --mode pipeline (ai and textlayer never call the VLM)")
 
+    if args.masters is not None and args.mode == "ai":
+        parser.error("--masters only applies to --mode textlayer/pipeline (ai mode never calls the Node CLI)")
+
+    if args.masters is None:
+        args.masters = "on" if MASTERS_JSON.is_file() else "off"
+
     if args.mode == "ai":
         predictions_by_source, ground_truth = run_ai_mode()
     elif args.mode == "textlayer":
-        predictions_by_source, ground_truth = run_textlayer_mode()
+        predictions_by_source, ground_truth = run_textlayer_mode(masters=args.masters)
     else:
-        predictions_by_source, ground_truth = run_pipeline_mode(vlm=args.vlm)
+        predictions_by_source, ground_truth = run_pipeline_mode(vlm=args.vlm, masters=args.masters)
 
     field_results, conflicts, details = score_labels(predictions_by_source, ground_truth)
     summary = aggregate(field_results)
@@ -995,17 +1065,24 @@ def main():
     new_metric = aggregate_new_metric(new_metric_results)
     fabrication = compute_fabrication(predictions_by_source, ground_truth)
 
-    # A pipeline run's own run file is suffixed by its --vlm value so an
-    # "off" run never clobbers the "on" run's file (or vice versa) — both
-    # need to survive on disk for eval/diff.py to compare them. "on" keeps
-    # the original unsuffixed pipeline.json name for backward compatibility
-    # with diff.py's existing --mode pipeline usage (Step 1).
-    run_key = args.mode if not (args.mode == "pipeline" and args.vlm == "off") else "pipeline-vlm-off"
+    # A run file is suffixed by whichever of --vlm/--masters were run
+    # non-default, so no combination ever clobbers another's file on disk —
+    # every one needs to survive for eval/diff.py and eval/ceiling.py to
+    # compare them. The all-default combination (vlm on, masters off) keeps
+    # the original unsuffixed <mode>.json name for backward compatibility
+    # with diff.py's/ceiling.py's existing usage (Steps 1-2).
+    suffix_parts = []
+    if args.mode == "pipeline" and args.vlm == "off":
+        suffix_parts.append("vlm-off")
+    if args.masters == "on":
+        suffix_parts.append("masters-on")
+    run_key = args.mode if not suffix_parts else f"{args.mode}-{'-'.join(suffix_parts)}"
     RUNS_DIR.mkdir(parents=True, exist_ok=True)
     run_path = RUNS_DIR / f"{run_key}.json"
     run_path.write_text(json.dumps({
         "mode": args.mode,
         "vlm": args.vlm if args.mode == "pipeline" else None,
+        "masters": args.masters if args.mode != "ai" else None,
         "summary": summary,
         "conflicts": conflicts,
         "details": details,
@@ -1014,7 +1091,12 @@ def main():
         "fabrication": fabrication,
     }, indent=2, ensure_ascii=False), encoding="utf-8")
 
-    mode_label = f"{args.mode} (vlm {args.vlm})" if args.mode == "pipeline" else args.mode
+    if args.mode == "pipeline":
+        mode_label = f"{args.mode} (vlm {args.vlm}, masters {args.masters})"
+    elif args.mode == "textlayer":
+        mode_label = f"{args.mode} (masters {args.masters})"
+    else:
+        mode_label = args.mode
     write_results_md(
         mode_label, summary, conflicts, label_count=len(ground_truth),
         by_source=by_source, new_metric=new_metric, fabrication=fabrication

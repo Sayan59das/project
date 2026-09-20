@@ -527,6 +527,20 @@ function extractFssaiNumber(text: string): string {
 // one.
 export const PRODUCT_FORM_WORDS = 'gummies|gummy|capsules?|tablets?|softgels?|sachets?|sticks?|pieces?|units?|count|ct\\.?';
 const PACKAGE_SIZE_PATTERN = new RegExp(`\\b(\\d{1,4})\\s*(${PRODUCT_FORM_WORDS})\\b`, 'gi');
+// Step 7 follow-up (accuracy plan): a real, confirmed pattern across 16 of
+// 45 labels in a full pipeline run (Iron IRN74-1.pdf, HSN IRN75-1.pdf, PMS
+// IRN71-1.pdf, and more) -- the front-of-pack count badge is a circular/
+// stylised graphic whose OCR reading order sometimes comes out
+// word-BEFORE-number ("GUMMIES\n30", or jumbled with nearby marketing
+// text as "Gummies 30 Tiredness Helps Reduce") instead of the number-first
+// shape PACKAGE_SIZE_PATTERN above expects. Every one of those 16 labels
+// fell through to the Net Content declaration instead ("30 N" where ground
+// truth wants "30 Gummies") because the badge simply never matched in
+// either direction. Same real badge, same real count -- just read in the
+// other order. Tried strictly AFTER the number-first pattern (see
+// extractPackageSize), never instead of it: the number-first shape is
+// already tuned and dominant; this only catches what it doesn't.
+const PACKAGE_SIZE_PATTERN_REVERSED = new RegExp(`\\b(${PRODUCT_FORM_WORDS})\\s*(\\d{1,4})\\b`, 'gi');
 // Anything indicating the number is a per-serving amount, not the total
 // pack count — "Serving Size: 1 Gummy" must never be read as packageSize.
 // Checked against the text on the SAME LINE before the number, and the one
@@ -621,6 +635,78 @@ function servingCountMathTotal(text: string): number | null {
   return servingsPerContainer * perServing;
 }
 
+// The shared per-candidate logic for a badge match, regardless of which
+// regex (number-first or word-first) found it: the same guards, the same
+// stale-shared-template conflict check, the same reconstruction. Returns
+// the packageSize value to use, or null to keep scanning for the next
+// candidate (a rejected match is not a dead end -- another one later in
+// the text may still be the real badge).
+function tryPackageSizeMatch(
+  text: string,
+  matchStart: number,
+  matchEnd: number,
+  matchText: string,
+  count: string,
+  word: string,
+  options: { requireNetContentAgreement?: boolean } = {}
+): string | null {
+  if (isPrecededByServingContext(text, matchStart)) {
+    debugLog(`packageSize: rejected "${count}" from "${matchText.trim()}" — immediately follows serving-size/dosage wording.`);
+    return null;
+  }
+  if (isFollowedByDosageWording(text, matchEnd)) {
+    debugLog(`packageSize: rejected "${count}" from "${matchText.trim()}" — followed by dosage wording ("daily"/"per day"/...), a per-day dose, not the total pack count.`);
+    return null;
+  }
+  // Before trusting the badge number, check whether it's actually
+  // contradicted by two independent back-panel signals agreeing with
+  // each other (see servingCountMathTotal's own comment above) — a real,
+  // narrow exception to "badge wins", not a reordering of the general
+  // rule.
+  const badgeCount = Number(count);
+  const netContentForConflictCheck = text.match(NET_CONTENT_COUNT_PATTERN);
+  const netContentCount = netContentForConflictCheck ? Number(netContentForConflictCheck[1]) : null;
+  if (netContentCount !== null && netContentCount !== badgeCount) {
+    // The word-then-number shape is new and unproven (unlike the
+    // number-first pattern, whose "badge wins even on disagreement" policy
+    // was already validated across the full 45-label set) — confirmed on a
+    // real fixture (chyawanprash-gummies.pdf) that "GUMMIES" can sit right
+    // before an UNRELATED number from surrounding draw-order text ("...40 +
+    // Herbs) GUMMIES 60 NUTRACEUTICAL", nothing to do with the real "30 N"
+    // pack count) — and that this specific fixture's OWN serving-count math
+    // (1 Gummy x 30 servings) corroborates Net Content's 30, which would
+    // otherwise trip the very next override below and "fix" the coincidence
+    // into a wrong answer instead of rejecting it outright. So for this
+    // shape, ANY disagreement with Net Content is untrusted, corroborated
+    // or not — every one of the 16 real labels this pattern exists for has
+    // the two numbers agree in the first place, so this costs nothing there.
+    if (options.requireNetContentAgreement) {
+      debugLog(
+        `packageSize: rejected word-then-number "${word} ${count}" — conflicts with Net Content ` +
+          `(${netContentCount}); this shape is only trusted when it agrees with Net Content.`
+      );
+      return null;
+    }
+    const corroboratedTotal = servingCountMathTotal(text);
+    if (corroboratedTotal !== null && corroboratedTotal === netContentCount) {
+      const corroboratedValue = `${corroboratedTotal} ${word}`;
+      debugLog(
+        `packageSize: badge "${count} ${word}" contradicted by Net Content ` +
+          `(${netContentCount}) AND serving-count math (${corroboratedTotal}) agreeing with each ` +
+          `other — using "${corroboratedValue}" instead of the badge.`
+      );
+      return corroboratedValue;
+    }
+  }
+
+  // Reconstructed as "<number> <unit>" rather than returning the match
+  // verbatim, so irregular OCR spacing ("30Gummies", "30  Gummies") still
+  // normalizes to one space, the same shape the ground truth uses.
+  const value = `${count} ${word}`;
+  debugLog(`packageSize: matched "${value}" from "${matchText.trim()}".`);
+  return value;
+}
+
 function extractPackageSize(text: string): string {
   // Step 5 follow-up (accuracy plan): tried BEFORE the Net Content
   // declaration below, reversing the original Step 5.1 order. Real
@@ -641,41 +727,26 @@ function extractPackageSize(text: string): string {
   const re = new RegExp(PACKAGE_SIZE_PATTERN);
   let match: RegExpExecArray | null;
   while ((match = re.exec(text))) {
-    if (isPrecededByServingContext(text, match.index)) {
-      debugLog(`packageSize: rejected "${match[1]}" from "${match[0].trim()}" — immediately follows serving-size/dosage wording.`);
-      continue;
-    }
-    if (isFollowedByDosageWording(text, match.index + match[0].length)) {
-      debugLog(`packageSize: rejected "${match[1]}" from "${match[0].trim()}" — followed by dosage wording ("daily"/"per day"/...), a per-day dose, not the total pack count.`);
-      continue;
-    }
-    // Before trusting the badge number, check whether it's actually
-    // contradicted by two independent back-panel signals agreeing with
-    // each other (see servingCountMathTotal's own comment above) — a real,
-    // narrow exception to "badge wins", not a reordering of the general
-    // rule.
-    const badgeCount = Number(match[1]);
-    const netContentForConflictCheck = text.match(NET_CONTENT_COUNT_PATTERN);
-    const netContentCount = netContentForConflictCheck ? Number(netContentForConflictCheck[1]) : null;
-    if (netContentCount !== null && netContentCount !== badgeCount) {
-      const corroboratedTotal = servingCountMathTotal(text);
-      if (corroboratedTotal !== null && corroboratedTotal === netContentCount) {
-        const corroboratedValue = `${corroboratedTotal} ${match[2]}`;
-        debugLog(
-          `packageSize: badge "${match[1]} ${match[2]}" contradicted by Net Content ` +
-            `(${netContentCount}) AND serving-count math (${corroboratedTotal}) agreeing with each ` +
-            `other — using "${corroboratedValue}" instead of the badge.`
-        );
-        return corroboratedValue;
-      }
-    }
+    const result = tryPackageSizeMatch(text, match.index, match.index + match[0].length, match[0], match[1], match[2]);
+    if (result !== null) return result;
+  }
 
-    // Reconstructed as "<number> <unit>" rather than returning match[0]
-    // verbatim, so irregular OCR spacing ("30Gummies", "30  Gummies")
-    // still normalizes to one space, the same shape the ground truth uses.
-    const value = `${match[1]} ${match[2]}`;
-    debugLog(`packageSize: matched "${value}" from "${match[0].trim()}".`);
-    return value;
+  // Word-then-number badge shape (see PACKAGE_SIZE_PATTERN_REVERSED's own
+  // comment) — tried only after the number-first pattern above has fully
+  // exhausted itself, never instead of it.
+  const reReversed = new RegExp(PACKAGE_SIZE_PATTERN_REVERSED);
+  let reversedMatch: RegExpExecArray | null;
+  while ((reversedMatch = reReversed.exec(text))) {
+    const result = tryPackageSizeMatch(
+      text,
+      reversedMatch.index,
+      reversedMatch.index + reversedMatch[0].length,
+      reversedMatch[0],
+      reversedMatch[2],
+      reversedMatch[1],
+      { requireNetContentAgreement: true }
+    );
+    if (result !== null) return result;
   }
 
   // Falls back to the Net Content declaration only when no form-word

@@ -12,11 +12,14 @@ import {
   extractNutritionTableFromPanels,
   ocrWordsToTextSpans,
   extractNutritionTableFromOcrWords,
+  ppOcrLinesToTextSpans,
+  extractNutritionTableFromPpOcrLines,
   type TextLine,
 } from '../services/textLayerGeometry.service';
 import { extractTextSpans } from '../services/pdf.service';
 import type { TextSpan } from '../services/pdf.service';
 import type { OcrWord } from '../services/tesseract.service';
+import type { OcrLine } from '../services/paddleOcr.service';
 
 const FIXTURES = path.join(__dirname, 'fixtures');
 const load = (name: string) => readFileSync(path.join(FIXTURES, name));
@@ -332,6 +335,156 @@ test('extractNutritionTableFromPanels: two extra columns (e.g. Kids/Teens) are l
   assert.deepEqual(result, {
     Iron: '13 mg',
   });
+});
+
+// Step 6-follow-up (accuracy plan): a real, different multi-column shape
+// found on the Calcimax family of labels (Calcimax Pack 30/60, Final
+// New-Calcimax) -- a genuinely two-value table, not one value with an
+// extra %DV column. Each row prints a Kids dose AND an Adults dose side
+// by side, each with its own %RDA figure: real cells (via
+// splitLineIntoCells on the label's actual geometry) look like
+// ["Elemental Calcium", "125 mg", "19.50", "250 mg", "25.00"] -- five
+// cells, not the three the single-extra-column case above handles.
+// Distinguished safely from a %DV-style extra column (which always
+// prints a literal "%" in its own cell, e.g. "100%"/"50%" above) by
+// requiring the middle/last cells to be BARE numbers or "#" (the real
+// label's own footnote symbol for "RDA not established") -- confirmed
+// against a second, unrelated product (CALRIO Gummies) that prints a
+// genuinely different three-group shape (Children/Teens/Adults, one
+// shared value with three "%"-suffixed figures) and must NOT trigger
+// this path; its own percentage cells all carry a literal "%" or "<",
+// so the bare-number gate rejects them and the row falls back to the
+// existing single-value behavior, unchanged.
+test('extractNutritionTableFromPanels: a two-value Kids/Adults row is combined, not just the first value kept', () => {
+  const allSpans = [
+    span({ text: 'Nutritional Information', x: 0, y: 200, width: 400, fontSize: 8 }),
+    span({ text: 'Elemental Calcium', x: 0, y: 188, width: 90, fontSize: 8 }),
+    span({ text: '125 mg', x: 150, y: 188, width: 50, fontSize: 8 }),
+    span({ text: '19.50', x: 220, y: 188, width: 40, fontSize: 8 }),
+    span({ text: '250 mg', x: 280, y: 188, width: 50, fontSize: 8 }),
+    span({ text: '25.00', x: 350, y: 188, width: 40, fontSize: 8 }),
+  ];
+  const panels = segmentPanels(allSpans);
+  const result = extractNutritionTableFromPanels(panels);
+
+  assert.deepEqual(result, {
+    'Elemental Calcium': 'Kids: 125 mg (19.50% RDA); Adults: 250 mg (25.00% RDA)',
+  });
+});
+
+test('extractNutritionTableFromPanels: a Kids/Adults row with no established RDA (the "#" footnote) omits the percentage, not "(#% RDA)"', () => {
+  const allSpans = [
+    span({ text: 'Nutritional Information', x: 0, y: 200, width: 400, fontSize: 8 }),
+    span({ text: 'Total Sugars', x: 0, y: 188, width: 70, fontSize: 8 }),
+    span({ text: '0.33 g', x: 150, y: 188, width: 50, fontSize: 8 }),
+    span({ text: '#', x: 220, y: 188, width: 20, fontSize: 8 }),
+    span({ text: '0.66 g', x: 280, y: 188, width: 50, fontSize: 8 }),
+    span({ text: '#', x: 350, y: 188, width: 20, fontSize: 8 }),
+  ];
+  const panels = segmentPanels(allSpans);
+  const result = extractNutritionTableFromPanels(panels);
+
+  assert.deepEqual(result, {
+    'Total Sugars': 'Kids: 0.33 g; Adults: 0.66 g',
+  });
+});
+
+test('extractNutritionTableFromPanels: a Kids/Adults row where a trailing unrelated panel bled onto the same line is unaffected', () => {
+  // Real shape (Calcimax Pack 30 IRN168-2.pdf): a warning banner from a
+  // different part of the artwork ("NOT FOR MEDICINAL USE.") shares this
+  // row's baseline and lands as a sixth cell after a wide gap -- same
+  // "extra trailing cell gets ignored" rule already applied elsewhere in
+  // this function, just confirmed for the six-cell case here too.
+  const allSpans = [
+    span({ text: 'Nutritional Information', x: 0, y: 200, width: 400, fontSize: 8 }),
+    span({ text: 'Elemental Calcium', x: 0, y: 188, width: 90, fontSize: 8 }),
+    span({ text: '125 mg', x: 150, y: 188, width: 50, fontSize: 8 }),
+    span({ text: '19.50', x: 220, y: 188, width: 40, fontSize: 8 }),
+    span({ text: '250 mg', x: 280, y: 188, width: 50, fontSize: 8 }),
+    span({ text: '25.00', x: 350, y: 188, width: 40, fontSize: 8 }),
+    span({ text: 'NOT FOR MEDICINAL USE.', x: 405, y: 188, width: 120, fontSize: 8 }),
+  ];
+  const panels = segmentPanels(allSpans);
+  const result = extractNutritionTableFromPanels(panels);
+
+  assert.deepEqual(result, {
+    'Elemental Calcium': 'Kids: 125 mg (19.50% RDA); Adults: 250 mg (25.00% RDA)',
+  });
+});
+
+// Real shape (CALRIO Gummies (2).pdf): ONE value shared by three age
+// groups, each column repeating the same "%"-suffixed figure because that
+// nutrient's percentage doesn't differ by age. The reviewed ground truth
+// records exactly one figure for such a row ("12 kcal (<0.6% DV)"), so
+// identical columns collapse to the same shape a single column produces --
+// they are one fact printed three times, not three facts. This must not be
+// confused with the two-value Kids/Adults shape above (whose own gate
+// requires BARE numbers, which "<0.6%" is not).
+test('extractNutritionTableFromPanels: three identical %-columns collapse to one "(<value> DV)", not three facts', () => {
+  const allSpans = [
+    span({ text: 'Nutritional Information', x: 0, y: 200, width: 400, fontSize: 8 }),
+    span({ text: 'Calories', x: 0, y: 188, width: 60, fontSize: 8 }),
+    span({ text: '12 kcal', x: 150, y: 188, width: 50, fontSize: 8 }),
+    span({ text: '<0.6%', x: 220, y: 188, width: 40, fontSize: 8 }),
+    span({ text: '<0.6%', x: 280, y: 188, width: 40, fontSize: 8 }),
+    span({ text: '<0.6%', x: 340, y: 188, width: 40, fontSize: 8 }),
+  ];
+  const panels = segmentPanels(allSpans);
+  const result = extractNutritionTableFromPanels(panels);
+
+  assert.deepEqual(result, {
+    Calories: '12 kcal (<0.6% DV)',
+  });
+});
+
+test('extractNutritionTableFromPanels: two identical %-columns collapse too (the real Kids/Teens two-column labels)', () => {
+  // Real shape (Iron IRN121-1.pdf): ["Energy", "16 kcal", "<1%", "<1%"]
+  // across its Kids and Teens columns; ground truth is "16 kcal (<1% DV)".
+  const allSpans = [
+    span({ text: 'Nutritional Information', x: 0, y: 200, width: 400, fontSize: 8 }),
+    span({ text: 'Energy', x: 0, y: 188, width: 50, fontSize: 8 }),
+    span({ text: '16 kcal', x: 150, y: 188, width: 50, fontSize: 8 }),
+    span({ text: '<1%', x: 220, y: 188, width: 30, fontSize: 8 }),
+    span({ text: '<1%', x: 270, y: 188, width: 30, fontSize: 8 }),
+  ];
+  const panels = segmentPanels(allSpans);
+  const result = extractNutritionTableFromPanels(panels);
+
+  assert.deepEqual(result, { Energy: '16 kcal (<1% DV)' });
+});
+
+test('extractNutritionTableFromPanels: footnote-marker columns ("*") mean no percentage at all, not "(* DV)"', () => {
+  // Real shape (Iron IRN121-1.pdf): ["Total Carbohydrate", "4.4 g", "*", "*"]
+  // -- the label's own "RDA not established" marker; ground truth is the
+  // bare value, "4.4 g".
+  const allSpans = [
+    span({ text: 'Nutritional Information', x: 0, y: 200, width: 400, fontSize: 8 }),
+    span({ text: 'Total Carbohydrate', x: 0, y: 188, width: 90, fontSize: 8 }),
+    span({ text: '4.4 g', x: 150, y: 188, width: 50, fontSize: 8 }),
+    span({ text: '*', x: 220, y: 188, width: 20, fontSize: 8 }),
+    span({ text: '*', x: 270, y: 188, width: 20, fontSize: 8 }),
+  ];
+  const panels = segmentPanels(allSpans);
+  const result = extractNutritionTableFromPanels(panels);
+
+  assert.deepEqual(result, { 'Total Carbohydrate': '4.4 g' });
+});
+
+test('extractNutritionTableFromPanels: a stray percentage past unrelated trailing text is never reached across to', () => {
+  // The scan stops at the first cell that is neither a percentage nor a
+  // footnote marker, so a percentage belonging to some other panel that
+  // happens to share this baseline can't be attached to this row.
+  const allSpans = [
+    span({ text: 'Nutritional Information', x: 0, y: 200, width: 460, fontSize: 8 }),
+    span({ text: 'Protein', x: 0, y: 188, width: 50, fontSize: 8 }),
+    span({ text: '0.5 g', x: 150, y: 188, width: 50, fontSize: 8 }),
+    span({ text: 'Keep out of reach of children', x: 220, y: 188, width: 150, fontSize: 8 }),
+    span({ text: '55%', x: 400, y: 188, width: 30, fontSize: 8 }),
+  ];
+  const panels = segmentPanels(allSpans);
+  const result = extractNutritionTableFromPanels(panels);
+
+  assert.deepEqual(result, { Protein: '0.5 g' });
 });
 
 test('extractNutritionTableFromPanels: stop at Ingredients', () => {
@@ -663,5 +816,70 @@ test('extractNutritionTableFromOcrWords: recovers a nutrition table from OCR wor
     Energy: '12 kcal',
     Protein: '0.5 g',
     'Vitamin C': '40 mg (66% DV)',
+  });
+});
+
+function ppOcrLine(props: { text: string; x0: number; y0: number; x1: number; y1: number; confidence?: number }): OcrLine {
+  return {
+    text: props.text,
+    box: { x0: props.x0, y0: props.y0, x1: props.x1, y1: props.y1 },
+    confidence: props.confidence ?? 0.9,
+  };
+}
+
+test('ppOcrLinesToTextSpans: pixel (y-down) line boxes convert to PDF-style (y-up) spans, same as ocrWordsToTextSpans', () => {
+  const lines = [
+    ppOcrLine({ text: 'Top', x0: 10, y0: 20, x1: 40, y1: 32 }),
+    ppOcrLine({ text: 'Bottom', x0: 10, y0: 200, x1: 60, y1: 212 }),
+  ];
+  const spans = ppOcrLinesToTextSpans(lines);
+  const top = spans.find((s) => s.text === 'Top')!;
+  const bottom = spans.find((s) => s.text === 'Bottom')!;
+  assert.ok(top.y > bottom.y, 'the line nearer the top of the image should have the larger (PDF-style) y');
+  assert.equal(top.rotation, 0);
+  assert.equal(top.width, 30);
+});
+
+test('extractNutritionTableFromPpOcrLines: recovers a table when PP-OCR reads each row as ONE contiguous line (the real, confirmed shape -- see ceiling.py)', () => {
+  // Step 1 of the accuracy2 plan confirmed on real label dumps that a PP-OCR
+  // line reads a whole nutrition row -- name, value, and %DV columns -- as
+  // one contiguous string ("Energy 16 kcal <1% <1%"), not split into
+  // separate name/value regions. A single-span "line" here exercises
+  // extractNutritionTableFromPanels' existing single-cell regex path, the
+  // same one a PDF text layer's own single-run rows already go through --
+  // no new table-parsing logic, just a new way to reach the tested one.
+  const lines = [
+    ppOcrLine({ text: 'Nutrition Information', x0: 20, y0: 40, x1: 220, y1: 55 }),
+    ppOcrLine({ text: 'Energy 16 kcal', x0: 20, y0: 65, x1: 150, y1: 80 }),
+    ppOcrLine({ text: 'Protein 0.5 g', x0: 20, y0: 85, x1: 150, y1: 100 }),
+    ppOcrLine({ text: 'Vitamin C 40 mg 66%', x0: 20, y0: 105, x1: 170, y1: 120 }),
+  ];
+  const result = extractNutritionTableFromPpOcrLines(lines);
+
+  assert.deepEqual(result, {
+    Energy: '16 kcal',
+    Protein: '0.5 g',
+    'Vitamin C': '40 mg (66% DV)',
+  });
+});
+
+test('extractNutritionTableFromPpOcrLines: also recovers a table when PP-OCR DOES split name/value into separate regions on the same row', () => {
+  // Not every label's visual gutter is narrow enough for PP-OCR's text
+  // detector to keep as one region -- when it does split, each piece lands
+  // as its own line at the same baseline, and groupSpansIntoLines (the same
+  // baseline-proximity grouping the Tesseract-word path already relies on)
+  // rejoins them into one row before the cell-split regex ever runs.
+  const lines = [
+    ppOcrLine({ text: 'Nutrition Information', x0: 20, y0: 40, x1: 220, y1: 55 }),
+    ppOcrLine({ text: 'Energy', x0: 20, y0: 60, x1: 70, y1: 72 }),
+    ppOcrLine({ text: '12 kcal', x0: 220, y0: 60, x1: 270, y1: 72 }),
+    ppOcrLine({ text: 'Protein', x0: 20, y0: 80, x1: 75, y1: 92 }),
+    ppOcrLine({ text: '0.5 g', x0: 220, y0: 80, x1: 255, y1: 92 }),
+  ];
+  const result = extractNutritionTableFromPpOcrLines(lines);
+
+  assert.deepEqual(result, {
+    Energy: '12 kcal',
+    Protein: '0.5 g',
   });
 });

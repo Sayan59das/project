@@ -1,5 +1,6 @@
 import type { TextSpan } from './pdf.service';
 import type { OcrWord } from './tesseract.service';
+import type { OcrLine } from './paddleOcr.service';
 
 export type TextLine = {
   page: number;
@@ -381,6 +382,42 @@ export function extractNutritionTableFromOcrWords(words: readonly OcrWord[], pag
   return extractNutritionTableFromPanels([panel]);
 }
 
+// Same adaptation as ocrWordsToTextSpans, for PP-OCR's line-level detections
+// (accuracy2 plan Step 3) rather than Tesseract's word-level boxes. PP-OCR
+// (recognizeLines, paddleOcr.service.ts) detects contiguous TEXT REGIONS, not
+// individual words -- confirmed on real label dumps (see ceiling.py's own
+// comment) that a genuine nutrition row usually comes back as ONE line
+// ("Energy 16 kcal <1% <1%"), though a wide enough visual gutter can still
+// split name and value into two regions at the same baseline. Both shapes
+// are handled downstream: groupSpansIntoLines rejoins same-baseline regions
+// into one row (the split case), and extractNutritionTableFromPanels' own
+// single-cell regex already parses a whole "name value %" run as one row
+// (the contiguous case) -- this adapter exists only to reuse both untouched.
+export function ppOcrLinesToTextSpans(lines: readonly OcrLine[], page: number = 1): TextSpan[] {
+  return lines
+    .filter((line) => line.text.trim().length > 0)
+    .map((line) => ({
+      page,
+      text: line.text,
+      x: line.box.x0,
+      y: -line.box.y0,
+      width: line.box.x1 - line.box.x0,
+      height: line.box.y1 - line.box.y0,
+      fontSize: line.box.y1 - line.box.y0,
+      rotation: 0,
+      fontName: 'ppocr',
+    }));
+}
+
+// Convenience wrapper mirroring extractNutritionTableFromOcrWords, for
+// PP-OCR's line-level output instead of Tesseract's word-level boxes.
+export function extractNutritionTableFromPpOcrLines(lines: readonly OcrLine[], page: number = 1): Record<string, string> {
+  const spans = ppOcrLinesToTextSpans(lines, page);
+  const textLines = groupSpansIntoLines(spans);
+  const panel: Panel = { page, rotation: 0, lines: textLines };
+  return extractNutritionTableFromPanels([panel]);
+}
+
 // Extracts nutrient name -> printed value from the "Nutrition(al) Information" block of one label.
 // Walks panels in order and each panel's lines in order to find the header line (first line matching
 // the nutrition header regex). Candidate rows are lines following the header within the same panel,
@@ -504,23 +541,94 @@ export function extractNutritionTableFromPanels(panels: readonly Panel[]): Recor
 
     let name: string | null = null;
     let value: string | null = null;
+    // Set only by the Kids/Adults path below: its composed value ("Kids:
+    // 125 mg (19.50% RDA); Adults: ...") deliberately doesn't start with a
+    // digit, so it can't pass -- and doesn't need to pass -- the generic
+    // "value looks like a plain nutrient reading" gates just below, which
+    // exist to catch footnote/prose sentences a plain value/name never
+    // needs protecting against here: val1/val2 and pct1/pct2 were already
+    // validated against their own strict, narrow shapes inside that branch.
+    let composedTwoGroupValue = false;
 
     if (cells.length >= 2) {
-      // Multi-cell row: name = cells[0], value = cells[1]. A single extra
-      // column (cells.length === 3) is unambiguously that same value's
-      // %DV/%RDA figure -- kept, appended as "(<value> DV)" rather than
-      // silently discarded (Step 6-prep accuracy-plan fix; ground-truth
-      // review found real rows where this was genuinely printed and
-      // recorded, e.g. "170 mg (100% DV)"). Two or more extra columns
-      // (e.g. separate Kids/Teens figures) are left dropped as before --
-      // which one belongs to which age group isn't recoverable from the
-      // row alone, a different, unattempted piece of work.
+      // Multi-cell row: name = cells[0], value = cells[1]. Any %DV/%RDA
+      // columns after that are handled by the two branches below.
       name = cells[0].trim();
       value = cells[1];
-      if (cells.length === 3) {
-        const extraColumn = cells[2].trim();
-        if (/^[<>≤≥~]?\d[\d.,]*\s*%$/.test(extraColumn)) {
-          value = `${cells[1]} (${extraColumn} DV)`;
+      if (cells.length === 5 || cells.length === 6) {
+        // Step 6-follow-up (accuracy plan): a real, DIFFERENT multi-column
+        // shape from the single-extra-%DV-column case above -- two
+        // genuinely different values (a Kids dose and an Adults dose),
+        // each with its own %RDA figure, not one value with an extra %DV
+        // column (real cells, Calcimax Pack 30/60 IRN168/169-2.pdf:
+        // ["Elemental Calcium", "125 mg", "19.50", "250 mg", "25.00"]).
+        // cells.length === 6 is the same shape with a sixth, unrelated
+        // trailing cell (a warning banner from a different part of the
+        // artwork that shares this row's baseline) -- ignored, same
+        // "extra trailing cell is noise" rule as everywhere else here.
+        //
+        // Distinguishing this from a real %DV-style extra column (or from
+        // an unrelated three-group shape, e.g. Children/Teens/Adults
+        // sharing one value, confirmed on a different real product,
+        // CALRIO Gummies) relies on one safe, generic tell: this label's
+        // own %RDA cells are printed as BARE numbers or "#" (its own
+        // footnote symbol for "RDA not established" -- ground truth then
+        // omits the percentage entirely for that side), never with a
+        // literal "%" or comparison operator. A genuine %DV/%RDA column
+        // always carries one of those ("100%", "<0.6%"), so requiring
+        // their absence here is what keeps this from ever firing on that
+        // different shape.
+        const pctToken = /^\d+(\.\d+)?$/;
+        const val1 = cells[1];
+        const pct1 = cells[2].trim();
+        const val2 = cells[3];
+        const pct2 = cells[4].trim();
+        const isPct = (token: string) => pctToken.test(token) || token === '#';
+        if (valueStartsWithNumberRegex.test(val1) && valueStartsWithNumberRegex.test(val2) && isPct(pct1) && isPct(pct2)) {
+          const withPct = (val: string, pct: string) => {
+            const pctNum = Number(pct);
+            return pct !== '#' && Number.isFinite(pctNum) && pctNum > 0 ? `${val} (${pct}% RDA)` : val;
+          };
+          value = `Kids: ${withPct(val1, pct1)}; Adults: ${withPct(val2, pct2)}`;
+          composedTwoGroupValue = true;
+        }
+      }
+
+      if (!composedTwoGroupValue && cells.length >= 3) {
+        // The %DV/%RDA column(s) after the value. A label that breaks its
+        // percentages out per age group repeats the SAME figure in every
+        // column whenever that nutrient's percentage doesn't actually
+        // differ by age -- real, confirmed on several products: Iron
+        // IRN121-1 prints ["Energy", "16 kcal", "<1%", "<1%"] across its
+        // Kids and Teens columns and the reviewed ground truth records
+        // exactly one figure, "16 kcal (<1% DV)"; CALRIO Gummies does the
+        // same across three columns (Children/Teens/Adults) for every row
+        // whose percentage is age-independent. So identical columns are
+        // ONE fact printed repeatedly, not several facts, and collapse to
+        // the same "(<value> DV)" shape a single column already produced.
+        //
+        // Columns that genuinely DIFFER (Iron's own "170 mg | 100% | 50%")
+        // are still left dropped: ground truth spells those out with the
+        // age-group names read off the header row, and which name belongs
+        // to which column is a separate, unattempted piece of work.
+        //
+        // Scanning stops at the first cell that is neither a percentage
+        // nor a footnote marker, rather than filtering the whole row:
+        // a nutrition row's own columns sit together, and anything past
+        // them is text from an unrelated panel that shares this baseline
+        // (a warning banner, an RDA footnote sentence) which must never
+        // be reached across to find a stray percentage.
+        const percentCell = /^[<>≤≥~]?\d[\d.,]*\s*%$/;
+        const footnoteCell = /^[*#†‡^~-]+$/;
+        const percentages: string[] = [];
+        for (const raw of cells.slice(2)) {
+          const cell = raw.trim();
+          if (cell.length === 0 || footnoteCell.test(cell)) continue;
+          if (!percentCell.test(cell)) break;
+          percentages.push(cell);
+        }
+        if (percentages.length > 0 && new Set(percentages).size === 1) {
+          value = `${cells[1]} (${percentages[0]} DV)`;
         }
       }
     } else if (cells.length === 1) {
@@ -532,8 +640,16 @@ export function extractNutritionTableFromPanels(panels: readonly Panel[]): Recor
       }
     }
 
-    // Skip if value does not START with a number (with optional comparison operator) or name is empty.
-    if (name && value && valueStartsWithNumberRegex.test(value)) {
+    if (composedTwoGroupValue) {
+      // Already fully validated inside its own branch -- skip the generic
+      // gates below, which exist to reject prose and would reject this
+      // value for the wrong reason (it doesn't start with a digit; it
+      // starts with the word "Kids").
+      if (name && value && !(name in result)) {
+        result[name] = value;
+      }
+    } else if (name && value && valueStartsWithNumberRegex.test(value)) {
+      // Skip if value does not START with a number (with optional comparison operator) or name is empty.
       // Strip trailing %-column tokens BEFORE the shape check below, not
       // after: a genuine value like "7.5 kcal <0.5% <0.5% <0.5%" reads as
       // a multi-word sentence until the stray %RDA columns are gone, at

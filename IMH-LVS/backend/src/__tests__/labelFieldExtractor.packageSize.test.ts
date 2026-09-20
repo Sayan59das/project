@@ -131,3 +131,73 @@ test('a badge/Net-Content number conflict with no serving-count math to corrobor
   const text = '10\nGUMMIES\nNet Content: 30 N';
   assert.equal(extractLabelFields(text).packageSize, '10 GUMMIES');
 });
+
+// Real, confirmed pattern (16 of 45 labels in a full pipeline run, e.g.
+// Iron IRN74-1.pdf, HSN IRN75-1.pdf, PMS IRN71-1.pdf): the front-of-pack
+// count badge is a circular/stylised graphic whose OCR reading order
+// sometimes comes out word-BEFORE-number ("GUMMIES\n30", or jumbled with
+// nearby marketing text as "Gummies 30 Tiredness Helps Reduce") rather
+// than the number-first shape every existing test above assumes. The
+// existing PACKAGE_SIZE_PATTERN only matches number-then-word, so on
+// these labels it fell through to the Net Content declaration every
+// time -- "30 N" where ground truth wants "30 Gummies". Same badge, same
+// real count, just read in the other order.
+test('a form-word badge printed word-then-number ("GUMMIES 30") is read the same as number-then-word', () => {
+  const text = 'Net Content: 30 N\nGUMMIES\n30\nHelps Reduce Tiredness';
+  assert.equal(extractLabelFields(text).packageSize, '30 GUMMIES');
+});
+
+test('word-then-number still rejects a per-serving dose, same guard as the number-first shape', () => {
+  const text = 'Serving Size:\nGummy 1\nNet Content: 30 N';
+  assert.equal(extractLabelFields(text).packageSize, '30 N');
+});
+
+test('word-then-number still rejects a daily-dosage instruction, same guard as the number-first shape', () => {
+  const text = 'Gummies 2 daily.\nNet Content: 60 N';
+  assert.equal(extractLabelFields(text).packageSize, '60 N');
+});
+
+test('number-then-word is still preferred over word-then-number when both somehow appear (the already-tuned shape stays primary)', () => {
+  const text = '30 Gummies\nSticks 12';
+  assert.equal(extractLabelFields(text).packageSize, '30 Gummies');
+});
+
+// Real, confirmed false positive (chyawanprash-gummies.pdf, part of
+// labels.extract.test.ts's own fixture set): "GUMMIES" can sit right
+// before an entirely UNRELATED number from surrounding draw-order text
+// ("...40 + Herbs) GUMMIES 60 NUTRACEUTICAL" -- nothing to do with the
+// label's real "Net Content: 30 N" pack count). Unlike the number-first
+// shape (already validated to win even on disagreement across the full
+// 45-label set), word-then-number is new and unproven, so it's only
+// trusted when its count agrees with Net Content -- ANY disagreement
+// falls through to Net Content instead, whether or not something else
+// happens to corroborate it (see the next test: this fixture's own real
+// serving-count math corroborates Net Content's 30 against the
+// coincidental "GUMMIES 60" — if this were allowed to take the same
+// corroboration-override path the number-first pattern uses, it would
+// "fix" the coincidence into "30 GUMMIES", the wrong reason to land on a
+// right-shaped answer for the wrong badge).
+test('word-then-number is REJECTED (not trusted) when it disagrees with Net Content, even with nothing else in play', () => {
+  const text = 'With Goodness Of Ayurvedic 40 + Herbs) GUMMIES 60 NUTRACEUTICAL\nNet Content: 30 N';
+  assert.equal(extractLabelFields(text).packageSize, '30 N');
+});
+
+test('word-then-number is REJECTED even when serving-count math happens to corroborate Net Content against it (the exact chyawanprash-gummies.pdf shape)', () => {
+  const text = [
+    'With Goodness Of Ayurvedic 40 + Herbs) GUMMIES 60 NUTRACEUTICAL',
+    'Serving Size: 1 Gummy',
+    'No. of Serving per container 30',
+    'Net Content: 30 N'
+  ].join('\n');
+  assert.equal(extractLabelFields(text).packageSize, '30 N');
+});
+
+test('word-then-number IS trusted when its count agrees with Net Content (the real shape all 16 confirmed labels have)', () => {
+  const text = 'Net Content: 30 N\nGUMMIES\n30\nHelps Reduce Tiredness';
+  assert.equal(extractLabelFields(text).packageSize, '30 GUMMIES');
+});
+
+test('word-then-number is trusted with no Net Content declared at all (nothing to disagree with)', () => {
+  const text = 'GUMMIES\n30\nHelps Reduce Tiredness';
+  assert.equal(extractLabelFields(text).packageSize, '30 GUMMIES');
+});

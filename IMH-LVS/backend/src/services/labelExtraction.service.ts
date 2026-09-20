@@ -47,6 +47,7 @@ import { extractMarketingCompanyAndAddressFromRegion } from './regionOcr.service
 import { recoverProductTitleFromRegion, type OcrSource } from './titleRegionOcr.service';
 import { recoverPackageSizeFromBadge } from './packageSizeOcr.service';
 import { ExtractedLabelFields, extractLabelFields, isGenericProductFormWord, setLabelFieldExtractorDebug } from './labelFieldExtractor.service';
+import { snapToMaster } from './masterSnap.service';
 import { extractColourTheme } from './colourTheme.service';
 import { looksLikeOcrGarbage, scrubPlaceholders } from './placeholderText.service';
 import { applyAiFallback } from './aiExtraction.service';
@@ -62,10 +63,17 @@ import {
   toReadingOrderText,
   extractNutritionTableFromPanels,
   extractNutritionTableFromOcrWords,
+  extractNutritionTableFromPpOcrLines,
   medianFontSize
 } from './textLayerGeometry.service';
 import { projectSpanToPixels, findOutlinedLines, planOcrStrips, dropStripEdgeLines, dedupeOverlappingLines, type OcrLineLike } from './outlinedText.service';
 import { isVlmEnabled, prepareImage, ollamaClient, type VlmImage, type VlmClient } from './ollamaVlm.service';
+import {
+  findNutritionPanelFromSpans,
+  findNutritionPanelFromWords,
+  padCropBox,
+  readNutritionTableFromCrop
+} from './nutritionCropReader.service';
 import { resolveDisplayRoles, type DisplayCandidateIn } from './displayRoleResolver.service';
 
 setLabelFieldExtractorDebug(env.labelExtractionDebug);
@@ -144,7 +152,8 @@ export type FieldSource =
   | 'package-size-ocr'
   | 'display-candidates'
   | 'vlm-role-resolution'
-  | 'vlm-fallback';
+  | 'vlm-fallback'
+  | 'master-snap';
 
 /**
  * Phase F (widened for Step 2): which pass produced this field's value, for
@@ -458,7 +467,8 @@ export function fillBlanksFrom(
 async function extractFieldsFromTextLayer(
   pdfBuffer: Buffer,
   textLayerText: string,
-  knownFlavours: readonly string[]
+  knownFlavours: readonly string[],
+  knownBrands: readonly string[] = []
 ): Promise<{
   orderedText: string;
   fields: ExtractedLabelFields;
@@ -504,10 +514,52 @@ async function extractFieldsFromTextLayer(
         }
       }
 
+      // Master-snap for brand (Step 2, accuracy2 plan). Once a real master
+      // list is loaded, this source's own by-source history is roughly 1
+      // correct / 13 wrong — a candidate that doesn't match anything in the
+      // client's real catalogue has no business filling the field, and one
+      // that does is snapped to the MASTER's own spelling (not the
+      // candidate's OCR-noisy text), tagged 'master-snap' below so two
+      // labels for the same brand always compare identically.
+      let flattenedBrandSnapped = false;
+      let orderedBrandSnapped = false;
+      if (knownBrands.length > 0) {
+        if (cleanedFlattenedFields.brand) {
+          const snap = snapToMaster(cleanedFlattenedFields.brand, knownBrands);
+          if (snap) {
+            cleanedFlattenedFields.brand = snap.value;
+            flattenedBrandSnapped = true;
+          } else {
+            debugLog(`brand "${cleanedFlattenedFields.brand}" does not snap to any master brand — blanking before fillBlanks`);
+            cleanedFlattenedFields.brand = '';
+          }
+        }
+        if (cleanedOrderedFields.brand) {
+          const snap = snapToMaster(cleanedOrderedFields.brand, knownBrands);
+          if (snap) {
+            cleanedOrderedFields.brand = snap.value;
+            orderedBrandSnapped = true;
+          } else {
+            cleanedOrderedFields.brand = '';
+          }
+        }
+      }
+
       const flattenedMeta = tagFilledFields(cleanedFlattenedFields, 'text-layer-flattened');
       const merged = fillBlanksFrom(cleanedFlattenedFields, cleanedOrderedFields, 'text-layer-reading-order', flattenedMeta);
       fields = merged.fields;
       fieldMeta = merged.meta;
+
+      // The merge above tags every field by WHICH PASS produced it, not
+      // whether that pass's value was grounded against a master -- override
+      // brand's own source afterward, to whichever pass's snapped value
+      // actually won the merge (flattened wins if non-empty; ordered only
+      // if it filled a blank left by flattened).
+      if (flattenedBrandSnapped && cleanedFlattenedFields.brand) {
+        fieldMeta.brand = { ...fieldMeta.brand, source: 'master-snap', needsReview: false };
+      } else if (orderedBrandSnapped && !cleanedFlattenedFields.brand && cleanedOrderedFields.brand) {
+        fieldMeta.brand = { ...fieldMeta.brand, source: 'master-snap', needsReview: false };
+      }
 
       // Extract nutrition table from the geometry structure (Task 5)
       const extractedTable = extractNutritionTableFromPanels(panels);
@@ -694,6 +746,8 @@ type FieldPass = {
   displayTextCandidates?: DisplayTextCandidate[];
   /** Phase F: fields this pass filled via VLM role-resolution rather than a direct read. Undefined when that step never ran. */
   fieldMeta?: Record<string, FieldMeta>;
+  /** The PDF's own text-layer spans, when one exists -- passed on so a later PP-OCR body-text recovery (Step 3) can strip-plan around real panel geometry instead of scanning blind. Empty on the text-layer-absent / image-upload path. */
+  spans?: TextSpan[];
   /**
    * The PDF's own flattened text-layer text (before any geometry-based
    * reordering), when one exists. `text` above is normally BETTER for
@@ -722,11 +776,26 @@ type FieldPass = {
 // text across neighbouring panels, which would hide the front panel's display text.
 // Returns top 8 ranked by height, since brand graphics are typically the
 // largest text on the page.
-async function recoverDisplayTextCandidates(
+type PpOcrPageScan = {
+  deduped: OcrLineLike[];
+  spanRects: ReturnType<typeof projectSpanToPixels>[];
+  occurrenceMap: Map<string, number>;
+};
+
+// The shared strip-based PP-OCR page scan (accuracy2 plan Step 3): plans
+// strips from text-layer panel geometry (or a blind full-width strip when
+// no spans exist), OCRs each strip, dedupes overlapping reads, and counts
+// occurrences. Two different consumers need exactly this same expensive
+// pass: recoverDisplayTextCandidates (the top OUTLINED lines, for brand/
+// product name) and recoverBodyTextViaPpOcr (EVERY line, for nutrition/
+// claims/ingredients -- the body text recoverDisplayTextCandidates itself
+// used to read and then simply discard, keeping only its own top 10).
+// Fail-soft like every OCR escalation in this module: null, never a throw.
+async function scanPageWithPpOcr(
   pageImage: Buffer,
   spans: readonly TextSpan[],
   dpi: number
-): Promise<DisplayTextCandidate[]> {
+): Promise<PpOcrPageScan | null> {
   try {
     // Compute image metadata once
     const metadata = await sharp(pageImage).metadata();
@@ -834,29 +903,68 @@ async function recoverDisplayTextCandidates(
       occurrenceMap.set(normalized, (occurrenceMap.get(normalized) ?? 0) + 1);
     }
 
-    // Filter to outlined lines: those that survived the segmentation logic
-    // (high confidence, consistent box structure, etc.)
-    const outlined = findOutlinedLines(deduped, spanRects);
-
-    // Return top 10 by height, with heights and confidence rounded for readability.
-    // Fragment removal plus headroom for two-line product names (e.g. "Sharp\nMind Plus").
-    return outlined.slice(0, 10).map((l) => {
-      const normalized = l.text.toLowerCase().replace(/\s+/g, ' ').trim();
-      return {
-        text: l.text,
-        heightPx: Math.round(l.box.y1 - l.box.y0),
-        confidence: Math.round(l.confidence * 100) / 100,
-        topPx: Math.round(l.box.y0),
-        occurrences: occurrenceMap.get(normalized) ?? 0
-      };
-    });
+    return { deduped, spanRects, occurrenceMap };
   } catch (error) {
     console.warn(
-      '[labelExtraction] display-text candidate recovery failed: ' +
+      '[labelExtraction] PP-OCR page scan failed: ' +
         (error instanceof Error ? error.message : String(error))
     );
-    return [];
+    return null;
   }
+}
+
+async function recoverDisplayTextCandidates(
+  pageImage: Buffer,
+  spans: readonly TextSpan[],
+  dpi: number
+): Promise<DisplayTextCandidate[]> {
+  const scan = await scanPageWithPpOcr(pageImage, spans, dpi);
+  if (!scan) return [];
+
+  // Filter to outlined lines: those that survived the segmentation logic
+  // (high confidence, consistent box structure, etc.)
+  const outlined = findOutlinedLines(scan.deduped, scan.spanRects);
+
+  // Return top 10 by height, with heights and confidence rounded for readability.
+  // Fragment removal plus headroom for two-line product names (e.g. "Sharp\nMind Plus").
+  return outlined.slice(0, 10).map((l) => {
+    const normalized = l.text.toLowerCase().replace(/\s+/g, ' ').trim();
+    return {
+      text: l.text,
+      heightPx: Math.round(l.box.y1 - l.box.y0),
+      confidence: Math.round(l.confidence * 100) / 100,
+      topPx: Math.round(l.box.y0),
+      occurrences: scan.occurrenceMap.get(normalized) ?? 0
+    };
+  });
+}
+
+// Step 3 of the accuracy2 plan: the body text recoverDisplayTextCandidates
+// already reads on every strip and then discards -- every nutrition row,
+// ingredient, and claim it saw, not just the top 10 outlined display lines.
+// Reading order is top-to-bottom then left-to-right (y0 then x0), the same
+// order a person reads a panel in; a genuine split-region row (name and
+// value as two separate PP-OCR detections at the same baseline) still
+// lands adjacent to itself in that order, which is what groupSpansIntoLines
+// downstream (extractNutritionTableFromPpOcrLines) needs to rejoin it.
+// Returns null (fail-soft) when the scan itself failed; an empty-but-real
+// scan (nothing detected) returns text: '' and no nutritionTable, which
+// callers treat as "nothing new to add," not an error.
+async function recoverBodyTextViaPpOcr(
+  pageImage: Buffer,
+  spans: readonly TextSpan[],
+  dpi: number
+): Promise<{ text: string; nutritionTable?: Record<string, string> } | null> {
+  const scan = await scanPageWithPpOcr(pageImage, spans, dpi);
+  if (!scan) return null;
+
+  const ordered = [...scan.deduped].sort((a, b) => a.box.y0 - b.box.y0 || a.box.x0 - b.box.x0);
+  const text = ordered.map((l) => l.text).join('\n');
+  const nutritionTable = extractNutritionTableFromPpOcrLines(ordered);
+  return {
+    text,
+    nutritionTable: Object.keys(nutritionTable).length > 0 ? nutritionTable : undefined
+  };
 }
 
 // A bare measurement/dimension value — never a brand name, but a real
@@ -982,7 +1090,7 @@ async function resolveBlankDisplayRoles(
   }
 }
 
-async function extractFieldsFromPdf(pdfBuffer: Buffer, knownFlavours: readonly string[]): Promise<FieldPass> {
+async function extractFieldsFromPdf(pdfBuffer: Buffer, knownFlavours: readonly string[], knownBrands: readonly string[] = []): Promise<FieldPass> {
   const { text: textLayerText } = await extractPdfText(pdfBuffer);
   debugLog(`PDF text layer (${textLayerText.length} chars):\n${textLayerText}`);
 
@@ -996,7 +1104,7 @@ async function extractFieldsFromPdf(pdfBuffer: Buffer, knownFlavours: readonly s
   let spans: TextSpan[] = [];
 
   if (textLayerUsable) {
-    const result = await extractFieldsFromTextLayer(pdfBuffer, textLayerText, knownFlavours);
+    const result = await extractFieldsFromTextLayer(pdfBuffer, textLayerText, knownFlavours, knownBrands);
     orderedText = result.orderedText;
     textLayerFields = result.fields;
     textLayerFieldMeta = result.fieldMeta;
@@ -1028,7 +1136,8 @@ async function extractFieldsFromPdf(pdfBuffer: Buffer, knownFlavours: readonly s
       pageImages: [],
       nutritionTable: recoveredNutrition,
       fieldMeta: recoveredNames.fieldMeta,
-      flattenedText: textLayerText
+      flattenedText: textLayerText,
+      spans
     };
   }
 
@@ -1047,7 +1156,8 @@ async function extractFieldsFromPdf(pdfBuffer: Buffer, knownFlavours: readonly s
       pageImages: [],
       nutritionTable,
       fieldMeta: textLayerFieldMeta,
-      flattenedText: textLayerText
+      flattenedText: textLayerText,
+      spans
     };
   }
 
@@ -1107,7 +1217,7 @@ async function extractFieldsFromPdf(pdfBuffer: Buffer, knownFlavours: readonly s
     }
   }
 
-  return { fields, text: finalText, pageImages, nutritionTable, displayTextCandidates, fieldMeta, flattenedText: textLayerText };
+  return { fields, text: finalText, pageImages, nutritionTable, displayTextCandidates, fieldMeta, flattenedText: textLayerText, spans };
 }
 
 async function extractFieldsFromImage(imageBuffer: Buffer, knownFlavours: readonly string[]): Promise<FieldPass> {
@@ -1222,7 +1332,8 @@ async function postProcessExtractionResult(
 export async function extractLabelFromTextLayerOnly(
   pdfBuffer: Buffer,
   knownFlavours: readonly string[] = [],
-  knownClaims: readonly string[] = []
+  knownClaims: readonly string[] = [],
+  knownBrands: readonly string[] = []
 ): Promise<LabelExtractionResult> {
   try {
     const { text: textLayerText } = await extractPdfText(pdfBuffer);
@@ -1237,7 +1348,7 @@ export async function extractLabelFromTextLayerOnly(
     let nutritionTable: Record<string, string> | undefined;
 
     if (textLayerUsable) {
-      const result = await extractFieldsFromTextLayer(pdfBuffer, textLayerText, knownFlavours);
+      const result = await extractFieldsFromTextLayer(pdfBuffer, textLayerText, knownFlavours, knownBrands);
       text = result.orderedText;
       fields = result.fields;
       nutritionTable = result.nutritionTable;
@@ -1278,9 +1389,10 @@ export async function extractLabelFromFile(
   filePath: string,
   mimeType: string,
   knownClaims: readonly string[] = [],
-  knownFlavours: readonly string[] = []
+  knownFlavours: readonly string[] = [],
+  knownBrands: readonly string[] = []
 ): Promise<LabelExtractionResult> {
-  return (await extractLabelReportFromFile(filePath, mimeType, knownClaims, knownFlavours)).result;
+  return (await extractLabelReportFromFile(filePath, mimeType, knownClaims, knownFlavours, knownBrands)).result;
 }
 
 /**
@@ -1299,13 +1411,23 @@ export async function extractLabelReportFromFile(
   filePath: string,
   mimeType: string,
   knownClaims: readonly string[] = [],
-  knownFlavours: readonly string[] = []
+  knownFlavours: readonly string[] = [],
+  // Only the PDF text-layer path snaps brand to a master today (see
+  // masterSnap.service.ts) — that's where the regression this was built to
+  // fix (text-layer-flattened brand at ~1 correct / 13 wrong) actually
+  // lives. Tesseract full-page OCR (extractFieldsFromImage, and the
+  // rasterized-page loop inside extractFieldsFromPdf) isn't snapped yet;
+  // extending master-snap to OCR-sourced brand reads is deferred alongside
+  // the PP-OCR-line and VLM-transcript snap points (accuracy2 plan Steps 3/5).
+  knownBrands: readonly string[] = []
 ): Promise<LabelExtractionReport> {
   try {
     const fileBuffer = fs.readFileSync(filePath);
     const isPdf = mimeType === 'application/pdf';
 
-    const pass = isPdf ? await extractFieldsFromPdf(fileBuffer, knownFlavours) : await extractFieldsFromImage(fileBuffer, knownFlavours);
+    const pass = isPdf
+      ? await extractFieldsFromPdf(fileBuffer, knownFlavours, knownBrands)
+      : await extractFieldsFromImage(fileBuffer, knownFlavours);
 
     debugLog(`Parsed fields: ${JSON.stringify(pass.fields)}`);
 
@@ -1335,14 +1457,110 @@ export async function extractLabelReportFromFile(
       }
     }
 
-    const extended = await extractExtendedFields(
-      pass.text,
+    let bodyText = pass.text;
+    let nutritionTable = pass.nutritionTable;
+
+    let extended = await extractExtendedFields(
+      bodyText,
       pageImage,
       knownClaims,
-      pass.nutritionTable,
+      nutritionTable,
       pass.displayTextCandidates,
       pass.flattenedText
     );
+
+    // Step 3 (accuracy2 plan): PP-OCR as a first-class reader for nutrition/
+    // claims/ingredients, the biggest lever per the ceiling analysis
+    // (ai_backend/eval/ceiling.py) -- recoverDisplayTextCandidates already
+    // strip-scans the whole page and used to keep only its top 10 outlined
+    // lines; recoverBodyTextViaPpOcr reruns that same scan (shared core:
+    // scanPageWithPpOcr) and hands back every line, folded into the body
+    // text claims/ingredients read from and parsed for a nutrition table
+    // the same way a PDF's own text-layer geometry is.
+    //
+    // Only escalates when at least one of the three is still genuinely
+    // missing after every other source had its turn, and only when an
+    // OCR-RESOLUTION page image already exists (pass.pageImages[0] -- never
+    // the 72dpi colour-only `pageImage` fallback above, which is unreadable
+    // at OCR quality): same "don't pay for OCR you don't need" discipline
+    // every other escalation in this pipeline follows. A text-layer-only
+    // PDF that never needed rasterizing for its scalar fields (isComplete()
+    // was true in extractFieldsFromPdf) is not covered by this yet -- see
+    // the Step 3 report for why that's a deliberate, separate follow-up
+    // rather than a silent gap.
+    const stillMissingBodyText =
+      !hasNutritionTable(nutritionTable) || !extended.values.ingredients || extended.values.claims === '';
+    if (stillMissingBodyText && pass.pageImages[0]) {
+      const recovered = await recoverBodyTextViaPpOcr(pass.pageImages[0], pass.spans ?? [], env.pdfRasterDpi);
+      if (recovered && (recovered.text || recovered.nutritionTable)) {
+        if (recovered.nutritionTable && !hasNutritionTable(nutritionTable)) {
+          nutritionTable = recovered.nutritionTable;
+        }
+        if (recovered.text) {
+          bodyText = [bodyText, recovered.text].filter((t) => t.trim().length > 0).join('\n');
+        }
+        // Re-run once, over the enriched text/table together, rather than
+        // patching claims/ingredients/nutritionTable individually -- claims
+        // extraction in particular cross-checks against flattenedText too
+        // (mergeClaimsResults), so a partial patch here could disagree with
+        // a second, separately-patched call.
+        extended = await extractExtendedFields(
+          bodyText,
+          pageImage,
+          knownClaims,
+          nutritionTable,
+          pass.displayTextCandidates,
+          pass.flattenedText
+        );
+      }
+    }
+
+    // Step 7 (accuracy2 plan): the VLM as a grounded reader on a crop of
+    // just the nutrition panel -- last resort, after the text layer,
+    // Tesseract, and PP-OCR body-text passes above all had their turn and
+    // nutrition_table is STILL empty. Validated in
+    // eval/STEP7_CROP_DIAGNOSTIC.md: the whole page squeezed to
+    // prepareImage()'s fixed 1008px width reads small nutrition-panel
+    // print so poorly the model hallucinates a plausible-looking but
+    // wrong table; the same model reading a real-resolution crop of just
+    // the panel reads it correctly, at no extra latency cost. Every row
+    // is grounded before being trusted (readNutritionTableFromCrop), so a
+    // crop that doesn't hold up leaves the field MISSING, same as today,
+    // never WRONG for the sake of filling something in.
+    if (!hasNutritionTable(nutritionTable) && isVlmEnabled() && pass.pageImages[0]) {
+      try {
+        const pageImageBuffer = pass.pageImages[0];
+        const meta = await sharp(pageImageBuffer).metadata();
+        const pageWidth = meta.width!;
+        const pageHeight = meta.height!;
+        const dpi = env.pdfRasterDpi;
+
+        let box = findNutritionPanelFromSpans(pass.spans ?? [], pageHeight / (dpi / 72), dpi);
+        if (!box) {
+          const { words } = await recognizePageWithWords(pageImageBuffer);
+          box = findNutritionPanelFromWords(words, pageWidth, pageHeight);
+        }
+
+        if (box) {
+          const padded = padCropBox(box, 20, pageWidth, pageHeight);
+          const recovered = await readNutritionTableFromCrop(pageImageBuffer, padded, ollamaClient);
+          if (recovered) {
+            nutritionTable = recovered;
+            // Only this one value changed -- extractExtendedFields also
+            // recomputes colour theme (real image processing) and re-runs
+            // claims/ingredients, neither of which depends on
+            // nutritionTable, so a full re-call would be pure waste here.
+            extended = { ...extended, values: { ...extended.values, nutritionTable: JSON.stringify(recovered) } };
+          }
+        }
+      } catch (error) {
+        console.warn(
+          '[labelExtraction] Nutrition-panel crop recovery failed: ' +
+            (error instanceof Error ? error.message : String(error))
+        );
+      }
+    }
+
     const result = toResult(pass.fields, extended);
 
     // Post-process the result: placeholder scrubbing, garbage detection, AI fallback

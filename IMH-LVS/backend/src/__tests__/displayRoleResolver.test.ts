@@ -502,21 +502,53 @@ test('transcriptCorroborates: whole words, case- and hyphen-insensitive', () => 
   assert.equal(transcriptCorroborates('', 'NUTRINOL'), false);
 });
 
-test('resolveDisplayRoles: the transcript vetoes a brand the model did not read that way (NUTRINOU vs NUTRINOL)', async () => {
+test('resolveDisplayRoles: the transcript vetoes a brand the model did not read that way, and its OWN read is used instead of going blank (Step 5, accuracy2 plan: NUTRINOU vs NUTRINOL)', async () => {
   const candidates: DisplayCandidateIn[] = [
     { text: 'FOCUS MEMORY CLARITY MENTAL 30', heightPx: 85, confidence: 0.99, topPx: 1731, occurrences: 1 },
     { text: 'NUTRINOU', heightPx: 45, confidence: 0.98, topPx: 261, occurrences: 2 }
   ];
   const client = twoCallClient(
     { brand: 'NUTRINOU', productName: '', confidence: 0.9 },
-    { brandAsPrinted: '', productAsPrinted: 'NUTRINOL SHARP MIND PLUS GUMMIES' }
+    { brandAsPrinted: 'NUTRINOL', productAsPrinted: 'SHARP MIND PLUS GUMMIES' }
   );
   const result = await resolveDisplayRoles(IMG, candidates, client);
-  // Brand vetoed and nothing else grounded → null (blank beats a one-letter-wrong brand).
-  assert.equal(result, null);
+  // The transcript itself IS a grounded read (asked with no knowledge of
+  // the OCR options -- see the prompt-isolation assertion below), so a
+  // vetoed brand is replaced by it, not dropped to blank -- lower
+  // confidence than an exact/corroborated grounding, and still above the
+  // 0.6 acceptance floor resolveBlankDisplayRoles applies.
+  assert.deepEqual(result, { brand: 'NUTRINOL', productName: '', confidence: 0.65, brandVetoedBy: 'NUTRINOL SHARP MIND PLUS GUMMIES' });
   assert.equal(client.prompts.length, 2);
   assert.equal(client.prompts[1], TRANSCRIBE_PROMPT);
   assert.ok(!client.prompts[1].includes('NUTRINOU'), 'the transcription prompt must not show the model the OCR options');
+});
+
+test('resolveDisplayRoles: a vetoed brand still goes blank when the transcript itself is not a plausible name (empty, or a weight/regulatory/category line)', async () => {
+  const candidates: DisplayCandidateIn[] = [
+    { text: 'FOCUS MEMORY CLARITY MENTAL 30', heightPx: 85, confidence: 0.99, topPx: 1731, occurrences: 1 },
+    { text: 'NUTRINOU', heightPx: 45, confidence: 0.98, topPx: 261, occurrences: 2 }
+  ];
+  for (const brandAsPrinted of ['', 'FSSAI Lic. No. 12345', 'Health Supplement']) {
+    const client = twoCallClient(
+      { brand: 'NUTRINOU', productName: '', confidence: 0.9 },
+      { brandAsPrinted, productAsPrinted: 'SHARP MIND PLUS GUMMIES' }
+    );
+    const result = await resolveDisplayRoles(IMG, candidates, client);
+    assert.equal(result, null, `brandAsPrinted ${JSON.stringify(brandAsPrinted)} must not be accepted as a brand`);
+  }
+});
+
+test('resolveDisplayRoles: a vetoed brand does not fall back to the transcript when its own read runs long, like a sentence rather than a wordmark', async () => {
+  const candidates: DisplayCandidateIn[] = [
+    { text: 'FOCUS MEMORY CLARITY MENTAL 30', heightPx: 85, confidence: 0.99, topPx: 1731, occurrences: 1 },
+    { text: 'NUTRINOU', heightPx: 45, confidence: 0.98, topPx: 261, occurrences: 2 }
+  ];
+  const client = twoCallClient(
+    { brand: 'NUTRINOU', productName: '', confidence: 0.9 },
+    { brandAsPrinted: 'This Is Not Really A Brand Name At All', productAsPrinted: '' }
+  );
+  const result = await resolveDisplayRoles(IMG, candidates, client);
+  assert.equal(result, null);
 });
 
 test('resolveDisplayRoles: a string given for both roles and then vetoed as brand does not survive as the product', async () => {
@@ -545,7 +577,7 @@ test('resolveDisplayRoles: a corroborated brand passes; the product is not subje
   assert.deepEqual(result, { brand: 'Homeo-Vita', productName: 'MULTIVITAMIN GUMMIES', confidence: 0.95 });
 });
 
-test('resolveDisplayRoles: the veto also applies to a brand the occurrence prior filled', async () => {
+test('resolveDisplayRoles: the veto also applies to a brand the occurrence prior filled, with the same Step 5 transcript fallback', async () => {
   const candidates: DisplayCandidateIn[] = [
     { text: 'NUTRINOU', heightPx: 45, confidence: 0.98, topPx: 261, occurrences: 3 },
     { text: 'GUMMIES', heightPx: 69, confidence: 0.99, topPx: 2169, occurrences: 1 }
@@ -555,7 +587,7 @@ test('resolveDisplayRoles: the veto also applies to a brand the occurrence prior
     { brandAsPrinted: 'NUTRINOL', productAsPrinted: 'GUMMIES' }
   );
   const result = await resolveDisplayRoles(IMG, candidates, client);
-  assert.deepEqual(result, { brand: '', productName: 'GUMMIES', confidence: 0.9, brandVetoedBy: 'NUTRINOL GUMMIES' });
+  assert.deepEqual(result, { brand: 'NUTRINOL', productName: 'GUMMIES', confidence: 0.65, brandVetoedBy: 'NUTRINOL GUMMIES' });
 });
 
 test('resolveDisplayRoles: an empty or failed transcription is no evidence — the brand stands', async () => {
