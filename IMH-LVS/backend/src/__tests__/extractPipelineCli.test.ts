@@ -40,6 +40,10 @@ test('a corrupt PDF produces a null record instead of crashing the whole run', {
   assert.equal(records[0].source_file, 'corrupt.pdf');
   assert.equal(records[0].brand_name, null);
   assert.deepEqual(records[0].claims, []);
+  // Step 2 (accuracy plan): a file that failed extraction entirely has no
+  // pass to credit for anything — field_sources present but empty, same
+  // absence-is-blank convention as every other field on a null record.
+  assert.deepEqual(records[0].field_sources, {});
 });
 
 test('every record has the full field set score.py expects, in argument order', { timeout: 120_000 }, async () => {
@@ -55,12 +59,27 @@ test('every record has the full field set score.py expects, in argument order', 
   const expectedKeys = [
     'source_file', 'brand_name', 'product_name', 'flavour', 'fssai_number', 'marketing_company',
     'address', 'customer_care_number', 'customer_care_email', 'package_size', 'manufacturing_company',
-    'claims', 'ingredients', 'nutrition_table', 'colour_theme', 'logo', 'layout',
+    'claims', 'ingredients', 'nutrition_table', 'colour_theme', 'logo', 'layout', 'field_sources',
   ];
   for (const record of records) {
     assert.deepEqual(Object.keys(record).sort(), [...expectedKeys].sort());
     assert.equal(record.logo, null, 'logo is never a text value in this pipeline — always null');
     assert.equal(record.layout, null, 'layout is never a text value in this pipeline — always null');
+  }
+
+  // Step 2 (accuracy plan): a real label's field_sources should actually
+  // say something — score.py's by-source table is only as good as this
+  // being populated, not just present-but-empty on a real extraction.
+  const realRecord = records[0];
+  assert.ok(Object.keys(realRecord.field_sources).length > 0, 'a real label extraction should tag at least one field with its source');
+  const trackedFields = [
+    'brand_name', 'product_name', 'flavour', 'fssai_number', 'marketing_company',
+    'address', 'customer_care_number', 'customer_care_email', 'package_size',
+  ];
+  for (const [field, source] of Object.entries(realRecord.field_sources)) {
+    assert.ok(trackedFields.includes(field), `field_sources has an untracked key: ${field}`);
+    assert.equal(typeof source, 'string');
+    assert.ok((source as string).length > 0);
   }
 });
 

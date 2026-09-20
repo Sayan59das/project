@@ -1,7 +1,27 @@
 {
+  "image_file": "shilajit_honey_sticks_16_p1.png",
+  "sourceFile": "Shilajit Honey Sticks (16).pdf",
+  "page": 1,
+  "reviewed": true,
+  "reviewedAt": 1789639250306,
+  "isFront": true,
   "label": {
-    "address": "Plot No. 70/85/86, Bhatoli Kalan, Baddi (H.P.); A.O.: SCO No. 48, Sector-5, MDC, PKL (H.R.) 134114",
     "brand_name": "Manfaith",
+    "product_name": "Shudh Shilajit Honey Sticks (Pure Himalayan)",
+    "marketing_company": "Manfaith (A Division of LXIR Medilabs Pvt. Ltd.)",
+    "manufacturing_company": "IM Healthcare Pvt. Ltd.",
+    "fssai_number": null,
+    "package_size": "30 Sticks",
+    "flavour": null,
+    "colour_theme": [
+      "Black",
+      "Gold/Amber"
+    ],
+    "logo": "Abstract dark emblem above the MANFAITH wordmark",
+    "layout": "Sachet/stick box label (wraparound + cap circles)",
+    "customer_care_number": "0172-4045014",
+    "customer_care_email": "info@biofaith.in",
+    "address": "Plot No. 70/85/86, Bhatoli Kalan, Baddi (H.P.); A.O.: SCO No. 48, Sector-5, MDC, PKL (H.R.) 134114",
     "claims": [
       "No Artificial Colours",
       "Gluten Free",
@@ -12,34 +32,16 @@
       "Vajikar (Enhances Vigor and Vitality)",
       "Ayurvedic Proprietary Medicine"
     ],
-    "colour_theme": [
-      "Black",
-      "Gold/Amber"
-    ],
-    "customer_care_email": "info@biofaith.in",
-    "customer_care_number": "0172-4045014",
-    "flavour": null,
-    "fssai_number": null,
     "ingredients": [
       "Truextracts Purified Shilajit Resin",
       "Honey",
       "Excipients"
     ],
-    "layout": "Sachet/stick box label (wraparound + cap circles)",
-    "logo": "Abstract dark emblem above the MANFAITH wordmark",
-    "manufacturing_company": "IM Healthcare Pvt. Ltd.",
-    "marketing_company": "Manfaith (A Division of LXIR Medilabs Pvt. Ltd.)",
     "nutrition_table": {
       "Excipients": "q.s.",
       "Honey": "7.6 g",
       "Truextracts Purified Shilajit Resin (Asphaltum punjabianum, 75% fulvic acid, Pure Himalayan Shilajit)": "400 mg"
-    },
-    "package_size": "30 Sticks",
-    "product_name": "Shudh Shilajit Honey Sticks (Pure Himalayan)"
+    }
   },
-  "page": 1,
-  "reviewed": true,
-  "reviewedAt": 1789132800057,
-  "isFront": true,
-  "sourceFile": "Shilajit Honey Sticks (16).pdf"
+  "aiReviewNotes": "[AI first-pass review, pending human confirmation] All priority fields, composition table, ingredients, and claims checked directly against the image -- all correct, including fssai_number correctly null (AYUSH-licensed Ayurvedic medicine, sharing the same Ayush Mfg. Lic. No. HP-341-Ay as the BioFaith Shilajit Stick sibling). One genuine cross-brand inconsistency in the source artwork, correctly transcribed as printed: the brand here is 'Manfaith' but the printed customer care email/website is 'info@biofaith.in' / 'www.biofaith.in' -- both brands are divisions of the same parent (LXIR Medilabs)."
 }

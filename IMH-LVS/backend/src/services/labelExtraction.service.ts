@@ -41,7 +41,7 @@ import { env } from '../config/env';
 import { FIXED_MANUFACTURING_COMPANY } from '../config/constants';
 import { extractPdfText, extractTextSpans, hasUsablePdfText, rasterizePdfPages, type TextSpan } from './pdf.service';
 import { preprocessForOcr, preprocessForOcrAlt } from './imagePreprocessing.service';
-import { recognizePageWithWords } from './tesseract.service';
+import { recognizePageWithWords, type OcrWord } from './tesseract.service';
 import { recognizeLines } from './paddleOcr.service';
 import { extractMarketingCompanyAndAddressFromRegion } from './regionOcr.service';
 import { recoverProductTitleFromRegion, type OcrSource } from './titleRegionOcr.service';
@@ -53,9 +53,17 @@ import { applyAiFallback } from './aiExtraction.service';
 import {
   extractClaims,
   extractIngredients,
-  extractNutritionTableFormat
+  extractNutritionTableFormat,
+  ALLERGEN_DIETARY_WORDS,
+  type ClaimsResult
 } from './labelSemanticExtractor.service';
-import { segmentPanels, toReadingOrderText, extractNutritionTableFromPanels, medianFontSize } from './textLayerGeometry.service';
+import {
+  segmentPanels,
+  toReadingOrderText,
+  extractNutritionTableFromPanels,
+  extractNutritionTableFromOcrWords,
+  medianFontSize
+} from './textLayerGeometry.service';
 import { projectSpanToPixels, findOutlinedLines, planOcrStrips, dropStripEdgeLines, dedupeOverlappingLines, type OcrLineLike } from './outlinedText.service';
 import { isVlmEnabled, prepareImage, ollamaClient, type VlmImage, type VlmClient } from './ollamaVlm.service';
 import { resolveDisplayRoles, type DisplayCandidateIn } from './displayRoleResolver.service';
@@ -118,20 +126,42 @@ export type DisplayTextCandidate = {
 };
 
 /**
- * Phase F: marks a field as INFERRED rather than read, so a reviewer knows
- * to double-check it before trusting it the way a directly-read value can
- * be. Every field NOT in this map was read straight off the label (text
- * layer or OCR) — absence is the normal case and needs no entry, the same
+ * Step 2 (accuracy plan): every pass that can fill one of the nine
+ * fillBlanks-cascade fields (marketingCompany, address, fssaiNumber, email,
+ * customerCareNumber, brand, flavour, productName, packageSize — the ten
+ * scalar identity/contact fields minus manufacturingCompany, which is a
+ * fixed constant and never goes through this cascade). 'display-candidates'
+ * has no producer yet in this file — reserved for a future non-VLM
+ * candidate-picking heuristic (Step 5.6) so the type doesn't need to widen
+ * again to add it.
+ */
+export type FieldSource =
+  | 'text-layer-flattened'
+  | 'text-layer-reading-order'
+  | 'tesseract-full-page'
+  | 'tesseract-region-ocr'
+  | 'tesseract-title-region'
+  | 'package-size-ocr'
+  | 'display-candidates'
+  | 'vlm-role-resolution'
+  | 'vlm-fallback';
+
+/**
+ * Phase F (widened for Step 2): which pass produced this field's value, for
+ * EVERY non-blank field among the nine above — not just the model-inferred
+ * ones. A field absent from this map is blank in the result; nothing else
+ * about a field can be inferred from its absence any more (Step 2 changes
+ * this from "absent means read normally" to "absent means blank"), the same
  * "blank/absent means nothing to report" convention this file already uses
- * for discardedFields/unknownClaims. A field present here was answered by a
- * model, not read, even though the value itself may well be correct.
+ * for discardedFields/unknownClaims.
  */
 export type FieldMeta = {
-  /** Which resolver produced this value. */
-  source: 'vlm-role-resolution' | 'vlm-fallback';
-  /** 0-1 when the resolver reports one (vlm-role-resolution always does); omitted for vlm-fallback, which has none today. */
+  /** Which pass produced this value. */
+  source: FieldSource;
+  /** 0-1 when the resolver reports one (vlm-role-resolution always does); omitted everywhere else. */
   confidence?: number;
-  needsReview: true;
+  /** True only for the two model-inferred sources — a value read straight off the label, however it was read, doesn't need a human's confirmation the way an inferred one does. */
+  needsReview: boolean;
 };
 
 /**
@@ -201,6 +231,43 @@ function toResult(fields: ExtractedLabelFields, extended: ExtendedFields): Label
   return { ...fields, manufacturingCompany: FIXED_MANUFACTURING_COMPANY, ...extended.values };
 }
 
+// Real bug found by dumping one real label's actual text both ways
+// (Cal. Vit D IRN120-2.pdf): the geometry-based reading-order text (used
+// as claims' primary source because it generally respects visual layout
+// better) can scramble a badge cluster that sits spatially close to an
+// unrelated block — a "NO GELATIN NO GLUTEN NO MILK..." allergen row
+// next to the nutrition table ends up with "NO" landing on one
+// nutrition-table line and "GELATIN" on a completely different one,
+// losing the claim entirely — while the plain flattened text-layer text
+// keeps the same badge cluster together and finds it correctly. Rather
+// than pick a winner (reading-order text is still better for OTHER
+// labels, which is why it stayed primary), extracting from both and
+// taking the union recovers a real claim whichever text preserves it,
+// with no added fabrication risk: every claim-shape matcher already
+// gates on a narrow, generic word list regardless of which text
+// surfaced the match, so a claim found either way is still a claim
+// really printed on the label.
+export function mergeClaimsResults(primary: ClaimsResult, secondaryText: string | undefined, knownClaims: readonly string[]): ClaimsResult {
+  if (!secondaryText) return primary;
+  const secondary = extractClaims(secondaryText, knownClaims);
+
+  const merged = new Map<string, string>(); // lowercase -> canonical casing, primary wins ties
+  for (const claim of primary.claims.split(' | ')) {
+    if (claim) merged.set(claim.toLowerCase(), claim);
+  }
+  for (const claim of secondary.claims.split(' | ')) {
+    if (claim && !merged.has(claim.toLowerCase())) merged.set(claim.toLowerCase(), claim);
+  }
+
+  const matchedLower = new Set([...primary.matched, ...secondary.matched].map((claim) => claim.toLowerCase()));
+  const mergedClaims = [...merged.values()];
+  return {
+    claims: mergedClaims.join(' | '),
+    matched: mergedClaims.filter((claim) => matchedLower.has(claim.toLowerCase())),
+    unmatched: mergedClaims.filter((claim) => !matchedLower.has(claim.toLowerCase()))
+  };
+}
+
 type ExtendedFields = {
   values: Pick<LabelExtractionResult, 'colourTheme' | 'claims' | 'ingredients' | 'nutritionTableFormat' | 'nutritionTable' | 'displayTextCandidates'>;
   unknownClaims: string[];
@@ -228,9 +295,10 @@ async function extractExtendedFields(
   pageImage: Buffer | undefined,
   knownClaims: readonly string[],
   nutritionTable?: Record<string, string>,
-  displayTextCandidates?: DisplayTextCandidate[]
+  displayTextCandidates?: DisplayTextCandidate[],
+  flattenedText?: string
 ): Promise<ExtendedFields> {
-  const claims = extractClaims(text, knownClaims);
+  const claims = mergeClaimsResults(extractClaims(text, knownClaims), flattenedText, knownClaims);
 
   let colourTheme = '';
   if (pageImage) {
@@ -288,6 +356,17 @@ function isComplete(fields: ExtractedLabelFields): boolean {
   return CORE_FIELDS_FOR_COMPLETENESS.every((key) => fields[key].trim().length > 0);
 }
 
+// A label's nutrition panel is sometimes baked into the artwork as an image
+// with no real text in the PDF's own text layer at all — the text-layer
+// geometry pass (extractNutritionTableFromPanels) then always returns {}
+// for that label, no matter how complete every OTHER field is. Used to
+// decide whether OCR is still worth running even when every scalar field
+// already has a value, and to decide whether to keep giving the nutrition
+// OCR fallback another page's worth of tries.
+function hasNutritionTable(table: Record<string, string> | undefined): boolean {
+  return !!table && Object.keys(table).length > 0;
+}
+
 // A productName that's nothing but a generic product-form word ("Gummies",
 // "Capsules", ...) doesn't actually identify the product — it's treated
 // like an unset value here so a later, more complete pass (e.g. a
@@ -295,15 +374,62 @@ function isComplete(fields: ExtractedLabelFields): boolean {
 // weaker source like the PDF's own text layer) can still improve it,
 // rather than being permanently blocked by the ordinary "never overwrite a
 // non-empty field" rule every other field follows.
-function fillBlanks(fields: ExtractedLabelFields, patch: Partial<ExtractedLabelFields>): ExtractedLabelFields {
+/**
+ * Tags every non-blank field in `fields` with `source` — for the base pass
+ * of a cascade stage (the first fields object a stage produces, before any
+ * fillBlanks patch is merged on top of it), since fillBlanks itself only
+ * tags fields it actually MOVES from blank to filled, and the very first
+ * assignment in a stage needs its own tagging call to be covered at all.
+ */
+export function tagFilledFields(fields: Partial<ExtractedLabelFields>, source: FieldSource): Record<string, FieldMeta> {
+  const meta: Record<string, FieldMeta> = {};
+  const needsReview = source === 'vlm-role-resolution' || source === 'vlm-fallback';
+  for (const key of Object.keys(fields) as (keyof ExtractedLabelFields)[]) {
+    if (fields[key]) meta[key] = { source, needsReview };
+  }
+  return meta;
+}
+
+// Step 2: fillBlanks is the single choke point every extraction pass goes
+// through to merge its answer into the running result, so it is also the
+// single place that records provenance. patchMeta supplies the FieldMeta
+// for whichever keys `patch` may fill — built via tagFilledFields for a
+// single-source patch (the common case), or passed through unchanged when
+// merging an already-tagged multi-source fields object (e.g. one image's
+// whole OCR pass, which may itself contain several different sources'
+// fields). Only keys fillBlanks actually moves from blank to filled get a
+// meta entry — a field patch offers but that the existing value wins over
+// keeps its old entry, exactly mirroring which value survives in `fields`.
+export function fillBlanks(
+  fields: ExtractedLabelFields,
+  patch: Partial<ExtractedLabelFields>,
+  patchMeta: Record<string, FieldMeta>,
+  meta: Record<string, FieldMeta> = {}
+): { fields: ExtractedLabelFields; meta: Record<string, FieldMeta> } {
   const next = { ...fields };
+  const nextMeta = { ...meta };
   for (const key of Object.keys(patch) as (keyof ExtractedLabelFields)[]) {
     const value = patch[key];
     if (!value) continue;
     const isOverridableProductName = key === 'productName' && isGenericProductFormWord(next.productName);
-    if (!next[key] || isOverridableProductName) next[key] = value;
+    if (!next[key] || isOverridableProductName) {
+      next[key] = value;
+      if (patchMeta[key]) nextMeta[key] = patchMeta[key];
+    }
   }
-  return next;
+  return { fields: next, meta: nextMeta };
+}
+
+// Convenience wrapper for the common case: a patch that is entirely from
+// one named source, so its per-field meta is just that source applied to
+// every key the patch actually sets.
+export function fillBlanksFrom(
+  fields: ExtractedLabelFields,
+  patch: Partial<ExtractedLabelFields>,
+  source: FieldSource,
+  meta: Record<string, FieldMeta> = {}
+): { fields: ExtractedLabelFields; meta: Record<string, FieldMeta> } {
+  return fillBlanks(fields, patch, tagFilledFields(patch, source), meta);
 }
 
 // Extract fields from a PDF's text layer using geometry-based text processing.
@@ -333,9 +459,16 @@ async function extractFieldsFromTextLayer(
   pdfBuffer: Buffer,
   textLayerText: string,
   knownFlavours: readonly string[]
-): Promise<{ orderedText: string; fields: ExtractedLabelFields; nutritionTable?: Record<string, string>; spans: TextSpan[] }> {
+): Promise<{
+  orderedText: string;
+  fields: ExtractedLabelFields;
+  nutritionTable?: Record<string, string>;
+  spans: TextSpan[];
+  fieldMeta: Record<string, FieldMeta>;
+}> {
   let orderedText = textLayerText;
   let fields = extractLabelFields(textLayerText, { knownFlavours });
+  let fieldMeta = tagFilledFields(fields, 'text-layer-flattened');
   let nutritionTable: Record<string, string> | undefined;
   let spans: TextSpan[] = [];
 
@@ -371,7 +504,10 @@ async function extractFieldsFromTextLayer(
         }
       }
 
-      fields = fillBlanks(cleanedFlattenedFields, cleanedOrderedFields);
+      const flattenedMeta = tagFilledFields(cleanedFlattenedFields, 'text-layer-flattened');
+      const merged = fillBlanksFrom(cleanedFlattenedFields, cleanedOrderedFields, 'text-layer-reading-order', flattenedMeta);
+      fields = merged.fields;
+      fieldMeta = merged.meta;
 
       // Extract nutrition table from the geometry structure (Task 5)
       const extractedTable = extractNutritionTableFromPanels(panels);
@@ -383,7 +519,7 @@ async function extractFieldsFromTextLayer(
     debugLog(`Failed to extract text spans: ${error instanceof Error ? error.message : error}. Continuing with flattened text.`);
   }
 
-  return { orderedText, fields, nutritionTable, spans };
+  return { orderedText, fields, nutritionTable, spans, fieldMeta };
 }
 
 // Runs the primary OCR pass over one image (a rasterized PDF page, or the
@@ -396,7 +532,7 @@ async function ocrImageWithEnhancement(
   imageBuffer: Buffer,
   priorText: string,
   knownFlavours: readonly string[]
-): Promise<{ text: string; fields: ExtractedLabelFields }> {
+): Promise<{ text: string; fields: ExtractedLabelFields; fieldMeta: Record<string, FieldMeta>; words: OcrWord[] }> {
   const primaryProcessed = await preprocessForOcr(imageBuffer);
   const { text: primaryText, words } = await recognizePageWithWords(primaryProcessed);
 
@@ -420,10 +556,20 @@ async function ocrImageWithEnhancement(
     ocrSources.push({ image: altProcessed, words: altWords });
   }
 
+  // Whatever the primary (+ alt, if it ran) full-page OCR pass resolved,
+  // tagged as one source — the two preprocessing passes are concatenated
+  // into one text blob and re-parsed together (see above), so there's no
+  // clean per-field split between "primary found this" and "alt found
+  // this"; both are the same kind of pass (general-purpose full-page OCR),
+  // just with different preprocessing.
+  let fieldMeta = tagFilledFields(fields, 'tesseract-full-page');
+
   if (!fields.marketingCompany || !fields.address) {
     debugLog('marketingCompany/address missing after full-page OCR — trying a targeted region re-OCR around a located anchor.');
     const regionFields = await extractMarketingCompanyAndAddressFromRegion(primaryProcessed, words);
-    fields = fillBlanks(fields, regionFields);
+    const merged = fillBlanksFrom(fields, regionFields, 'tesseract-region-ocr', fieldMeta);
+    fields = merged.fields;
+    fieldMeta = merged.meta;
   }
 
   // A product name that's still empty or just a single word, alongside a
@@ -438,7 +584,14 @@ async function ocrImageWithEnhancement(
     const recoveredTitle = await recoverProductTitleFromRegion(ocrSources, fields.brand, fields.productName);
     if (recoveredTitle) {
       debugLog(`productName: enriched to "${recoveredTitle}" via targeted title-region re-OCR.`);
+      // Unconditional overwrite, not a fillBlanks merge: this pass runs
+      // precisely when productName is blank OR a single word (checked
+      // above), and a single non-generic word is still worth replacing
+      // with a full recovered title — fillBlanks's blank-or-generic-word
+      // guard would keep a genuine single-word productName untouched,
+      // which would silently change this pass's behaviour.
       fields = { ...fields, productName: recoveredTitle };
+      fieldMeta = { ...fieldMeta, productName: { source: 'tesseract-title-region', needsReview: false } };
     }
   }
 
@@ -454,11 +607,71 @@ async function ocrImageWithEnhancement(
     const recoveredPackageSize = await recoverPackageSizeFromBadge(ocrSources);
     if (recoveredPackageSize) {
       debugLog(`packageSize: enriched to "${recoveredPackageSize}" via front-badge recovery.`);
-      fields = { ...fields, packageSize: recoveredPackageSize };
+      const merged = fillBlanksFrom(fields, { packageSize: recoveredPackageSize }, 'package-size-ocr', fieldMeta);
+      fields = merged.fields;
+      fieldMeta = merged.meta;
     }
   }
 
-  return { text: combinedText, fields };
+  return { text: combinedText, fields, fieldMeta, words };
+}
+
+// A side-channel nutrition-table recovery path for a PDF whose scalar fields
+// are already complete from the text layer, so the full, multi-stage OCR
+// enhancement pass (ocrImageWithEnhancement) isn't worth its risk: that
+// pass's title-region and other escalations can overwrite an already-
+// correct-but-generic-looking productName/brand with a wrong OCR guess —
+// a real regression measured when nutrition-table recovery was first tried
+// by simply forcing every incomplete-nutrition label through the full pass.
+// This calls only the plain word-level OCR primitive and never touches
+// `fields`, so a scalar field this pass already got right cannot regress.
+// Stops at the first page that yields a non-empty table; never throws.
+async function recoverNutritionTableViaOcr(pdfBuffer: Buffer): Promise<Record<string, string> | undefined> {
+  try {
+    const pageImages = await rasterizePdfPages(pdfBuffer);
+    for (const pageImage of pageImages) {
+      const { words } = await recognizePageWithWords(pageImage);
+      const table = extractNutritionTableFromOcrWords(words);
+      if (hasNutritionTable(table)) return table;
+    }
+    return undefined;
+  } catch (error) {
+    debugLog(`Nutrition-table OCR side-channel failed: ${error instanceof Error ? error.message : error}`);
+    return undefined;
+  }
+}
+
+// A side-channel brand/productName recovery path, same shape and same
+// reason as recoverNutritionTableViaOcr just above: a PDF whose scalar
+// fields are ALL non-empty (isComplete is true — it only checks for SOME
+// value, not a trustworthy one) still takes the fast path even when
+// brand or productName holds a value nameFieldMissing recognises as
+// untrustworthy (an allergen callout, a bare measurement, OCR debris) —
+// real client labels whose actual brand is a logo-only graphic with no
+// readable text anywhere fall into exactly this trap, and the full,
+// multi-stage OCR enhancement pass is not worth running just to reach
+// the one narrow VLM step that could fix it. Calls only that narrow
+// step (recoverDisplayTextCandidates + resolveBlankDisplayRoles, which
+// already only ever touches brand/productName) directly, so every OTHER
+// field this pass already got right is exactly as safe as it was for
+// the nutrition-table side-channel.
+async function recoverNamesViaVlm(
+  pdfBuffer: Buffer,
+  fields: ExtractedLabelFields,
+  fieldMeta: Record<string, FieldMeta>,
+  spans: readonly TextSpan[]
+): Promise<{ fields: ExtractedLabelFields; fieldMeta: Record<string, FieldMeta> }> {
+  try {
+    const pageImages = await rasterizePdfPages(pdfBuffer, { maxPages: 1 });
+    if (pageImages.length === 0) return { fields, fieldMeta };
+    const displayTextCandidates = await recoverDisplayTextCandidates(pageImages[0], spans, env.pdfRasterDpi);
+    if (displayTextCandidates.length === 0) return { fields, fieldMeta };
+    const resolved = await resolveBlankDisplayRoles(fields, pageImages[0], displayTextCandidates);
+    return { fields: resolved.fields, fieldMeta: { ...fieldMeta, ...resolved.fieldMeta } };
+  } catch (error) {
+    debugLog(`Name recovery via VLM side-channel failed: ${error instanceof Error ? error.message : error}`);
+    return { fields, fieldMeta };
+  }
 }
 
 // Gathers the raw text for a PDF and parses it into fields, escalating to
@@ -481,6 +694,22 @@ type FieldPass = {
   displayTextCandidates?: DisplayTextCandidate[];
   /** Phase F: fields this pass filled via VLM role-resolution rather than a direct read. Undefined when that step never ran. */
   fieldMeta?: Record<string, FieldMeta>;
+  /**
+   * The PDF's own flattened text-layer text (before any geometry-based
+   * reordering), when one exists. `text` above is normally BETTER for
+   * claims/ingredients (it respects visual layout the flattened version
+   * doesn't) — but a real, confirmed case (Cal. Vit D IRN120-2.pdf) shows
+   * the geometry-based panel reconstruction can scramble a badge cluster
+   * that sits close to an unrelated block (a "NO GELATIN NO GLUTEN..."
+   * allergen badge row next to the nutrition table) into two different,
+   * unrelated lines, while the plain flattened text keeps them together
+   * correctly. Kept alongside `text`, not instead of it, so claims
+   * extraction can check both and take the union — safe because a claim
+   * found either way is still a claim really on the label, and the
+   * allergen/dietary word allowlists already gate against fabrication
+   * regardless of which text surfaced the match.
+   */
+  flattenedText?: string;
 };
 
 // Recovery helper for display-text candidates: outlined text detected on the
@@ -630,9 +859,66 @@ async function recoverDisplayTextCandidates(
   }
 }
 
-// Blank, or filled with what the report stage will scrub as OCR debris anyway.
-function nameFieldMissing(value: string): boolean {
-  return !value || looksLikeOcrGarbage(value);
+// A bare measurement/dimension value — never a brand name, but a real
+// wrong guess seen on several client labels (a die-line/print-spec
+// dimension nearby getting picked up instead of the brand).
+const MEASUREMENT_VALUE_PATTERN = /^\d+(\.\d+)?\s*(mm|cm|m|ml|l|g|kg|mg|mcg|iu|in|inch(es)?)\.?$/i;
+
+// True when `value`, stripped of "free"/"no" (the allergen-claim shape
+// words), is made ENTIRELY of terms from the same generic allergen/
+// dietary vocabulary claims extraction uses — never a brand name, but a
+// real wrong guess this project's own extractor makes on several client
+// labels whose real brand is a stylised logo with no readable text at
+// all: with nothing better nearby, it falls back to whatever nearby real
+// word it CAN read, and an allergen callout ("Gelatin", "Gelatin Free",
+// "Gluten") is exactly the kind of large, isolated, badge-style text a
+// title-block heuristic can mistake for a name. Only whole-value matches
+// count — a real brand that merely CONTAINS one of these words (e.g. a
+// name built from an ingredient word) is a different, much larger risk
+// this check deliberately does not take (see the reverted Step 5.6
+// blanket-gate attempt this project already tried once).
+function looksLikeAllergenCallout(value: string): boolean {
+  const words = value
+    .trim()
+    .toLowerCase()
+    .split(/\s+/)
+    .filter((word) => word !== 'free' && word !== 'no');
+  if (words.length === 0) return false;
+  return words.every((word) => ALLERGEN_DIETARY_WORDS.has(word.replace(/[^a-z]/g, '')));
+}
+
+// Blank, filled with what the report stage will scrub as OCR debris
+// anyway, a bare measurement, or an allergen callout — none of these are
+// ever a real brand/product name, so treating them the same as blank
+// here is what gives the recovery passes below (targeted OCR, VLM
+// display-role resolution) a chance to find the real one instead of a
+// wrong-but-non-empty guess silently blocking them forever.
+// A small, unambiguous print-production/pre-press vocabulary — real
+// wrong guesses seen on several client labels' "VF" (die-line/vector-
+// file proof) variants specifically: "Cmyk", "Matt Uv", and (from the
+// same real diff run) "Bottom Dia Colour Cmyk", "Process Color Convert
+// To Pantone Client File Color", "Emboss I Gr". These files are
+// pre-press production proofs, not finished consumer artwork, so
+// print-spec callouts sit right where a title-block heuristic looks for
+// a prominent front-of-pack name. Unlike the allergen-word check above,
+// this is a CONTAINS match, not "entirely composed of" — a real brand
+// or product name containing "cmyk" or "pantone" is not a real risk
+// this vocabulary needs to guard against the way "milk" or "soy"
+// legitimately could be part of one. Deliberately does NOT include a
+// bare "uv" on its own — this client's own catalog already has a real
+// claim ("Blue Light Protection") in the same UV/light-protection
+// marketing space, so a bare "uv" match risks excluding a genuine
+// future "UV Protection" brand/product name; only kept for the specific
+// print-finish compound terms, which carry no such risk.
+const PRINT_PRODUCTION_TERM = /\b(cmyk|pantone|die[\s-]?line|dieline|emboss|spot\s*uv|matt\s*uv|gloss\s*uv|foil\s*(stamp|separation)?|varnish|colou?r\s*separation|die[\s-]?cut|process\s*colou?r)\b/i;
+
+export function nameFieldMissing(value: string): boolean {
+  if (!value) return true;
+  if (looksLikeOcrGarbage(value)) return true;
+  if (MEASUREMENT_VALUE_PATTERN.test(value.trim())) return true;
+  if (looksLikeAllergenCallout(value)) return true;
+  if (PRINT_PRODUCTION_TERM.test(value)) return true;
+  return false;
 }
 
 // Resolve blank brand/productName fields using VLM classification of display-text candidates.
@@ -672,7 +958,7 @@ async function resolveBlankDisplayRoles(
       brand: brandMissing ? '' : fields.brand,
       productName: productMissing ? '' : fields.productName
     };
-    const filled = fillBlanks(base, { brand: roles.brand, productName: roles.productName });
+    const filled = fillBlanksFrom(base, { brand: roles.brand, productName: roles.productName }, 'vlm-role-resolution').fields;
 
     // Phase F: an inferred value, however confident, is not the same trust
     // level as a value read straight off the label — only flag the fields
@@ -705,6 +991,7 @@ async function extractFieldsFromPdf(pdfBuffer: Buffer, knownFlavours: readonly s
   // Attempt to extract structured text spans and use reading-order text when available
   let orderedText = textLayerText;
   let textLayerFields = textLayerUsable ? extractLabelFields(textLayerText, { knownFlavours }) : null;
+  let textLayerFieldMeta: Record<string, FieldMeta> = textLayerFields ? tagFilledFields(textLayerFields, 'text-layer-flattened') : {};
   let nutritionTable: Record<string, string> | undefined;
   let spans: TextSpan[] = [];
 
@@ -712,14 +999,37 @@ async function extractFieldsFromPdf(pdfBuffer: Buffer, knownFlavours: readonly s
     const result = await extractFieldsFromTextLayer(pdfBuffer, textLayerText, knownFlavours);
     orderedText = result.orderedText;
     textLayerFields = result.fields;
+    textLayerFieldMeta = result.fieldMeta;
     nutritionTable = result.nutritionTable;
     spans = result.spans;
   }
 
   if (textLayerFields && isComplete(textLayerFields)) {
-    // Fast path: nothing was rasterized, so pageImages is empty and the caller
-    // rasterizes a single page itself if it still wants colour.
-    return { fields: textLayerFields, text: orderedText, pageImages: [], nutritionTable };
+    // Fast path: every scalar field is already resolved from the text layer,
+    // so the expensive, multi-stage OCR enhancement pass (which exists to
+    // recover WEAK scalar fields, and in doing so can overwrite a generic-
+    // looking-but-correct productName with a wrong OCR guess) is not worth
+    // the risk here. Two narrow, side-channel exceptions, each touching
+    // only its own field(s) and never the rest: nutrition_table if still
+    // empty, and brand/productName if nameFieldMissing judges the current
+    // value untrustworthy (isComplete only checked for SOME value, not a
+    // good one) — real client labels whose brand is a logo-only graphic
+    // fall into exactly that gap otherwise, permanently, since isComplete
+    // being true is exactly what keeps this whole label off the full OCR
+    // path where the AI model would normally get a chance to fix it.
+    const recoveredNutrition = hasNutritionTable(nutritionTable) ? nutritionTable : await recoverNutritionTableViaOcr(pdfBuffer);
+    const namesNeedRecovery = nameFieldMissing(textLayerFields.brand) || nameFieldMissing(textLayerFields.productName);
+    const recoveredNames = namesNeedRecovery
+      ? await recoverNamesViaVlm(pdfBuffer, textLayerFields, textLayerFieldMeta, spans)
+      : { fields: textLayerFields, fieldMeta: textLayerFieldMeta };
+    return {
+      fields: recoveredNames.fields,
+      text: orderedText,
+      pageImages: [],
+      nutritionTable: recoveredNutrition,
+      fieldMeta: recoveredNames.fieldMeta,
+      flattenedText: textLayerText
+    };
   }
 
   if (!textLayerUsable) {
@@ -731,7 +1041,14 @@ async function extractFieldsFromPdf(pdfBuffer: Buffer, knownFlavours: readonly s
   const pageImages = await rasterizePdfPages(pdfBuffer);
   if (pageImages.length === 0) {
     console.warn('[labelExtraction] No pages could be rasterized for OCR — using text-layer result as-is.');
-    return { fields: textLayerFields ?? extractLabelFields('', { knownFlavours }), text: orderedText, pageImages: [], nutritionTable };
+    return {
+      fields: textLayerFields ?? extractLabelFields('', { knownFlavours }),
+      text: orderedText,
+      pageImages: [],
+      nutritionTable,
+      fieldMeta: textLayerFieldMeta,
+      flattenedText: textLayerText
+    };
   }
 
   // Use flattened text (not reading-order text) as priorText for OCR. The reading-order
@@ -741,11 +1058,29 @@ async function extractFieldsFromPdf(pdfBuffer: Buffer, knownFlavours: readonly s
   // ingredients, etc.), so we swap back to reading-order text for better structure.
   let combinedText = textLayerText;
   let fields = textLayerFields ?? extractLabelFields('', { knownFlavours });
+  let fieldMeta = textLayerFieldMeta;
   for (const pageImage of pageImages) {
     if (isComplete(fields)) break;
     const result = await ocrImageWithEnhancement(pageImage, combinedText, knownFlavours);
     combinedText = result.text;
-    fields = fillBlanks(fields, result.fields);
+    // Raw fillBlanks, not fillBlanksFrom: result.fieldMeta already carries
+    // fine-grained per-field sources from within this one image's OCR pass
+    // (full-page vs. region vs. title-region vs. package-size), and merging
+    // it straight through preserves that instead of collapsing it to one tag.
+    const merged = fillBlanks(fields, result.fields, result.fieldMeta, fieldMeta);
+    fields = merged.fields;
+    fieldMeta = merged.meta;
+
+    // Nutrition table has no text-layer equivalent of fillBlanks (it isn't
+    // one of ExtractedLabelFields) — first non-empty OCR page wins, same
+    // "don't overwrite a value that's already there" rule as everything
+    // else in this pipeline.
+    if (!hasNutritionTable(nutritionTable)) {
+      const ocrNutrition = extractNutritionTableFromOcrWords(result.words);
+      if (hasNutritionTable(ocrNutrition)) {
+        nutritionTable = ocrNutrition;
+      }
+    }
   }
   debugLog(`Combined text after OCR (${combinedText.length} chars):\n${combinedText}`);
 
@@ -758,40 +1093,49 @@ async function extractFieldsFromPdf(pdfBuffer: Buffer, knownFlavours: readonly s
   // candidates from the first rasterized page to surface candidate brand/product titles
   // that OCR couldn't reliably extract but are visibly rendered.
   let displayTextCandidates: DisplayTextCandidate[] | undefined;
-  let fieldMeta: Record<string, FieldMeta> = {};
   if ((nameFieldMissing(fields.brand) || nameFieldMissing(fields.productName)) && pageImages.length > 0) {
     displayTextCandidates = await recoverDisplayTextCandidates(pageImages[0], spans, env.pdfRasterDpi);
     // Resolve blank display roles using VLM classification if available
     if (displayTextCandidates) {
       const resolved = await resolveBlankDisplayRoles(fields, pageImages[0], displayTextCandidates);
       fields = resolved.fields;
-      fieldMeta = resolved.fieldMeta;
+      // vlm-role-resolution may have cleared then refilled a field that
+      // held OCR garbage under an earlier tag (resolveBlankDisplayRoles
+      // treats garbage as blank) — its entry, spread last, correctly wins
+      // over the stale OCR tag for exactly the fields it touched.
+      fieldMeta = { ...fieldMeta, ...resolved.fieldMeta };
     }
   }
 
-  return { fields, text: finalText, pageImages, nutritionTable, displayTextCandidates, fieldMeta };
+  return { fields, text: finalText, pageImages, nutritionTable, displayTextCandidates, fieldMeta, flattenedText: textLayerText };
 }
 
 async function extractFieldsFromImage(imageBuffer: Buffer, knownFlavours: readonly string[]): Promise<FieldPass> {
-  let { text, fields } = await ocrImageWithEnhancement(imageBuffer, '', knownFlavours);
+  const ocrResult = await ocrImageWithEnhancement(imageBuffer, '', knownFlavours);
+  let { fields } = ocrResult;
+  const { text } = ocrResult;
+  let fieldMeta = ocrResult.fieldMeta;
   debugLog(`OCR text (${text.length} chars):\n${text}`);
   // The upload IS the page image, so colour reads straight off it.
+
+  // No PDF text layer at all for a direct image upload — this is the only
+  // pass that will ever see this label's nutrition panel.
+  const nutritionTable = extractNutritionTableFromOcrWords(ocrResult.words);
 
   // For image uploads, if brand or product name are still missing after OCR,
   // recover display-text candidates. No spans from text layer, so pass empty array.
   let displayTextCandidates: DisplayTextCandidate[] | undefined;
-  let fieldMeta: Record<string, FieldMeta> = {};
   if (nameFieldMissing(fields.brand) || nameFieldMissing(fields.productName)) {
     displayTextCandidates = await recoverDisplayTextCandidates(imageBuffer, [], env.pdfRasterDpi);
     // Resolve blank display roles using VLM classification if available
     if (displayTextCandidates) {
       const resolved = await resolveBlankDisplayRoles(fields, imageBuffer, displayTextCandidates);
       fields = resolved.fields;
-      fieldMeta = resolved.fieldMeta;
+      fieldMeta = { ...fieldMeta, ...resolved.fieldMeta };
     }
   }
 
-  return { fields, text, pageImages: [imageBuffer], displayTextCandidates, fieldMeta };
+  return { fields, text, pageImages: [imageBuffer], nutritionTable, displayTextCandidates, fieldMeta };
 }
 
 // Shared post-processing for extraction results: placeholder scrubbing, garbage
@@ -836,7 +1180,16 @@ async function postProcessExtractionResult(
   //
   // A no-op unless AI_EXTRACTION_URL is set, and never throws — see
   // aiExtraction.service.ts.
-  const ai = await applyAiFallback(scrubbed, { buffer: fileBuffer, mimeType, isPdf });
+  // brand/productName are the two fields a wrong-but-non-empty guess is known
+  // to squat on (see nameFieldMissing's own comment for the vocabulary of
+  // things that are never a name). Every earlier recovery pass already treats
+  // such a value as blank; telling the model's fallback the same thing is what
+  // stops '12.00 mm' from permanently blocking a correct brand name.
+  const overwritable = (['brand', 'productName'] as const).filter((field) =>
+    nameFieldMissing(scrubbed[field])
+  );
+
+  const ai = await applyAiFallback(scrubbed, { buffer: fileBuffer, mimeType, isPdf }, overwritable);
   if (ai.filled.length > 0) {
     console.warn(
       `[labelExtraction] Filled from the vision model rather than the label's own text: ${ai.filled.join(', ')}. ` +
@@ -896,7 +1249,7 @@ export async function extractLabelFromTextLayerOnly(
     debugLog(`Parsed fields: ${JSON.stringify(fields)}`);
 
     // Extract extended fields without a page image (text layer only, no colour)
-    const extended = await extractExtendedFields(text, undefined, knownClaims, nutritionTable);
+    const extended = await extractExtendedFields(text, undefined, knownClaims, nutritionTable, undefined, textLayerText);
     const result = toResult(fields, extended);
 
     // Post-process the result: placeholder scrubbing, garbage detection, AI fallback
@@ -982,7 +1335,14 @@ export async function extractLabelReportFromFile(
       }
     }
 
-    const extended = await extractExtendedFields(pass.text, pageImage, knownClaims, pass.nutritionTable, pass.displayTextCandidates);
+    const extended = await extractExtendedFields(
+      pass.text,
+      pageImage,
+      knownClaims,
+      pass.nutritionTable,
+      pass.displayTextCandidates,
+      pass.flattenedText
+    );
     const result = toResult(pass.fields, extended);
 
     // Post-process the result: placeholder scrubbing, garbage detection, AI fallback
@@ -993,15 +1353,27 @@ export async function extractLabelReportFromFile(
       isPdf
     );
 
-    // Merge Phase F provenance from both sources: the VLM role-resolution
-    // step (pass.fieldMeta, set while brand/productName were still being
-    // located) and the legacy vision-fallback (aiFieldMeta, set just above,
-    // covering whichever fields IT filled — a disjoint field set from the
-    // role resolver in practice, but a discarded-then-refilled field could
-    // in principle appear in both; the fallback runs last, so its entry
-    // wins for such a field, matching which value actually ended up in the
-    // result.
-    const fieldMeta: Record<string, FieldMeta> = { ...pass.fieldMeta, ...aiFieldMeta };
+    // Merge Phase F provenance from both sources: the whole read-and-resolve
+    // cascade (pass.fieldMeta, now tagging every one of the nine
+    // fillBlanks-cascade fields it filled, not just VLM ones — Step 2) and
+    // the legacy vision-fallback (aiFieldMeta, set just above, covering
+    // whichever fields IT filled — a disjoint field set from the rest in
+    // practice, but a discarded-then-refilled field could in principle
+    // appear in both; the fallback runs last, so its entry wins for such a
+    // field, matching which value actually ended up in the result.
+    //
+    // Filtered against the FINAL post-processed result, not just merged:
+    // placeholder scrubbing and the OCR-garbage check above can blank a
+    // field after pass.fieldMeta already tagged it (e.g. a text-layer read
+    // that turns out to be artwork-template scaffolding) — an entry for a
+    // field that is blank in the end would be a source claim for a value
+    // that no longer exists, so it's dropped here rather than trusted.
+    const mergedMeta: Record<string, FieldMeta> = { ...pass.fieldMeta, ...aiFieldMeta };
+    const fieldMeta: Record<string, FieldMeta> = {};
+    for (const [field, entry] of Object.entries(mergedMeta)) {
+      const finalValue = postProcessed[field as keyof LabelExtractionResult];
+      if (typeof finalValue === 'string' && finalValue) fieldMeta[field] = entry;
+    }
 
     return { result: postProcessed, unknownClaims: extended.unknownClaims, discardedFields, fieldMeta };
   } catch (error) {

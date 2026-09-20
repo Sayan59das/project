@@ -10,10 +10,13 @@ import {
   segmentPanels,
   toReadingOrderText,
   extractNutritionTableFromPanels,
+  ocrWordsToTextSpans,
+  extractNutritionTableFromOcrWords,
   type TextLine,
 } from '../services/textLayerGeometry.service';
 import { extractTextSpans } from '../services/pdf.service';
 import type { TextSpan } from '../services/pdf.service';
+import type { OcrWord } from '../services/tesseract.service';
 
 const FIXTURES = path.join(__dirname, 'fixtures');
 const load = (name: string) => readFileSync(path.join(FIXTURES, name));
@@ -274,7 +277,9 @@ test('extractNutritionTableFromPanels: header + two two-cell rows and one three-
     // Row 2: Protein | 0.5 g
     span({ text: 'Protein', x: 0, y: 176, width: 50, fontSize: 8 }),
     span({ text: '0.5 g', x: 200, y: 176, width: 50, fontSize: 8 }),
-    // Row 3: Vitamin C | 40 mg | 66% (three cells; %RDA column should be dropped)
+    // Row 3: Vitamin C | 40 mg | 66% (three cells; the one %RDA column is
+    // now kept, appended as "(66% DV)" -- see the %DV-append tests below
+    // for why this changed from the old drop-it behavior).
     span({ text: 'Vitamin C', x: 0, y: 164, width: 60, fontSize: 8 }),
     span({ text: '40 mg', x: 200, y: 164, width: 50, fontSize: 8 }),
     span({ text: '66%', x: 270, y: 164, width: 30, fontSize: 8 }),
@@ -285,7 +290,47 @@ test('extractNutritionTableFromPanels: header + two two-cell rows and one three-
   assert.deepEqual(result, {
     Energy: '12 kcal',
     Protein: '0.5 g',
-    'Vitamin C': '40 mg',
+    'Vitamin C': '40 mg (66% DV)',
+  });
+});
+
+// Step 6-prep (accuracy plan follow-up): the ground-truth review found
+// several nutrition tables where a real single %DV/%RDA column WAS being
+// dropped even though it's genuinely printed and the ground truth records
+// it (e.g. "0 g (0% DV)", "170 mg (100% DV)"). A single extra column is
+// unambiguous -- there's only one number it could be -- so it's now kept.
+// A row with TWO OR MORE extra columns (e.g. separate Kids/Teens figures)
+// is deliberately left as before: which column belongs to which age group
+// would need the header row's own labels read and matched positionally,
+// a real, separate piece of work not attempted here.
+test('extractNutritionTableFromPanels: a single extra %DV/%RDA column is kept, appended as "(<value> DV)"', () => {
+  const allSpans = [
+    span({ text: 'Nutritional Information', x: 0, y: 200, width: 300, fontSize: 8 }),
+    span({ text: 'Iron', x: 0, y: 188, width: 50, fontSize: 8 }),
+    span({ text: '13 mg', x: 200, y: 188, width: 50, fontSize: 8 }),
+    span({ text: '<0.5%', x: 270, y: 188, width: 40, fontSize: 8 }),
+  ];
+  const panels = segmentPanels(allSpans);
+  const result = extractNutritionTableFromPanels(panels);
+
+  assert.deepEqual(result, {
+    Iron: '13 mg (<0.5% DV)',
+  });
+});
+
+test('extractNutritionTableFromPanels: two extra columns (e.g. Kids/Teens) are left dropped, not guessed at', () => {
+  const allSpans = [
+    span({ text: 'Nutritional Information', x: 0, y: 200, width: 300, fontSize: 8 }),
+    span({ text: 'Iron', x: 0, y: 188, width: 50, fontSize: 8 }),
+    span({ text: '13 mg', x: 200, y: 188, width: 50, fontSize: 8 }),
+    span({ text: '100%', x: 270, y: 188, width: 40, fontSize: 8 }),
+    span({ text: '50%', x: 320, y: 188, width: 40, fontSize: 8 }),
+  ];
+  const panels = segmentPanels(allSpans);
+  const result = extractNutritionTableFromPanels(panels);
+
+  assert.deepEqual(result, {
+    Iron: '13 mg',
   });
 });
 
@@ -377,6 +422,92 @@ test('extractNutritionTableFromPanels: repeated name keeps first value', () => {
   });
 });
 
+// Step 5.1 (accuracy plan): the dominant real bug found in
+// STEP1_FAILURE_ANALYSIS.md's nutrition_table sample — a footnote/dosage/
+// storage sentence elsewhere in the panel, which happens to start with a
+// digit, gets captured as if it were a nutrient row's value. Real examples
+// below are taken directly from eval/diff.py --field nutrition_table
+// output, not invented (see the comment on each).
+test('extractNutritionTableFromPanels: a footnote sentence starting with a digit is not captured as a value', () => {
+  // Real value from Calrio/CALRIO Gummies' wrong nutrition_table cells —
+  // a "based on a 2000kcal diet" disclaimer line, not a nutrient.
+  const allSpans = [
+    span({ text: 'Nutritional Information', x: 0, y: 200, width: 300, fontSize: 8 }),
+    span({ text: 'Energy', x: 0, y: 188, width: 50, fontSize: 8 }),
+    span({ text: '12 kcal', x: 200, y: 188, width: 50, fontSize: 8 }),
+    span({
+      text: '2,000 kcal energy per day, however, calorie needs may vary.',
+      x: 0,
+      y: 176,
+      width: 300,
+      fontSize: 8
+    })
+  ];
+  const panels = segmentPanels(allSpans);
+  const result = extractNutritionTableFromPanels(panels);
+
+  assert.deepEqual(result, { Energy: '12 kcal' });
+});
+
+test('extractNutritionTableFromPanels: an RDA-guideline sentence starting with a year is not captured', () => {
+  // Real value from several labels' wrong nutrition_table cells — "2020
+  // guidelines for Children 5-17years & ..." is a citation for where the
+  // %RDA figures come from, not itself a row.
+  const allSpans = [
+    span({ text: 'Nutrition Facts', x: 0, y: 200, width: 300, fontSize: 8 }),
+    span({ text: 'Protein', x: 0, y: 188, width: 50, fontSize: 8 }),
+    span({ text: '0.5 g', x: 200, y: 188, width: 50, fontSize: 8 }),
+    span({ text: '2020 guidelines for Children 5-17years &', x: 0, y: 176, width: 300, fontSize: 8 })
+  ];
+  const panels = segmentPanels(allSpans);
+  const result = extractNutritionTableFromPanels(panels);
+
+  assert.deepEqual(result, { Protein: '0.5 g' });
+});
+
+test('extractNutritionTableFromPanels: a dosage sentence with a short parenthetical but more prose after it is not captured', () => {
+  // Real value from Calcimax's wrong nutrition_table cells — the
+  // parenthetical ("approx. 3g") is short like a real DV annotation, but
+  // there's meaningful text after it closes, which a real value never has.
+  const allSpans = [
+    span({ text: 'Nutrition Information', x: 0, y: 200, width: 300, fontSize: 8 }),
+    span({ text: 'Energy', x: 0, y: 188, width: 50, fontSize: 8 }),
+    span({ text: '12 kcal', x: 200, y: 188, width: 50, fontSize: 8 }),
+    span({
+      text: '1 gummy (approx. 3g) for kids & 2 gummies for adults.',
+      x: 0,
+      y: 176,
+      width: 300,
+      fontSize: 8
+    })
+  ];
+  const panels = segmentPanels(allSpans);
+  const result = extractNutritionTableFromPanels(panels);
+
+  assert.deepEqual(result, { Energy: '12 kcal' });
+});
+
+test('extractNutritionTableFromPanels: a real DV/RDA parenthetical breakdown is still captured, even though it is wordy', () => {
+  // Real CORRECT value shape (Step 1.2/Step 3's near-miss pattern) — must
+  // not be broken by the footnote-rejection rule above just because it has
+  // several words inside its parenthetical.
+  const allSpans = [
+    span({ text: 'Nutrition Facts', x: 0, y: 200, width: 300, fontSize: 8 }),
+    span({ text: 'Iron', x: 0, y: 188, width: 50, fontSize: 8 }),
+    span({
+      text: '0.5 mg (Children 1% / Teens 0.25% / Adults <0.5% DV)',
+      x: 200,
+      y: 188,
+      width: 200,
+      fontSize: 8
+    })
+  ];
+  const panels = segmentPanels(allSpans);
+  const result = extractNutritionTableFromPanels(panels);
+
+  assert.deepEqual(result, { Iron: '0.5 mg (Children 1% / Teens 0.25% / Adults <0.5% DV)' });
+});
+
 test('extractNutritionTableFromPanels: real fixture she-arise-gummies.pdf', async () => {
   const spans = await extractTextSpans(load('she-arise-gummies.pdf'));
   const panels = segmentPanels(spans);
@@ -440,4 +571,97 @@ test('extractNutritionTableFromPanels: value with parenthesized % is left alone'
   assert.deepEqual(result, {
     'Calcium': '40 mg (66%)',
   }, 'Value with parenthesized % should not be stripped');
+});
+
+// Step 6-prep (accuracy plan follow-up): the single-cell counterpart to the
+// multi-cell "single extra %DV/%RDA column is kept" test above -- same
+// underlying situation (a real %DV figure right after the amount), just
+// reaching stripTrailingPercentColumns via the single merged-string parse
+// path instead of splitLineIntoCells's gap-based columns.
+test('extractNutritionTableFromPanels: a single trailing %-figure (single-cell row) is kept, appended as "(<value> DV)"', () => {
+  const allSpans = [
+    span({ text: 'Nutritional Information', x: 0, y: 200, width: 300, fontSize: 8 }),
+    span({ text: 'Zinc 4 mg <0.5%', x: 0, y: 188, width: 300, fontSize: 8 }),
+  ];
+  const panels = segmentPanels(allSpans);
+  const result = extractNutritionTableFromPanels(panels);
+
+  assert.deepEqual(result, {
+    Zinc: '4 mg (<0.5% DV)',
+  });
+});
+
+test('extractNutritionTableFromPanels: multiple trailing %-figures (single-cell row) still get dropped, not guessed at', () => {
+  // Same "7.5 kcal <0.5% <0.5% <0.5%" shape as the brief's own test above,
+  // just confirming the new single-figure exception doesn't fire here too.
+  const allSpans = [
+    span({ text: 'Nutritional Information', x: 0, y: 200, width: 300, fontSize: 8 }),
+    span({ text: 'Some Other Nutrient 7.5 kcal <0.5% <0.5% <0.5%', x: 0, y: 188, width: 300, fontSize: 8 }),
+  ];
+  const panels = segmentPanels(allSpans);
+  const result = extractNutritionTableFromPanels(panels);
+
+  assert.deepEqual(result, {
+    'Some Other Nutrient': '7.5 kcal',
+  });
+});
+
+function ocrWord(props: { text: string; x0: number; y0: number; x1: number; y1: number; confidence?: number }): OcrWord {
+  return {
+    text: props.text,
+    bbox: { x0: props.x0, y0: props.y0, x1: props.x1, y1: props.y1 },
+    confidence: props.confidence ?? 90,
+  };
+}
+
+test('ocrWordsToTextSpans: pixel (y-down) coordinates are converted to PDF-style (y-up) spans', () => {
+  // A word nearer the TOP of the image (smaller y0) must end up with a
+  // LARGER converted y than a word further down — matching the PDF-space
+  // convention the rest of this module's geometry sorting (cross DESC)
+  // assumes, so a page read via OCR sorts top-to-bottom just like one read
+  // from a real PDF text layer.
+  const words = [
+    ocrWord({ text: 'Top', x0: 10, y0: 20, x1: 40, y1: 32 }),
+    ocrWord({ text: 'Bottom', x0: 10, y0: 200, x1: 60, y1: 212 }),
+  ];
+  const spans = ocrWordsToTextSpans(words);
+  const top = spans.find((s) => s.text === 'Top')!;
+  const bottom = spans.find((s) => s.text === 'Bottom')!;
+  assert.ok(top.y > bottom.y, 'the word nearer the top of the image should have the larger (PDF-style) y');
+  assert.equal(top.rotation, 0);
+  assert.equal(top.width, 30);
+  assert.equal(top.fontSize, 12);
+});
+
+test('extractNutritionTableFromOcrWords: recovers a nutrition table from OCR word boxes alone (no PDF text layer)', () => {
+  // Real shape of the problem this exists for: some client labels render
+  // their whole nutrition panel as artwork, so the PDF text layer has zero
+  // nutrition data — extractNutritionTableFromPanels(segmentPanels(spans))
+  // on the real text layer returns {} no matter what. This is the OCR
+  // fallback: the same header+rows table, but built from a rasterized
+  // page's OCR word boxes (pixel, y-down) instead of PDF spans (points,
+  // y-up) — three rows, one row's value has a single trailing %DV column
+  // that should be kept exactly like the PDF-text-layer path already does.
+  const words = [
+    ocrWord({ text: 'Nutrition', x0: 20, y0: 40, x1: 90, y1: 52 }),
+    ocrWord({ text: 'Information', x0: 92, y0: 40, x1: 170, y1: 52 }),
+    ocrWord({ text: 'Energy', x0: 20, y0: 60, x1: 70, y1: 72 }),
+    ocrWord({ text: '12', x0: 220, y0: 60, x1: 235, y1: 72 }),
+    ocrWord({ text: 'kcal', x0: 238, y0: 60, x1: 265, y1: 72 }),
+    ocrWord({ text: 'Protein', x0: 20, y0: 80, x1: 75, y1: 92 }),
+    ocrWord({ text: '0.5', x0: 220, y0: 80, x1: 240, y1: 92 }),
+    ocrWord({ text: 'g', x0: 243, y0: 80, x1: 250, y1: 92 }),
+    ocrWord({ text: 'Vitamin', x0: 20, y0: 100, x1: 70, y1: 112 }),
+    ocrWord({ text: 'C', x0: 73, y0: 100, x1: 82, y1: 112 }),
+    ocrWord({ text: '40', x0: 220, y0: 100, x1: 235, y1: 112 }),
+    ocrWord({ text: 'mg', x0: 238, y0: 100, x1: 255, y1: 112 }),
+    ocrWord({ text: '66%', x0: 290, y0: 100, x1: 315, y1: 112 }),
+  ];
+  const result = extractNutritionTableFromOcrWords(words);
+
+  assert.deepEqual(result, {
+    Energy: '12 kcal',
+    Protein: '0.5 g',
+    'Vitamin C': '40 mg (66% DV)',
+  });
 });

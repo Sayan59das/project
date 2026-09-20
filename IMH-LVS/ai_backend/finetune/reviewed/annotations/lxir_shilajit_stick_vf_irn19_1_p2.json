@@ -1,25 +1,27 @@
 {
-  "label": {
-    "address": null,
-    "brand_name": null,
-    "claims": null,
-    "colour_theme": null,
-    "customer_care_email": null,
-    "customer_care_number": null,
-    "flavour": null,
-    "fssai_number": null,
-    "ingredients": null,
-    "layout": "Blank die-line/dimension template",
-    "logo": null,
-    "manufacturing_company": null,
-    "marketing_company": null,
-    "nutrition_table": null,
-    "package_size": null,
-    "product_name": null
-  },
+  "image_file": "lxir_shilajit_stick_vf_irn19_1_p2.png",
+  "sourceFile": "LXIR Shilajit STICK VF IRN19-1.pdf",
   "page": 2,
   "reviewed": true,
-  "reviewedAt": 1789132800045,
+  "reviewedAt": 1789638973386,
   "isFront": false,
-  "sourceFile": "LXIR Shilajit STICK VF IRN19-1.pdf"
+  "label": {
+    "brand_name": null,
+    "product_name": null,
+    "marketing_company": null,
+    "manufacturing_company": null,
+    "fssai_number": null,
+    "package_size": null,
+    "flavour": null,
+    "colour_theme": null,
+    "logo": null,
+    "layout": "Blank die-line/dimension template",
+    "customer_care_number": null,
+    "customer_care_email": null,
+    "address": null,
+    "claims": null,
+    "ingredients": null,
+    "nutrition_table": null
+  },
+  "aiReviewNotes": "[AI first-pass review, pending human confirmation] Blank dimension die-line template checked directly against the image -- every null is correct."
 }

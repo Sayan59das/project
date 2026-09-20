@@ -110,12 +110,20 @@ test('PDF with a selectable text layer: extracts fields without OCR', { skip: SK
   assert.equal(body.data.marketingCompany, 'ABC Healthcare Pvt Ltd');
   assert.equal(body.data.fssaiNumber, '10023045009876');
   assert.equal(body.data.email, 'support@abchealthcaretest.com');
-  // Phase F: every field here was read straight off the text layer, on the
-  // fast path that never rasterizes or calls a model — fieldMeta must come
-  // back present but empty, not merely absent from the response, so a
-  // frontend that always reads response.fieldMeta never has to guard
-  // against it being undefined.
-  assert.deepEqual(body.fieldMeta, {});
+  // Step 2 (accuracy plan): fieldMeta now tags every field the fillBlanks
+  // cascade filled, not just VLM-inferred ones — this fixture's own
+  // productName is what finally showed this test's name was never quite
+  // accurate: the text layer here doesn't yield a complete productName, so
+  // this fixture DOES rasterize and OCR one field (title-region recovery),
+  // it was just invisible before fieldMeta could see non-VLM sources. Every
+  // other field really is a text-layer-flattened read, no OCR involved.
+  for (const field of ['marketingCompany', 'address', 'fssaiNumber', 'email', 'customerCareNumber', 'brand', 'flavour']) {
+    assert.deepEqual(body.fieldMeta[field], { source: 'text-layer-flattened', needsReview: false });
+  }
+  assert.deepEqual(body.fieldMeta.productName, { source: 'tesseract-title-region', needsReview: false });
+  assert.deepEqual(Object.keys(body.fieldMeta).sort(), [
+    'address', 'brand', 'customerCareNumber', 'email', 'flavour', 'fssaiNumber', 'marketingCompany', 'productName'
+  ]);
 });
 
 test('Scanned/image-only PDF: rasterizes and extracts via OCR (pdftoppm is installed in this environment)', { skip: SKIP }, async () => {
@@ -209,7 +217,7 @@ test('Real label PDF (Apple Cider Vinegar Gummy): reliable fields correct, targe
   // limitation of the extractor rather than a fact about the label; the
   // serving-size guards below still hold, so "Serving Size: 1 Gummy" and
   // "No. of Serving: ... 30" are still not mistaken for the pack.
-  assert.equal(body.data.packageSize, '30');
+  assert.equal(body.data.packageSize, '30 N');
 });
 
 // A second real label from the same manufacturer/marketing company family
@@ -273,7 +281,7 @@ test('Real label PDF (Chyawanprash Gummies): same manufacturer, different produc
   // "Net Content: 30 N" declaration that does state the pack count. Still not
   // derived from "Serving Size: 1 Gummy" or "No. of Serving: per container 30"
   // — those guards are unchanged.
-  assert.equal(body.data.packageSize, '30');
+  assert.equal(body.data.packageSize, '30 N');
 });
 
 // Reproduces a real user-reported extraction failure: a label whose front
@@ -320,7 +328,7 @@ test('Real label PDF (Sharp Mind Plus Gummies): three-tier title (brand/name/for
   // be shadowed by an earlier, unrelated "1 Gummy daily" dosage
   // instruction ("Recommended Usage: 1 Gummy daily or as suggested by
   // your dietitian.") being mistaken for the pack count instead.
-  assert.equal(body.data.packageSize, '30');
+  assert.equal(body.data.packageSize, '30 Gummies');
 
   // This artwork's own printed license number ("Lic. No. T-2304/Ayur") is
   // the MANUFACTURER's Ayurvedic/AYUSH license, not a 14-digit FSSAI
@@ -371,7 +379,7 @@ test('Real label PDF (She-Arise Gummies): front count badge recovered via spatia
   // OCR pass's word positions and re-reading just the region above it
   // with a digit-only character whitelist. Never a guess: this is the
   // actual printed front-of-pack count.
-  assert.equal(body.data.packageSize, '30');
+  assert.equal(body.data.packageSize, '30 N');
 
   // The label states "Strawberry & Mint Flavour" split across two lines
   // joined by "&". This is proof the compound-flavour mechanism is
@@ -475,7 +483,7 @@ test('Real-world label pattern (JPG, via OCR): every field recovered, none guess
   // "30 Gummies" (front-label count) must win over "Serving Size: 1
   // Gummy" and "No. of Serving: per container 30" — neither of which is
   // the total pack count.
-  assert.equal(body.data.packageSize, '30');
+  assert.equal(body.data.packageSize, '30 Gummies');
 });
 
 test('Unsupported file type is rejected with a controlled 400', { skip: SKIP }, async () => {

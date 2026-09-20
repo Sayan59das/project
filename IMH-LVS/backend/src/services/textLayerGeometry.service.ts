@@ -1,4 +1,5 @@
 import type { TextSpan } from './pdf.service';
+import type { OcrWord } from './tesseract.service';
 
 export type TextLine = {
   page: number;
@@ -330,6 +331,56 @@ export function toReadingOrderText(spans: readonly TextSpan[]): string {
   return panelTexts.join('\n\n');
 }
 
+// Adapts OCR word boxes (pixel coordinates, y increasing downward) into this
+// module's TextSpan shape (PDF-convention coordinates, y increasing upward),
+// so the same panel/line/nutrition-table geometry pipeline built for the PDF
+// text layer also works on a rasterized page's OCR output — the only path
+// available when a label's nutrition panel is baked into the artwork as an
+// image rather than real embedded PDF text (a real, common case on this
+// project's client labels: the PDF text layer has no nutrition data at all,
+// so extractNutritionTableFromPanels(segmentPanels(spans-from-PDF)) always
+// returns {} for those labels, no matter what the text layer contains
+// elsewhere on the page). Rotation is always 0 here: a full-page OCR pass
+// reads the rasterized (already right-side-up) image, not individual
+// arbitrarily-rotated glyphs the way a PDF's text layer can report.
+export function ocrWordsToTextSpans(words: readonly OcrWord[], page: number = 1): TextSpan[] {
+  return words
+    .filter((word) => word.text.trim().length > 0)
+    .map((word) => ({
+      page,
+      text: word.text,
+      x: word.bbox.x0,
+      y: -word.bbox.y0,
+      width: word.bbox.x1 - word.bbox.x0,
+      height: word.bbox.y1 - word.bbox.y0,
+      fontSize: word.bbox.y1 - word.bbox.y0,
+      rotation: 0,
+      fontName: 'ocr',
+    }));
+}
+
+// Convenience wrapper: OCR words in, nutrition table out, via the same
+// row/cell heuristics used for the PDF text layer — but deliberately
+// skipping segmentPanels' column-banding step. That step relies on some
+// line (in practice, the nutrition header) having a span wide enough to
+// bridge the empty horizontal gutter between the name and value columns,
+// or it reads that gutter as a gap between two separate side-by-side
+// panels and splits the table apart — the name column ends up in one
+// panel, the value column in another, and neither one alone has a
+// header + a same-panel value to pair it with. A real PDF text layer
+// sometimes has such a bridging span (one wide text run for the whole
+// header line); individual OCR word boxes never do, so segmentPanels
+// would silently return {} for every OCR-sourced page. Going straight
+// from words to lines to one single page-wide panel sidesteps that:
+// column separation for the OCR path happens per-row instead, in
+// splitLineIntoCells's own x-gap check, which doesn't have this problem.
+export function extractNutritionTableFromOcrWords(words: readonly OcrWord[], page: number = 1): Record<string, string> {
+  const spans = ocrWordsToTextSpans(words, page);
+  const lines = groupSpansIntoLines(spans);
+  const panel: Panel = { page, rotation: 0, lines };
+  return extractNutritionTableFromPanels([panel]);
+}
+
 // Extracts nutrient name -> printed value from the "Nutrition(al) Information" block of one label.
 // Walks panels in order and each panel's lines in order to find the header line (first line matching
 // the nutrition header regex). Candidate rows are lines following the header within the same panel,
@@ -353,6 +404,63 @@ export function extractNutritionTableFromPanels(panels: readonly Panel[]): Recor
 
   // Regex to validate that a value STARTS with an optional comparison operator and then a digit
   const valueStartsWithNumberRegex = /^[<>≤≥~]?\s*\d/;
+
+  // Step 5.1 (accuracy plan): a genuine nutrition row's name or value is
+  // short and number/unit-shaped -- "Total Carbohydrate", "0.5 mg (Children
+  // 1% / Teens 0.25% / Adults <0.5% DV)" -- never a full sentence. Real bug
+  // this catches, from eval/diff.py --field nutrition_table output (not
+  // invented, see STEP1_FAILURE_ANALYSIS.md): a footnote/dosage/storage/
+  // RDA-citation sentence elsewhere in the panel, which happens to start
+  // with (or the singleCellRegex above happens to split on) a digit, gets
+  // captured as if it were a nutrient row -- "2,000 kcal energy per day,
+  // however, calorie needs may vary.", "2020 guidelines for Children
+  // 5-17years &", "1 gummy (approx. 3g) for kids & 2 gummies for adults."
+  // Rule: whatever comes before the first "(" (or the whole string, if
+  // there's no "(") must be at most 3 words, and nothing meaningful may
+  // follow the closing ")" -- a genuine DV/RDA breakdown parenthetical is
+  // always the LAST thing in a value (or the name has none at all).
+  function looksLikeNutritionText(s: string): boolean {
+    const trimmed = s.trim();
+    const openIdx = trimmed.indexOf('(');
+    if (openIdx === -1) {
+      return trimmed.split(/\s+/).filter(Boolean).length <= 3;
+    }
+    const head = trimmed.slice(0, openIdx).trim();
+    if (head.split(/\s+/).filter(Boolean).length > 3) return false;
+    const closeIdx = trimmed.lastIndexOf(')');
+    if (closeIdx === -1) return true; // unbalanced -- let other rules judge it
+    return trimmed.slice(closeIdx + 1).trim().length === 0;
+  }
+
+  // The existing %-column strip below (for "7.5 kcal <0.5% <0.5% <0.5%" ->
+  // "7.5 kcal") must not fire on a % figure that's INSIDE an unclosed
+  // parenthetical -- "0.5 mg (Children 1% / Teens 0.25% / Adults <0.5%
+  // DV)" would otherwise lose everything from " 1%" onward, destroying a
+  // real DV/RDA breakdown instead of a stray %RDA column.
+  //
+  // Step 6-prep (accuracy plan follow-up): when there is exactly ONE
+  // trailing %-figure being stripped, it's unambiguously that value's own
+  // %DV/%RDA figure -- kept, appended as "(<value> DV)" instead of
+  // silently discarded, mirroring the multi-cell case above. Two or more
+  // (a Children/Teens/Adults-style triple, still matched as one greedy
+  // trailing run) stay dropped exactly as before: no way to tell which
+  // figure is which from the value string alone.
+  function stripTrailingPercentColumns(value: string): string {
+    const match = value.match(/\s+[<>≤≥~]?\d[\d.,]*\s*%.*$/);
+    if (!match || match.index === undefined) return value;
+    const before = value.slice(0, match.index);
+    const openParens = (before.match(/\(/g) || []).length;
+    const closeParens = (before.match(/\)/g) || []).length;
+    if (openParens > closeParens) return value;
+
+    const trimmedBefore = before.trim();
+    const tail = value.slice(match.index).trim();
+    const singlePercentFigure = /^([<>≤≥~]?\d[\d.,]*\s*%)$/.exec(tail);
+    if (singlePercentFigure) {
+      return `${trimmedBefore} (${singlePercentFigure[1]} DV)`;
+    }
+    return trimmedBefore;
+  }
 
   let headerPanelIndex = -1;
   let headerLineIndex = -1;
@@ -398,9 +506,23 @@ export function extractNutritionTableFromPanels(panels: readonly Panel[]): Recor
     let value: string | null = null;
 
     if (cells.length >= 2) {
-      // Multi-cell row: name = cells[0], value = cells[1] ONLY (cells[2+] are %RDA/%DV columns)
+      // Multi-cell row: name = cells[0], value = cells[1]. A single extra
+      // column (cells.length === 3) is unambiguously that same value's
+      // %DV/%RDA figure -- kept, appended as "(<value> DV)" rather than
+      // silently discarded (Step 6-prep accuracy-plan fix; ground-truth
+      // review found real rows where this was genuinely printed and
+      // recorded, e.g. "170 mg (100% DV)"). Two or more extra columns
+      // (e.g. separate Kids/Teens figures) are left dropped as before --
+      // which one belongs to which age group isn't recoverable from the
+      // row alone, a different, unattempted piece of work.
       name = cells[0].trim();
       value = cells[1];
+      if (cells.length === 3) {
+        const extraColumn = cells[2].trim();
+        if (/^[<>≤≥~]?\d[\d.,]*\s*%$/.test(extraColumn)) {
+          value = `${cells[1]} (${extraColumn} DV)`;
+        }
+      }
     } else if (cells.length === 1) {
       // Single-cell row: try regex extraction
       const match = singleCellRegex.exec(cells[0]);
@@ -410,17 +532,23 @@ export function extractNutritionTableFromPanels(panels: readonly Panel[]): Recor
       }
     }
 
-    // Skip if value does not START with a number (with optional comparison operator) or name is empty
+    // Skip if value does not START with a number (with optional comparison operator) or name is empty.
     if (name && value && valueStartsWithNumberRegex.test(value)) {
-      // Strip trailing %-column tokens: remove " [<>≤≥~]?digit[digit.,]* %anything" from the end.
-      // This cleans up rows where the value cell physically contains %RDA/%DV columns:
-      // "7.5 kcal <0.5% <0.5% <0.5%" becomes "7.5 kcal"; "40 mg (66%)" is left alone
-      // because the % is inside parentheses (not a bare column token).
-      value = value.replace(/\s+[<>≤≥~]?\d[\d.,]*\s*%.*$/, '').trim();
+      // Strip trailing %-column tokens BEFORE the shape check below, not
+      // after: a genuine value like "7.5 kcal <0.5% <0.5% <0.5%" reads as
+      // a multi-word sentence until the stray %RDA columns are gone, at
+      // which point it's clearly nutrition-shaped again. "40 mg (66%)" and
+      // a DV/RDA breakdown parenthetical are left alone either way (see
+      // stripTrailingPercentColumns above).
+      value = stripTrailingPercentColumns(value);
 
-      // Store only if name not already present (keep first value)
-      if (!(name in result)) {
-        result[name] = value;
+      // Reject if either side now reads like a sentence rather than a
+      // nutrient name/value (see looksLikeNutritionText above).
+      if (looksLikeNutritionText(name) && looksLikeNutritionText(value)) {
+        // Store only if name not already present (keep first value)
+        if (!(name in result)) {
+          result[name] = value;
+        }
       }
     }
 

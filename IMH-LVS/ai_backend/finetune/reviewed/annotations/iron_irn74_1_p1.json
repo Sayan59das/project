@@ -1,7 +1,26 @@
 {
+  "image_file": "iron_irn74_1_p1.png",
+  "sourceFile": "Iron IRN74-1.pdf",
+  "page": 1,
+  "reviewed": true,
+  "reviewedAt": 1789662988208,
+  "isFront": true,
   "label": {
-    "address": "Plot No. 70/85/86, Bhatoli Kalan, Baddi (H.P.); A.O.: SCO No. 48, Sector-5, MDC, PKL (H.R.) 134114",
     "brand_name": "BioFaith",
+    "product_name": "Iron Gummies",
+    "marketing_company": "BioFaith (A Division of LXIR Medilabs Pvt. Ltd.)",
+    "manufacturing_company": "IM Healthcare Pvt. Ltd.",
+    "fssai_number": "10924999000008",
+    "package_size": "30 Gummies",
+    "flavour": "Strawberry",
+    "colour_theme": [
+      "Red"
+    ],
+    "logo": "Stylised leaf-swirl B in the BioFaith wordmark",
+    "layout": "Bottle label (jar cap circles + wraparound body label)",
+    "customer_care_number": "0172-4045014",
+    "customer_care_email": "info@biofaith.in",
+    "address": "Plot No. 70/85/86, Bhatoli Kalan, Baddi (H.P.); A.O.: SCO No. 48, Sector-5, MDC, PKL (H.R.) 134114",
     "claims": [
       "Helps Support Iron Levels",
       "Supports Formation Of Red Blood Cells",
@@ -12,13 +31,6 @@
       "Nut Free",
       "Cruelty Free"
     ],
-    "colour_theme": [
-      "Red"
-    ],
-    "customer_care_email": "info@biofaith.in",
-    "customer_care_number": "0172-4045014",
-    "flavour": "Strawberry",
-    "fssai_number": "10924999000008",
     "ingredients": [
       "Corn Syrup",
       "Sugar",
@@ -30,10 +42,6 @@
       "Food Colour: Black Carrot Concentrate (Daucus Carota root extract)",
       "Natural Sweetener Stevia (INS 960)"
     ],
-    "layout": "Bottle label (jar cap circles + wraparound body label)",
-    "logo": "Stylised leaf-swirl B in the BioFaith wordmark",
-    "manufacturing_company": "IM Healthcare Pvt. Ltd.",
-    "marketing_company": "BioFaith (A Division of LXIR Medilabs Pvt. Ltd.)",
     "nutrition_table": {
       "Dietary Fiber (as Pectin)": "0.10 g",
       "Energy": "16 kcal (<1% DV)",
@@ -43,13 +51,7 @@
       "Sodium": "8 mg (<1% DV)",
       "Sugars": "3.2 g",
       "Total Carbohydrate": "4.4 g"
-    },
-    "package_size": "30 Gummies",
-    "product_name": "Iron Gummies"
+    }
   },
-  "page": 1,
-  "reviewed": true,
-  "reviewedAt": 1789132800036,
-  "isFront": true,
-  "sourceFile": "Iron IRN74-1.pdf"
+  "aiReviewNotes": "[AI first-pass review, pending human confirmation] All priority fields, claims, and the full nutrition_table (including the Kids 74% / Teens 47.27% DV split on the Iron row) checked directly against the image -- all correct and complete, no %DV omissions here unlike the ChewNectar Iron IRN121 family."
 }

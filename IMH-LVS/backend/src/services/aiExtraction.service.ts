@@ -75,18 +75,25 @@ const TRIGGER_FIELDS = ['brand', 'productName', 'marketingCompany', 'fssaiNumber
  *    (see its own comment) — see imageSimilarity.service.ts instead, which
  *    compares them on the actual artwork pixels.
  *
- *  - `nutrition_table` maps to our dedicated `nutritionTable` field, kept
- *    JSON-encoded (see LabelExtractionResult's own comment on why) rather
- *    than joined into a display string the way the list fields below are —
- *    labelComparison.service.ts's compareNutritionTables() parses it back
- *    out to compare row by row. This is a SEPARATE field from
- *    `nutritionTableFormat`, which stays the coarse panel-format
- *    classification ('Detailed per 100g') Tesseract already produces.
+ *  - `ingredients` and `nutrition_table` have no destination EITHER, and that
+ *    is a deliberate, evidence-based exclusion rather than an oversight. Both
+ *    are long, dense, many-valued fields, and this model does not read them —
+ *    it writes something plausible instead. Asked to read a real client label
+ *    (HSN VF IRN75-1.pdf) it returned ingredients that appear nowhere on the
+ *    pack ('Lactose, 120 mg', 'Maltodextrin, 300 mg'; the real declaration
+ *    starts 'Corn Syrup, Sugar, Water'), and a nutrition table with 4 of the
+ *    label's 17 rows, with figures that contradict the printed ones ('Energy:
+ *    67 kJ' where the label prints 8 kcal). The developer brief's own rule is
+ *    that the fabrication rate must never rise in exchange for accuracy, and
+ *    both fields already have grounded readers that work off text actually
+ *    present on the page (labelSemanticExtractor, textLayerGeometry). A blank
+ *    here is a MISSING a reviewer investigates; an invented value compares
+ *    like a real one and is the more dangerous failure. Worth revisiting only
+ *    with a model measured to read these two fields faithfully.
  *
  * The list separators match what our own extractors emit, so an AI-filled
  * value and a Tesseract-read one compare on equal terms: ' | ' for claims
- * (labelSemanticExtractor), ' & ' for colour theme (colourTheme.service), and
- * ', ' for ingredients, which is how an ingredients line is printed.
+ * (labelSemanticExtractor) and ' & ' for colour theme (colourTheme.service).
  */
 const FIELD_MAP: {
   [K in keyof LabelExtractionResult]?: (ai: AiExtractedLabel) => string | null | undefined;
@@ -102,29 +109,47 @@ const FIELD_MAP: {
   email: (ai) => ai.customer_care_email,
   packageSize: (ai) => ai.package_size,
   claims: (ai) => joinList(ai.claims, ' | '),
-  colourTheme: (ai) => joinList(ai.colour_theme, ' & '),
-  ingredients: (ai) => joinList(ai.ingredients, ', '),
-  nutritionTable: (ai) => encodeNutritionTable(ai.nutrition_table)
+  colourTheme: (ai) => joinList(ai.colour_theme, ' & ')
 };
 
-// Keeps only rows with both a real nutrient name and a real value — the
-// model has been observed to leave a row with a null/blank amount when it
-// couldn't read that one line, and a row like that is noise, not data.
-// Returns undefined (never '{}') when nothing usable is left, so this
-// behaves like every other absent field rather than encoding an empty
-// object as if it were a real (blank) nutrition table.
-function encodeNutritionTable(value: Record<string, unknown> | null | undefined): string | undefined {
-  if (!value || typeof value !== 'object') return undefined;
-  const rows = Object.entries(value)
-    .map(([nutrient, amount]): [string, string] => [nutrient.trim(), amount === null || amount === undefined ? '' : String(amount).trim()])
-    .filter(([nutrient, amount]) => nutrient.length > 0 && amount.length > 0);
-  if (rows.length === 0) return undefined;
-  return JSON.stringify(Object.fromEntries(rows));
+/**
+ * Text the model writes INSTEAD of an answer, which must never be stored.
+ *
+ * A model that cannot read a field has two honest options — omit the key or
+ * write null — and this one regularly takes a third, writing its apology into
+ * the value: 'No Marketing Company Provided' and 'Not Available' both came
+ * back from a single real label. Stored as content that is the dangerous
+ * failure the placeholder-text service exists to prevent one layer up: two
+ * labels the model gave up on would compare MATCH on 'Not Available', and a
+ * label compared against one would report a CONFLICT over words nobody printed.
+ *
+ * Deliberately narrow, because the cost of over-matching is losing real label
+ * content. A bare 'None'/'Unknown'/'N/A' is refused outright, and a 'No <...>'
+ * phrase is refused ONLY when it closes with a did-not-find verb — so the real
+ * claim shapes this client actually prints ('No Added Sugar', 'No Gelatin')
+ * and names that merely begin with those letters ('Novocal', 'Nourish') are
+ * all still accepted.
+ */
+const MODEL_NON_ANSWER: readonly RegExp[] = [
+  /^(n\/?a|none|nil|null|unknown|unspecified|undisclosed|not\s+applicable)$/i,
+  /^not\s+(available|provided|specified|mentioned|found|listed|stated|given|present|readable|legible|visible|detected)\b/i,
+  /^no\s+.{0,60}?\s+(provided|available|found|specified|mentioned|listed|stated|given|present|detected|visible)$/i
+];
+
+function isModelNonAnswer(value: string): boolean {
+  const trimmed = value.trim().replace(/[.\s]+$/, '');
+  if (trimmed === '') return true;
+  return MODEL_NON_ANSWER.some((pattern) => pattern.test(trimmed));
 }
 
+// Refusals are filtered per ITEM, not only on the joined string: a list that
+// is half real and half apology ('Gelatin Free', 'None') would otherwise sail
+// through the whole-value check and store 'None' as though it were a claim.
 function joinList(value: string[] | null | undefined, separator: string): string | undefined {
   if (!Array.isArray(value)) return undefined;
-  const items = value.map((item) => String(item).trim()).filter((item) => item.length > 0);
+  const items = value
+    .map((item) => String(item).trim())
+    .filter((item) => item.length > 0 && !isModelNonAnswer(item));
   return items.length > 0 ? items.join(separator) : undefined;
 }
 
@@ -137,7 +162,8 @@ function joinList(value: string[] | null | undefined, separator: string): string
  */
 export async function applyAiFallback(
   current: LabelExtractionResult,
-  file: { buffer: Buffer; mimeType: string; isPdf: boolean }
+  file: { buffer: Buffer; mimeType: string; isPdf: boolean },
+  overwritable: readonly (keyof LabelExtractionResult)[] = []
 ): Promise<{ result: LabelExtractionResult; filled: string[] }> {
   const unchanged = { result: current, filled: [] as string[] };
 
@@ -159,6 +185,7 @@ export async function applyAiFallback(
 
   const result = { ...current };
   const filled: string[] = [];
+  const mayOverwrite = new Set(overwritable);
 
   for (const [field, read] of Object.entries(FIELD_MAP) as [
     keyof LabelExtractionResult,
@@ -167,12 +194,24 @@ export async function applyAiFallback(
     // Only ever fills a gap. A value our own extraction read off the label's
     // text layer is evidence; a value the model inferred is a guess, and a
     // guess must not overwrite evidence.
-    if (result[field].trim() !== '') continue;
+    //
+    // The exception the caller opts into: a field it has already judged to
+    // hold something that is not a value at all. On a real client label
+    // (HSN VF IRN75-1.pdf) the text layer put '12.00 mm' in brand — a bare
+    // measurement, never a brand — and because that string is non-empty it
+    // silently blocked this model's correct 'BioFaith' from ever being used.
+    // That is the same wrong-value-blocks-a-better-source defect the recovery
+    // passes in labelExtraction already treat as blank; this honours the same
+    // judgement rather than making its own.
+    if (result[field].trim() !== '' && !mayOverwrite.has(field)) continue;
 
     const value = read(payload);
     if (value === null || value === undefined) continue;
     const trimmed = String(value).trim();
-    if (trimmed === '') continue;
+    // A refusal must not fill a gap, and must not replace known-garbage
+    // either — leaving the garbage visible to a reviewer beats overwriting it
+    // with the model's apology.
+    if (trimmed === '' || isModelNonAnswer(trimmed)) continue;
 
     result[field] = trimmed;
     filled.push(field);

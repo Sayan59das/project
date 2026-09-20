@@ -15,11 +15,11 @@
 
 import fs from 'fs';
 import path from 'path';
-import { extractLabelFromFile } from '../src/services/labelExtraction.service';
+import { extractLabelReportFromFile } from '../src/services/labelExtraction.service';
+import { splitIngredientsList } from '../src/services/labelSemanticExtractor.service';
 
-// The delimiter used by labelSemanticExtractor.service to join claims/ingredients.
+// The delimiter used by labelSemanticExtractor.service to join claims.
 const CLAIM_DELIMITER = ' | ';
-const INGREDIENT_DELIMITER = ',';
 const COLOUR_DELIMITER = ' & '; // colourTheme.service's own join delimiter
 
 interface OutputRecord {
@@ -44,6 +44,40 @@ interface OutputRecord {
   // extract-textlayer.ts; not a gap specific to this script.
   logo: null;
   layout: null;
+  // Step 2 (accuracy plan): which pass wrote each non-blank scalar field,
+  // keyed the same snake_case way as the field itself (e.g. brand_name),
+  // so eval/score.py can join this record's per-field source straight onto
+  // its own per-field scoring without a separate name-mapping table. Absent
+  // key == blank field, same convention as the rest of this record. Only
+  // covers the nine fillBlanks-cascade fields — manufacturing_company is a
+  // fixed constant and the list/table fields (claims, ingredients,
+  // nutrition_table, colour_theme) have their own, non-cascading extraction
+  // paths that fieldMeta doesn't track.
+  field_sources: Record<string, string>;
+}
+
+// LabelExtractionResult's camelCase field names -> this record's own
+// snake_case names, for exactly the nine fields fieldMeta can tag (see
+// FieldSource's own doc comment in labelExtraction.service.ts).
+const FIELD_META_KEY_MAP: Record<string, string> = {
+  marketingCompany: 'marketing_company',
+  address: 'address',
+  fssaiNumber: 'fssai_number',
+  email: 'customer_care_email',
+  customerCareNumber: 'customer_care_number',
+  brand: 'brand_name',
+  flavour: 'flavour',
+  productName: 'product_name',
+  packageSize: 'package_size'
+};
+
+function toFieldSources(fieldMeta: Record<string, { source: string }>): Record<string, string> {
+  const sources: Record<string, string> = {};
+  for (const [key, entry] of Object.entries(fieldMeta)) {
+    const snakeKey = FIELD_META_KEY_MAP[key];
+    if (snakeKey) sources[snakeKey] = entry.source;
+  }
+  return sources;
 }
 
 function blankToNull(value: string): string | null {
@@ -83,10 +117,11 @@ function nullRecordFor(filePath: string): OutputRecord {
     colour_theme: null,
     logo: null,
     layout: null,
+    field_sources: {},
   };
 }
 
-function toOutputRecord(filePath: string, extractionResult: any): OutputRecord {
+function toOutputRecord(filePath: string, extractionResult: any, fieldMeta: Record<string, { source: string }>): OutputRecord {
   return {
     source_file: path.basename(filePath),
     brand_name: blankToNull(extractionResult.brand),
@@ -100,11 +135,12 @@ function toOutputRecord(filePath: string, extractionResult: any): OutputRecord {
     package_size: blankToNull(extractionResult.packageSize),
     manufacturing_company: blankToNull(extractionResult.manufacturingCompany),
     claims: parseDelimited(extractionResult.claims, CLAIM_DELIMITER),
-    ingredients: parseDelimited(extractionResult.ingredients, INGREDIENT_DELIMITER),
+    ingredients: splitIngredientsList(extractionResult.ingredients),
     nutrition_table: parseNutritionTable(extractionResult.nutritionTable),
     colour_theme: extractionResult.colourTheme ? parseDelimited(extractionResult.colourTheme, COLOUR_DELIMITER) : null,
     logo: null,
     layout: null,
+    field_sources: toFieldSources(fieldMeta),
   };
 }
 
@@ -125,8 +161,8 @@ async function main() {
   try {
     for (const pdfPath of pdfPaths) {
       try {
-        const extractionResult = await extractLabelFromFile(pdfPath, 'application/pdf');
-        results.push(toOutputRecord(pdfPath, extractionResult));
+        const report = await extractLabelReportFromFile(pdfPath, 'application/pdf');
+        results.push(toOutputRecord(pdfPath, report.result, report.fieldMeta));
       } catch (error) {
         console.error(`Warning: failed to extract ${pdfPath}: ${error instanceof Error ? error.message : String(error)}`);
         results.push(nullRecordFor(pdfPath));

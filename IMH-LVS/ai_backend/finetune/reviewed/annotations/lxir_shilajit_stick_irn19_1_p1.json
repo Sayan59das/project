@@ -40,7 +40,8 @@
   },
   "page": 1,
   "reviewed": true,
-  "reviewedAt": 1789132800043,
+  "reviewedAt": 1789663476608,
   "isFront": true,
-  "sourceFile": "LXIR Shilajit STICK IRN19-1.pdf"
+  "sourceFile": "LXIR Shilajit STICK IRN19-1.pdf",
+  "aiReviewNotes": "AI-resolved per explicit user request. DECISION: kept 'Varsha Olive CHS' for this Stick product -- both Stick label files independently agree on this reading, and the higher-resolution VF die-line proof confirms it clearly. NOTE FOR FOLLOW-UP: this does NOT match the already-reviewed Shilajit GUMMY sibling files (lxir_shilajit_gummy_irn18_1_p1.json and lxir_shilajit_gummy_vf_irn18_1_p1.json), which say 'Vastu Chime CHS' for what should be the exact same company address -- those two Gummy files were left untouched here (already marked reviewed, out of today's scope) but likely need the same correction; flagging for a human decision on which building name is the real one before fixing the Gummy files to match."
 }

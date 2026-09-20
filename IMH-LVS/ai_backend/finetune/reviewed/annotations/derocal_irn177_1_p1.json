@@ -3,7 +3,7 @@
   "sourceFile": "Derocal IRN177-1.pdf",
   "page": 1,
   "reviewed": true,
-  "reviewedAt": 1789132800016,
+  "reviewedAt": 1789663476605,
   "isFront": true,
   "label": {
     "brand_name": "Derocal-G",
@@ -17,7 +17,8 @@
       "100% Veg",
       "Gelatin Free",
       "Great Taste",
-      "Gluten Free"
+      "Gluten Free",
+      "Cruelty Free"
     ],
     "logo": null,
     "layout": "Carton (flattened, front + back panels)",
@@ -49,5 +50,6 @@
     "customer_care_email": "deeparpharmaceuticals@gmail.com",
     "package_size": "30 Gummies",
     "manufacturing_company": "IM Healthcare Pvt. Ltd."
-  }
+  },
+  "aiReviewNotes": "AI-resolved per explicit user request. DECISION: added 'Cruelty Free' to claims. The pink heart/rabbit icon in the certification row is too small on this specific image to read its label text with 100% pixel-level certainty, but the identical icon design has been directly confirmed (readable text) as 'Cruelty Free' on multiple other labels in this same dataset (Eye Wellness, Cal Vit D IRN120-1/2/4, MHJ Immunity, the BioFaith family) -- strong pattern evidence, not a blind guess. Flagging this reasoning in case a closer look ever contradicts it."
 }

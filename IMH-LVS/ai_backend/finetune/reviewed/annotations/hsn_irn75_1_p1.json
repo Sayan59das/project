@@ -1,7 +1,28 @@
 {
+  "image_file": "hsn_irn75_1_p1.png",
+  "sourceFile": "HSN IRN75-1.pdf",
+  "page": 1,
+  "reviewed": true,
+  "reviewedAt": 1789638705535,
+  "isFront": true,
   "label": {
-    "address": "Plot No. 70/85/86, Bhatoli Kalan, Baddi (H.P.); A.O.: SCO No. 48, Sector-5, MDC, PKL (H.R.) 134114",
     "brand_name": "BioFaith",
+    "product_name": "Hair, Skin & Nails Gummies (Rich in Biotin)",
+    "marketing_company": "BioFaith (A Division of LXIR Medilabs Pvt. Ltd.)",
+    "manufacturing_company": "IM Healthcare Pvt. Ltd.",
+    "fssai_number": "10924999000008",
+    "package_size": "30 Gummies",
+    "flavour": "Strawberry",
+    "colour_theme": [
+      "Grey",
+      "Brown",
+      "Beige"
+    ],
+    "logo": "Stylised leaf-swirl B in the BioFaith wordmark",
+    "layout": "Bottle label (jar cap circles + wraparound body label)",
+    "customer_care_number": "0172-4045014",
+    "customer_care_email": "info@biofaith.in",
+    "address": "Plot No. 70/85/86, Bhatoli Kalan, Baddi (H.P.); A.O.: SCO No. 48, Sector-5, MDC, PKL (H.R.) 134114",
     "claims": [
       "Supports Hair Health",
       "Helps Maintain Healthy Skin",
@@ -12,15 +33,6 @@
       "Nut Free",
       "Cruelty Free"
     ],
-    "colour_theme": [
-      "Grey",
-      "Brown",
-      "Beige"
-    ],
-    "customer_care_email": "info@biofaith.in",
-    "customer_care_number": "0172-4045014",
-    "flavour": "Strawberry",
-    "fssai_number": "10924999000008",
     "ingredients": [
       "Corn Syrup",
       "Sugar",
@@ -41,10 +53,6 @@
       "Vitamin B12",
       "Natural Sweetener Stevia (INS 960)"
     ],
-    "layout": "Bottle label (jar cap circles + wraparound body label)",
-    "logo": "Stylised leaf-swirl B in the BioFaith wordmark",
-    "manufacturing_company": "IM Healthcare Pvt. Ltd.",
-    "marketing_company": "BioFaith (A Division of LXIR Medilabs Pvt. Ltd.)",
     "nutrition_table": {
       "Biotin": "30 mcg (100% DV)",
       "Dietary Fiber (as Pectin)": "0.05 g",
@@ -63,13 +71,7 @@
       "Vitamin C (as Ascorbic Acid)": "11.25 mg (17% DV)",
       "Vitamin E (as D-alpha Tocopherol Acetate)": "10 mg (100% DV)",
       "Zinc (as Zinc Citrate)": "1 mg (8% DV)"
-    },
-    "package_size": "30 Gummies",
-    "product_name": "Hair, Skin & Nails Gummies (Rich in Biotin)"
+    }
   },
-  "page": 1,
-  "reviewed": true,
-  "reviewedAt": 1789132800028,
-  "isFront": true,
-  "sourceFile": "HSN IRN75-1.pdf"
+  "aiReviewNotes": "[AI first-pass review, pending human confirmation] All priority fields, claims (including the 'Free From Gluten | Milk | Soy' pill correctly consolidating 3 of the 7 free-from icons, and 'Cruelty Free' confirmed present), and the full 17-row nutrition_table checked directly against the image -- all correct. package_size '30 Gummies' matches the front badge over the batch box's 'Net Content: 30 N' -- a wording-convention pattern, not a quantity conflict."
 }

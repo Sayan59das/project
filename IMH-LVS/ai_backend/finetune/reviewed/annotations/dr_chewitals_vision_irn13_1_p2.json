@@ -3,28 +3,29 @@
   "sourceFile": "Dr. Chewitals Vision IRN13-1.pdf",
   "page": 2,
   "reviewed": true,
-  "reviewedAt": 1789132800018,
+  "reviewedAt": 1789663548970,
   "isFront": false,
   "label": {
     "brand_name": "Dr. Chewitals",
     "product_name": "Complete Wellness Gummy - Vision",
+    "marketing_company": null,
+    "manufacturing_company": null,
+    "fssai_number": null,
+    "package_size": null,
+    "flavour": null,
     "colour_theme": [
       "Light Blue"
     ],
-    "flavour": null,
+    "logo": null,
+    "layout": "Circular cap face (top); blank base template",
+    "customer_care_number": null,
+    "customer_care_email": null,
+    "address": null,
     "claims": [
       "Perfect blend of Vitamins and Carotenoids"
     ],
-    "logo": null,
-    "layout": "Circular cap face (top); blank base template",
-    "nutrition_table": null,
-    "fssai_number": null,
     "ingredients": null,
-    "marketing_company": null,
-    "address": null,
-    "customer_care_number": null,
-    "customer_care_email": null,
-    "package_size": null,
-    "manufacturing_company": null
-  }
+    "nutrition_table": null
+  },
+  "aiReviewNotes": "[AI first-pass review, pending human confirmation] Bottle-cap die-line proof (top face + blank base template) checked directly against the image -- all fields correct, including the many nulls (this page genuinely has no marketing company, address, ingredients, etc. -- just the cap-top branding and one claim)."
 }

@@ -1,7 +1,26 @@
 {
+  "image_file": "eye_wellness_domestic_label_mhj_p1.png",
+  "sourceFile": "EYE WELLNESS DOMESTIC LABEL MHJ.pdf",
+  "page": 1,
+  "reviewed": true,
+  "reviewedAt": 1789638521803,
+  "isFront": true,
   "label": {
-    "address": null,
     "brand_name": "WOOBY",
+    "product_name": "Eye Wellness Kids Gummies (Lutein+)",
+    "marketing_company": null,
+    "manufacturing_company": null,
+    "fssai_number": null,
+    "package_size": "30 Gummies",
+    "flavour": "Strawberry-Mint",
+    "colour_theme": [
+      "Orange"
+    ],
+    "logo": null,
+    "layout": "Poster-style front panel",
+    "customer_care_number": null,
+    "customer_care_email": null,
+    "address": null,
     "claims": [
       "No Artificial Colours",
       "No Preservatives",
@@ -14,25 +33,8 @@
       "Teeth Friendly",
       "USFDA Registered Facility"
     ],
-    "colour_theme": [
-      "Orange"
-    ],
-    "customer_care_email": null,
-    "customer_care_number": null,
-    "flavour": "Strawberry-Mint",
-    "fssai_number": null,
     "ingredients": null,
-    "layout": "Poster-style front panel",
-    "logo": null,
-    "manufacturing_company": null,
-    "marketing_company": null,
-    "nutrition_table": null,
-    "package_size": "30 Gummies",
-    "product_name": "Eye Wellness Kids Gummies (Lutein+)"
+    "nutrition_table": null
   },
-  "page": 1,
-  "reviewed": true,
-  "reviewedAt": 1789132800019,
-  "isFront": true,
-  "sourceFile": "EYE WELLNESS DOMESTIC LABEL MHJ.pdf"
+  "aiReviewNotes": "[AI first-pass review, pending human confirmation] All fields checked directly against the image -- correct, including all 10 claims (no duplicates, nothing missing) and the many correct nulls (this is a poster-style front-only panel with no back-panel legal info on it, so marketing_company/address/ingredients/nutrition_table are genuinely absent here, not missed)."
 }

@@ -241,6 +241,35 @@ function normalizeCompanySuffix(value: string): string {
   return value;
 }
 
+// Step 5.5 (accuracy plan): some labels print the company name and its
+// full address BEFORE the "Marketed By:" anchor line, using the anchor
+// only as a trailing attribution — the line right after it is a licence/
+// registration number, not the company name. Real pattern (Step 1.2's
+// "Riomedica template" finding, confirmed by dumping the actual PDF text
+// layer): "RIOMEDICA HEALTHCARE PVT. LTD. ... 654, Arjun Nagar... Marketed
+// By: LIC. NO. 10824999000328" — the ordinary same-line/next-line read
+// returns the licence number here, wrong on both marketing_company AND
+// address (extractAddress starts collecting from the company name's own
+// line index).
+const LICENCE_OR_REG_LINE = /^(lic\.?\s*no\.?|fssai(\s*lic\.?(ence|ense)?\s*no\.?)?|reg(istration)?\.?\s*no\.?|license\s*no\.?)\s*[:\-]?\s*\d/i;
+const COMPANY_SUFFIX_LINE = /\b(pvt\.?\s*ltd\.?|private\s*limited|ltd\.?|limited|llp|inc\.?)\.?\s*$/i;
+const COMPANY_LOOKBACK_LINES = 8;
+
+// Searches backward from the anchor for the nearest line that reads like
+// a company name (ends in a Ltd/Pvt Ltd/LLP/Inc-style suffix) — only
+// tried when the anchor's own next line failed to look like one, so this
+// never overrides the ordinary same-line/next-line reads that already work.
+function findCompanyNameBefore(lines: string[], anchorIndex: number): { value: string; lineIndex: number } | null {
+  const floor = Math.max(0, anchorIndex - COMPANY_LOOKBACK_LINES);
+  for (let i = anchorIndex - 1; i >= floor; i--) {
+    const line = lines[i];
+    if (!COMPANY_SUFFIX_LINE.test(line)) continue;
+    const sanitized = sanitizeCandidateLine(line, 60);
+    if (sanitized) return { value: normalizeCompanySuffix(sanitized.value), lineIndex: i };
+  }
+  return null;
+}
+
 function extractMarketingCompany(lines: string[]): { value: string; lineIndex: number } {
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
@@ -269,6 +298,23 @@ function extractMarketingCompany(lines: string[]): { value: string; lineIndex: n
     // company name on the next line — common when a design's stacked
     // text gets OCR'd or extracted as separate lines.
     const nextLine = lines[i + 1];
+
+    // But when that next line reads as a licence/registration number
+    // instead, the company name (and its address) was very likely
+    // already printed above this anchor — see findCompanyNameBefore's
+    // own comment. Tried before the ordinary next-line read below, only
+    // when that read would otherwise return the wrong thing.
+    if (nextLine && LICENCE_OR_REG_LINE.test(nextLine)) {
+      const before = findCompanyNameBefore(lines, i);
+      if (before) {
+        debugLog(
+          `marketingCompany: matched "${before.value}" by looking above anchor "${line}" — ` +
+            `the next line "${nextLine}" reads as a licence/registration number, not a company name.`
+        );
+        return before;
+      }
+    }
+
     if (nextLine && !MANUFACTURING_KEYWORDS.test(nextLine)) {
       const sanitized = sanitizeCandidateLine(nextLine, 60);
       if (sanitized) {
@@ -304,7 +350,20 @@ function extractMarketingCompany(lines: string[]): { value: string; lineIndex: n
 const ADDRESS_PREFIX = /^address\s*[:\-]?\s*/i;
 const REGISTERED_OFFICE_PREFIX = /^(registered\s*office|regd\.?\s*office)\s*[:\-]?\s*/i;
 const ADDRESS_STOP_LINE =
-  /^(fssai|customer\s*care|consumer\s*care|helpline|toll[\s-]?free|batch|mfg\.?\s*(date|by)|use\s*by|m\.?r\.?p\.?|manufactured|net\s*(content|wt)|ingredients|nutritional\s*information|to\s*be\s*sold|not\s*for\s*medicinal|recommended\s*usage|health\s*supplement)/i;
+  /^(fssai|customer\s*care|consumer\s*care|helpline|toll[\s-]?free|batch|mfg\.?\s*(date|by)|use\s*by|m\.?r\.?p\.?|manufactured|net\s*(content|wt)|ingredients|nutritional\s*information|(not\s+)?to\s*be\s*sold|not\s*for\s*medicinal|recommended\s*usage|health\s*supplement)/i;
+
+// A city/place name printed directly against a following hyphen with no
+// space before it ("Delhi- 110015") but a normal space after — a real,
+// minor PDF-text-layer spacing quirk seen on several client labels, not
+// anything this extractor's own line handling introduces. Ground truth
+// always has the space on both sides ("Delhi - 110015"), so this is a
+// safe, purely cosmetic normalization: it only inserts a space where a
+// letter sits directly against a hyphen that already has whitespace (or
+// end of string) after it, never touching a hyphen used as part of a
+// plot/lot number ("3/416", no letters either side) or a compound word.
+function normalizeAddressPunctuation(value: string): string {
+  return value.replace(/([A-Za-z])-(\s|$)/g, '$1 -$2');
+}
 
 function extractAddress(lines: string[], emailPattern: RegExp, marketingCompanyLineIndex: number): string {
   for (const line of lines) {
@@ -312,7 +371,7 @@ function extractAddress(lines: string[], emailPattern: RegExp, marketingCompanyL
     const value = stripLabelPrefix(line, ADDRESS_PREFIX);
     if (value) {
       debugLog(`address: matched "${value}" via "Address:" prefix from line "${line}"`);
-      return value;
+      return normalizeAddressPunctuation(value);
     }
   }
 
@@ -321,7 +380,7 @@ function extractAddress(lines: string[], emailPattern: RegExp, marketingCompanyL
     const value = stripLabelPrefix(line, REGISTERED_OFFICE_PREFIX);
     if (value) {
       debugLog(`address: matched "${value}" via "Registered Office" prefix from line "${line}"`);
-      return value;
+      return normalizeAddressPunctuation(value);
     }
   }
 
@@ -339,12 +398,31 @@ function extractAddress(lines: string[], emailPattern: RegExp, marketingCompanyL
       const line = lines[i];
       if (ADDRESS_STOP_LINE.test(line) || emailPattern.test(line) || MANUFACTURING_KEYWORDS.test(line)) break;
 
+      // A pure parenthetical aside ("(An ISO 9001:2015 Certified
+      // Company)") is never address content on any label — skipped, not
+      // collected and not treated as a stop signal, so real address lines
+      // on either side of it still join into one block.
+      if (/^\(.*\)$/.test(line.trim())) continue;
+
+      // A corporate-structure clause ("A Division of X Pvt. Ltd.") is a
+      // real, common line between the marketing company's own name and
+      // its address on several client labels (e.g. "A Division of LXIR
+      // Medilabs Pvt Ltd" before "Plot No. 70/85/86, Bhatoli Kalan..."),
+      // not address content — skipped the same way the parenthetical
+      // aside above is, generic to any company's own divisional wording,
+      // not this one company's specific name.
+      if (/^a\s+division\s+of\b/i.test(line.trim())) continue;
+
       const sanitized = sanitizeCandidateLine(line, 80);
       if (!sanitized) {
         debugLog(`address: stopped collecting at line "${line}" — fails the noise/length sanity gate.`);
         break;
       }
-      collected.push(sanitized.value);
+      // Trailing comma is just the line-wrap the label's own layout left
+      // behind ("654, Arjun Nagar, Nanhera Road," continues on the next
+      // line) — stripped so joining collected lines with ", " doesn't
+      // double up into "Road,, Ambala".
+      collected.push(sanitized.value.replace(/,\s*$/, ''));
       // A line that had to be truncated (real noise or unrelated content
       // followed the clean part, as opposed to just trailing punctuation
       // being trimmed) marks the end of the address section — don't keep
@@ -352,7 +430,7 @@ function extractAddress(lines: string[], emailPattern: RegExp, marketingCompanyL
       if (sanitized.wasTruncated) break;
     }
     if (collected.length > 0) {
-      const value = collected.join(', ');
+      const value = normalizeAddressPunctuation(collected.join(', '));
       debugLog(`address: matched "${value}" from the lines following the identified marketing company.`);
       return value;
     }
@@ -447,7 +525,7 @@ function extractFssaiNumber(text: string): string {
 // single source of truth for "words that name a product's physical form
 // rather than its identity", across every place that needs to recognize
 // one.
-export const PRODUCT_FORM_WORDS = 'gummies|gummy|capsules?|tablets?|softgels?|sachets?|pieces?|units?|count|ct\\.?';
+export const PRODUCT_FORM_WORDS = 'gummies|gummy|capsules?|tablets?|softgels?|sachets?|sticks?|pieces?|units?|count|ct\\.?';
 const PACKAGE_SIZE_PATTERN = new RegExp(`\\b(\\d{1,4})\\s*(${PRODUCT_FORM_WORDS})\\b`, 'gi');
 // Anything indicating the number is a per-serving amount, not the total
 // pack count — "Serving Size: 1 Gummy" must never be read as packageSize.
@@ -501,17 +579,65 @@ function isFollowedByDosageWording(text: string, matchEndIndex: number): boolean
 // weight and must not be read as a pack of 100. Only counting units match, so
 // a mass or volume declaration is simply not a candidate.
 const NET_CONTENT_COUNT_PATTERN =
-  /\bnet\s*(?:content|qty|quantity)\s*[:\-]?\s*(\d{1,4})\s*(?:n|nos?|no\.?|units?|pieces?|gummies|gummy|tablets?|capsules?)\b/i;
+  /\bnet\s*(?:content|qty|quantity)\s*[:\-]?\s*(\d{1,4})\s*(n|nos?|no\.?|units?|pieces?|gummies|gummy|tablets?|capsules?)\b/i;
+
+// Step 6-prep (accuracy plan follow-up): a handful of labels print a
+// front-of-pack count badge that genuinely DISAGREES on the number (not
+// just the wording) with the label's own back-panel figures — "10
+// GUMMIES" as the badge, while "Serving Size: 2 Gummies" x "No. of
+// Serving: per container 15" and a separate "Net Content: 30 N" both
+// independently say 30. Confirmed by direct review that this is a real
+// printing inconsistency (the badge is stale shared-template text), not
+// a misread — so when the regulatory serving-count math and the Net
+// Content declaration corroborate EACH OTHER against the badge, that
+// corroborated count is used instead of the badge's own number. Requires
+// both independent back-panel signals to agree; a badge/Net-Content
+// mismatch with no serving-count math to corroborate either side is left
+// alone (falls through to the existing, already-shipped badge-wins
+// behavior) — this is deliberately narrow, not a blanket "prefer Net
+// Content" rule.
+const SERVING_SIZE_COUNT_PATTERN = new RegExp(
+  `serving\\s*size\\s*:?\\s*(\\d{1,3}(?:\\.\\d+)?)\\s*(?:${PRODUCT_FORM_WORDS})`,
+  'i'
+);
+const SERVINGS_PER_CONTAINER_PATTERN =
+  /no\.?\s*of\s*servings?\s*:?\s*per\s*container\s*:?\s*(\d{1,3})|servings?\s*per\s*container\s*:?\s*(\d{1,3})/i;
+
+// The count the serving-size/servings-per-container math implies, or null
+// when either piece is missing or the label states a fractional serving
+// size too irregular to trust a multiplication from (only whole and
+// half-unit serving sizes are multiplied; anything odder is left alone
+// rather than guessed at).
+function servingCountMathTotal(text: string): number | null {
+  const servingsMatch = text.match(SERVINGS_PER_CONTAINER_PATTERN);
+  if (!servingsMatch) return null;
+  const servingsPerContainer = Number(servingsMatch[1] ?? servingsMatch[2]);
+  if (!Number.isFinite(servingsPerContainer) || servingsPerContainer <= 0) return null;
+
+  const sizeMatch = text.match(SERVING_SIZE_COUNT_PATTERN);
+  const perServing = sizeMatch ? Number(sizeMatch[1]) : 1; // "Serving Size: 1 Gummy" often omitted when 1
+  if (!Number.isFinite(perServing) || perServing <= 0 || perServing % 0.5 !== 0) return null;
+
+  return servingsPerContainer * perServing;
+}
 
 function extractPackageSize(text: string): string {
-  // Tried before the '<number> Gummies' wording below because it is an explicit
-  // declaration of the pack count rather than a phrase that usually means one.
-  const netContent = text.match(NET_CONTENT_COUNT_PATTERN);
-  if (netContent) {
-    debugLog(`packageSize: matched "${netContent[1]}" from the Net Content declaration "${netContent[0].trim()}".`);
-    return netContent[1];
-  }
-
+  // Step 5 follow-up (accuracy plan): tried BEFORE the Net Content
+  // declaration below, reversing the original Step 5.1 order. Real
+  // evidence from a full 45-label run (eval/diff.py --mode pipeline
+  // --field package_size) showed the Net-Content-first order was wrong
+  // far more often than it was right: 22 of 26 wrong answers were "<N>
+  // N" where the ground truth wanted "<N> Gummies"/"<N> Sticks" — the
+  // product's own form word, printed as its own front-of-pack badge, is
+  // what the label is actually understood to say. Net Content's "N" unit
+  // (short for "numbers/units", a regulatory count declaration) still
+  // wins when no form-word badge exists on the label at all — confirmed
+  // still correct for real cases where the two are genuinely both
+  // printed (Cal. Vit D IRN120-1.pdf has both "Net Content: 30 N" and a
+  // "30 GUMMIES" badge, and — a real, human-confirmed exception —
+  // ground truth wants "30 N" there specifically, not "30 Gummies"; the
+  // user was shown this exact tradeoff and chose the reordering anyway
+  // as the better net bet across all 45 labels).
   const re = new RegExp(PACKAGE_SIZE_PATTERN);
   let match: RegExpExecArray | null;
   while ((match = re.exec(text))) {
@@ -523,8 +649,46 @@ function extractPackageSize(text: string): string {
       debugLog(`packageSize: rejected "${match[1]}" from "${match[0].trim()}" — followed by dosage wording ("daily"/"per day"/...), a per-day dose, not the total pack count.`);
       continue;
     }
-    debugLog(`packageSize: matched "${match[1]}" from "${match[0].trim()}".`);
-    return match[1];
+    // Before trusting the badge number, check whether it's actually
+    // contradicted by two independent back-panel signals agreeing with
+    // each other (see servingCountMathTotal's own comment above) — a real,
+    // narrow exception to "badge wins", not a reordering of the general
+    // rule.
+    const badgeCount = Number(match[1]);
+    const netContentForConflictCheck = text.match(NET_CONTENT_COUNT_PATTERN);
+    const netContentCount = netContentForConflictCheck ? Number(netContentForConflictCheck[1]) : null;
+    if (netContentCount !== null && netContentCount !== badgeCount) {
+      const corroboratedTotal = servingCountMathTotal(text);
+      if (corroboratedTotal !== null && corroboratedTotal === netContentCount) {
+        const corroboratedValue = `${corroboratedTotal} ${match[2]}`;
+        debugLog(
+          `packageSize: badge "${match[1]} ${match[2]}" contradicted by Net Content ` +
+            `(${netContentCount}) AND serving-count math (${corroboratedTotal}) agreeing with each ` +
+            `other — using "${corroboratedValue}" instead of the badge.`
+        );
+        return corroboratedValue;
+      }
+    }
+
+    // Reconstructed as "<number> <unit>" rather than returning match[0]
+    // verbatim, so irregular OCR spacing ("30Gummies", "30  Gummies")
+    // still normalizes to one space, the same shape the ground truth uses.
+    const value = `${match[1]} ${match[2]}`;
+    debugLog(`packageSize: matched "${value}" from "${match[0].trim()}".`);
+    return value;
+  }
+
+  // Falls back to the Net Content declaration only when no form-word
+  // badge was found — the number ALONE, not "30 N"/"30 Gummies", was the
+  // original dominant wrong-answer pattern this whole function exists to
+  // fix (Step 5.1: 35 of 40 in an early sample), and the ground truth
+  // always carries a unit token, so a bare digit reads as a different
+  // value even when the count itself was read correctly.
+  const netContent = text.match(NET_CONTENT_COUNT_PATTERN);
+  if (netContent) {
+    const value = `${netContent[1]} ${netContent[2]}`;
+    debugLog(`packageSize: matched "${value}" from the Net Content declaration "${netContent[0].trim()}".`);
+    return value;
   }
 
   debugLog('packageSize: no confident "<number> Gummies/Count/..." wording found — leaving blank.');
@@ -933,8 +1097,17 @@ function mentionsManufacturingCompany(line: string): boolean {
 // claim-badge text as the immunity/booster/energy/etc. words already
 // excluded below, just verb-led instead of noun-led, and just as common
 // across supplement labels regardless of what the specific claim is about.
+//
+// "(not\s+)?to\s*be\s*sold" (also in ADDRESS_STOP_LINE below): a real
+// wrong productName answer (Calcimax Pack 30/60 IRN168/169-2.pdf, once
+// the company-suffix exclusion above stopped the worse mistake of
+// picking the company's own name) was "Not To Be Sold Loose" — this
+// list already excluded "to be sold" on its own, but anchored to the
+// start of the line, so the real printed wording with "Not" in front of
+// it slipped through. Standard Indian packaged-goods regulatory
+// boilerplate, not specific to this one product.
 const TITLE_BOILERPLATE_LINE =
-  /^(marketed|manufactured|address|fssai|customer\s*care|consumer\s*care|helpline|email|e-mail|website|www\.|toll[\s-]?free|batch|mfg|exp|use\s*by|m\.?r\.?p\.?|price|net\s*(content|wt)|ingredients|images?\s*are|keep\s*out|keep\s*away|store\s*in|not\s*for|registered|regd|facility|nutritional|recommended\s*usage|duration\s*of|do\s*not|this\s*food|contains|health\s*supplement|to\s*be\s*sold|per\s*(gummy|serving)|free\s*of|serving\s*size|no\.?\s*of\s*serving|immunity|booster|energy|vitality|wellness|nutraceutical|daily|ayurvedic|proprietary\s*medicine|supports?\b|helps?\b|promotes?\b|boosts?\b|improves?\b|maintains?\b|enhances?\b)/i;
+  /^(marketed|manufactured|address|fssai|customer\s*care|consumer\s*care|helpline|email|e-mail|website|www\.|toll[\s-]?free|batch|mfg|exp|use\s*by|m\.?r\.?p\.?|price|net\s*(content|wt)|ingredients|images?\s*are|keep\s*out|keep\s*away|store\s*in|not\s*for|registered|regd|facility|nutritional|recommended\s*usage|duration\s*of|do\s*not|this\s*food|contains|health\s*supplement|(not\s+)?to\s*be\s*sold|per\s*(gummy|serving)|free\s*of|serving\s*size|no\.?\s*of\s*serving|immunity|booster|energy|vitality|wellness|nutraceutical|daily|ayurvedic|proprietary\s*medicine|supports?\b|helps?\b|promotes?\b|boosts?\b|improves?\b|maintains?\b|enhances?\b)/i;
 
 const ALL_CAPS_LINE = /^[A-Z][A-Z0-9 &'.-]*$/;
 
@@ -1037,6 +1210,25 @@ function dedupeConsecutiveLines(lines: string[]): string[] {
 
 type TitleBlockResult = { brand: string; productName: string };
 
+// Step 5.6 (accuracy plan): a candidate title/brand line is excluded not
+// just when it CONTAINS the known marketing company name, but also when
+// the marketing company name CONTAINS it. Real pattern, found by dumping
+// a real label's actual OCR text (CALRIO Gummies (2).pdf): a rotated side
+// panel gets OCR'd with "RIOMEDICA" alone on its own short line, a
+// fragment of the fuller "RIOMEDICA HEALTHCARE PVT. LTD." this label's
+// marketingCompany had already correctly resolved to (Step 5.5) — the old
+// one-directional check ("does the CANDIDATE contain the company name")
+// never catches this, since here the fragment is the SHORTER side. Guarded
+// to at least 4 characters so a short, unrelated word that merely happens
+// to appear inside a long company name isn't excluded by coincidence.
+function overlapsMarketingCompany(line: string, marketingCompany: string): boolean {
+  if (!marketingCompany) return false;
+  const candidate = line.toLowerCase();
+  const company = marketingCompany.toLowerCase();
+  if (candidate.includes(company)) return true;
+  return candidate.length >= 4 && company.includes(candidate);
+}
+
 function findTitleBlock(lines: string[], marketingCompany: string): TitleBlockResult {
   // Collapse a repeated-phrase line ("GUMMIES GUMMIES GUMMIES...") down to
   // one occurrence BEFORE candidacy checks — otherwise the repeated text
@@ -1046,7 +1238,18 @@ function findTitleBlock(lines: string[], marketingCompany: string): TitleBlockRe
   const deduped = dedupeConsecutiveLines(lines).map((line) => collapseRepeatedPhrase(line));
   const candidates: { line: string; pos: number }[] = [];
   deduped.forEach((line, pos) => {
-    if (marketingCompany && line.toLowerCase().includes(marketingCompany.toLowerCase())) return;
+    if (overlapsMarketingCompany(line, marketingCompany)) return;
+    // A line shaped like a company name (ends "Pvt. Ltd.", "Ltd.", "LLP",
+    // "Inc.", ...) is never a real product name, regardless of whether it
+    // happens to match the marketingCompany field's own resolved value —
+    // a real wrong answer on Calcimax Pack 30/60 IRN168/169-2.pdf, where
+    // productName came back as "Meyer Organics Pvt. Ltd." (the correct
+    // marketing company's name) rather than "Calcimax Gummies". Checked
+    // independently of overlapsMarketingCompany above as a defense-in-
+    // depth rule, not a duplicate of it — this fires even on a label
+    // where marketingCompany itself wasn't resolved to the same string
+    // yet (or at all), catching the same shape of mistake either way.
+    if (COMPANY_SUFFIX_LINE.test(line)) return;
     // A short ALL-CAPS line immediately following one that ends in a
     // dangling connector ("&", "and", "or", a trailing comma) is the
     // wrapped tail of a longer sentence, not a standalone title — seen in
@@ -1216,7 +1419,7 @@ function extractBrandFallback(lines: string[], marketingCompany: string): string
     if (/\d{3,}/.test(line)) continue;
     if (isBareFieldLabel(line)) continue;
     if (EMAIL_PATTERN.test(line)) continue;
-    if (marketingCompany && line.toLowerCase().includes(marketingCompany.toLowerCase())) continue;
+    if (overlapsMarketingCompany(line, marketingCompany)) continue;
     if (mentionsManufacturingCompany(line)) continue;
     if (looksLikeSentence(line)) continue;
     if (line.length < 2 || line.length > 40) continue;

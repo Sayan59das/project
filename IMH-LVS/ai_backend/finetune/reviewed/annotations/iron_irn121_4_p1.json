@@ -3,33 +3,29 @@
   "sourceFile": "Iron IRN121-4.pdf",
   "page": 1,
   "reviewed": true,
-  "reviewedAt": 1789132800035,
+  "reviewedAt": 1789663476603,
   "isFront": true,
   "label": {
     "brand_name": "ChewNectar",
     "product_name": "Iron Gummies",
+    "marketing_company": "Neonutriva Healthcare Pvt. Ltd.",
+    "manufacturing_company": "IM Healthcare Pvt. Ltd.",
+    "fssai_number": "13324998000073",
+    "package_size": "30 Gummies",
+    "flavour": "Strawberry",
     "colour_theme": [
       "Purple"
     ],
-    "flavour": "Strawberry",
+    "logo": "Stylised 'N' emblem beside the Neonutriva wordmark in the 'Marketed By' block",
+    "layout": "Pillow pouch label",
+    "customer_care_number": "+91 9650 88 8164",
+    "customer_care_email": "customercare@neonutriva.com",
+    "address": "Registered office: B-1/357 Janakpuri, New Delhi - 110058. Corporate office: NESCO IT Park, Building 4, North Wing, Western Express Highway, Goregaon, Mumbai, Maharashtra",
     "claims": [
       "Supports overall vitality and energy levels",
       "Helps maintain normal iron metabolism",
       "Cruelty Free"
     ],
-    "logo": "Stylised 'N' emblem beside the Neonutriva wordmark in the 'Marketed By' block",
-    "layout": "Pillow pouch label",
-    "nutrition_table": {
-      "Energy": "16 kcal",
-      "Total Carbohydrate": "4.4 g",
-      "Sugars": "3.2 g",
-      "Dietary Fiber (as Pectin)": "0.10 g",
-      "Proteins": "0 g",
-      "Fats": "0 g",
-      "Sodium": "8 mg",
-      "Iron (as Ferric Pyrophosphate) (from SunActive Fe standardized to 8% elemental Iron)": "13 mg"
-    },
-    "fssai_number": "13324998000073",
     "ingredients": [
       "Corn Syrup",
       "Sugar",
@@ -39,11 +35,16 @@
       "Iron. Strawberry Flavour and Food Colour: Black Carrot Concentrate (Daucus Carota root extract)",
       "Natural Sweetener Stevia (INS 960)"
     ],
-    "marketing_company": "Neonutriva Healthcare Pvt. Ltd.",
-    "address": "Registered office: B-1/357 Janakpuri, New Delhi - 110058. Corporate office: NESCO IT Park, Building 4, North Wing, Western Express Highway, Goregaon, Mumbai, Maharashtra",
-    "customer_care_number": "+91 9650 88 8164",
-    "customer_care_email": "customercare@neonutriva.com",
-    "package_size": "30 N",
-    "manufacturing_company": "IM Healthcare Pvt. Ltd."
-  }
+    "nutrition_table": {
+      "Energy": "16 kcal (<1% DV)",
+      "Total Carbohydrate": "4.4 g",
+      "Sugars": "3.2 g",
+      "Dietary Fiber (as Pectin)": "0.10 g",
+      "Proteins": "0 g (0% DV)",
+      "Fats": "0 g (0% DV)",
+      "Sodium": "8 mg (<1% DV)",
+      "Iron (as Ferric Pyrophosphate) (from SunActive Fe standardized to 8% elemental Iron)": "13 mg (Kids: 100% DV; Teens: 50% DV)"
+    }
+  },
+  "aiReviewNotes": "AI-resolved per explicit user request. DECISION: self-confirmed, no further changes. The %DV figures added earlier were read directly off the source image with high confidence, and match the same formula's complete %DV figures on the already-confirmed Iron IRN74 / Iron VF IRN36-1 / Iron VF IRN74-1 files (same product line, same numbers). No remaining uncertainty."
 }

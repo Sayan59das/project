@@ -15,7 +15,28 @@ import json
 import pytest
 
 import score
-from score import aggregate, load_ground_truth, merge_label_pages, normalize, score_field, write_results_md, run_textlayer_mode, run_pipeline_mode
+from score import (
+    aggregate,
+    aggregate_new_metric,
+    compute_by_source_table,
+    compute_fabrication,
+    format_by_source_table,
+    format_fabrication_table,
+    format_new_metric_block,
+    load_ground_truth,
+    merge_label_pages,
+    normalize,
+    normalize_nutrition_key,
+    normalize_value,
+    score_field,
+    score_field_detail,
+    score_field_new_metric,
+    score_labels,
+    score_labels_new_metric,
+    write_results_md,
+    run_textlayer_mode,
+    run_pipeline_mode,
+)
 
 
 class TestNormalize:
@@ -100,6 +121,120 @@ class TestScoreFieldNutritionTable:
     def test_a_hallucinated_extra_row_is_wrong(self):
         result = score_field("nutrition_table", {"Calories": "12 kcal", "Fake Row": "5 mg"}, {"Calories": "12 kcal"})
         assert result == {"correct": 1, "wrong": 1, "missing": 0}
+
+
+def _tally(details):
+    """Collapses a score_field_detail() list back down to the same shape
+    score_field() returns, for the cross-check that the two never drift
+    apart — see TestScoreFieldDetailMatchesScoreField below."""
+    counts = {"correct": 0, "wrong": 0, "missing": 0}
+    for d in details:
+        counts[d["verdict"]] += 1
+    return counts
+
+
+class TestScoreFieldDetail:
+    """score_field_detail() is score_field()'s sibling — same comparison,
+    but returns the per-item/per-row detail behind the tally (what the
+    predicted and expected values actually WERE) instead of just counts.
+    Step 1 of the accuracy-improvement plan: nobody could see what the 42
+    wrong product names actually were before this existed."""
+
+    def test_a_correct_scalar_carries_both_values(self):
+        details = score_field_detail("brand_name", "ChewNectar", "ChewNectar")
+        assert details == [{"item": None, "predicted": "ChewNectar", "expected": "ChewNectar", "verdict": "correct"}]
+
+    def test_a_wrong_scalar_carries_the_original_unnormalized_values(self):
+        # Original casing/whitespace preserved -- normalize() is for
+        # deciding the verdict, not for what gets shown to a human reading
+        # the diff.
+        details = score_field_detail("brand_name", "  Wrong Brand ", "ChewNectar")
+        assert details == [{"item": None, "predicted": "  Wrong Brand ", "expected": "ChewNectar", "verdict": "wrong"}]
+
+    def test_a_missing_scalar_has_no_predicted_value(self):
+        details = score_field_detail("brand_name", None, "ChewNectar")
+        assert details == [{"item": None, "predicted": None, "expected": "ChewNectar", "verdict": "missing"}]
+
+    def test_a_hallucinated_scalar_has_no_expected_value(self):
+        details = score_field_detail("brand_name", "Made Up", None)
+        assert details == [{"item": None, "predicted": "Made Up", "expected": None, "verdict": "wrong"}]
+
+    def test_both_blank_scalar_is_one_correct_row_not_zero_rows(self):
+        # Matches aggregate()'s existing "both absent counts as 1 correct"
+        # rule -- a diff reader must see this label accounted for, not
+        # silently skipped.
+        details = score_field_detail("brand_name", None, None)
+        assert details == [{"item": None, "predicted": None, "expected": None, "verdict": "correct"}]
+
+    def test_list_field_expands_one_row_per_item_not_one_row_per_field(self):
+        details = score_field_detail("ingredients", ["Sugar", "Made Up"], ["Sugar", "Water"])
+        by_verdict = {d["verdict"]: d for d in details}
+        assert by_verdict["correct"] == {"item": "Sugar", "predicted": "Sugar", "expected": "Sugar", "verdict": "correct"}
+        assert by_verdict["missing"] == {"item": "Water", "predicted": None, "expected": "Water", "verdict": "missing"}
+        assert by_verdict["wrong"] == {"item": "Made Up", "predicted": "Made Up", "expected": None, "verdict": "wrong"}
+
+    def test_nutrition_table_expands_one_row_per_nutrient_with_both_values(self):
+        details = score_field_detail(
+            "nutrition_table",
+            {"Calories": "99 kcal", "Fake Row": "5 mg"},
+            {"Calories": "12 kcal", "Sodium": "4 mg"},
+        )
+        by_item = {d["item"]: d for d in details}
+        assert by_item["Calories"] == {"item": "Calories", "predicted": "99 kcal", "expected": "12 kcal", "verdict": "wrong"}
+        assert by_item["Sodium"] == {"item": "Sodium", "predicted": None, "expected": "4 mg", "verdict": "missing"}
+        assert by_item["Fake Row"] == {"item": "Fake Row", "predicted": "5 mg", "expected": None, "verdict": "wrong"}
+
+
+class TestScoreFieldDetailMatchesScoreField:
+    """score_field() and score_field_detail() must never silently drift
+    apart -- the tally from one has to equal the tally from the other for
+    the same inputs, on every field-type shape, or the strict RESULTS.md
+    numbers and the diff tool would be describing two different scorers."""
+
+    @pytest.mark.parametrize(
+        "field,predicted,expected",
+        [
+            ("brand_name", "ChewNectar", "ChewNectar"),
+            ("brand_name", "Wrong", "ChewNectar"),
+            ("brand_name", None, "ChewNectar"),
+            ("brand_name", "Made Up", None),
+            ("brand_name", None, None),
+            ("logo", "leaf icon", "a green leaf icon above the wordmark"),
+            ("ingredients", ["Sugar", "Made Up"], ["Sugar", "Water"]),
+            ("ingredients", None, None),
+            ("nutrition_table", {"Calories": "99 kcal", "Fake Row": "5 mg"}, {"Calories": "12 kcal", "Sodium": "4 mg"}),
+            ("nutrition_table", None, None),
+        ],
+    )
+    def test_tallied_detail_equals_score_field(self, field, predicted, expected):
+        assert _tally(score_field_detail(field, predicted, expected)) == score_field(field, predicted, expected)
+
+
+class TestScoreLabelsDetail:
+    def test_returns_a_third_element_with_per_label_per_field_detail(self, monkeypatch):
+        ground_truth = {
+            "A.pdf": ({"brand_name": "X"}, [("a_p1", 1)], []),
+        }
+        predictions = {"A.pdf": {"brand_name": "X"}}
+        field_results, conflicts, details = score_labels(predictions, ground_truth)
+
+        assert conflicts == []
+        brand_rows = [d for d in details if d["field"] == "brand_name" and d["source_file"] == "A.pdf"]
+        assert brand_rows == [{
+            "source_file": "A.pdf", "field": "brand_name",
+            "item": None, "predicted": "X", "expected": "X", "verdict": "correct",
+        }]
+
+    def test_every_field_for_every_label_is_represented_in_details(self):
+        ground_truth = {
+            "A.pdf": ({"brand_name": "X"}, [("a_p1", 1)], []),
+            "B.pdf": ({"brand_name": "Y"}, [("b_p1", 1)], []),
+        }
+        predictions = {"A.pdf": {"brand_name": "X"}, "B.pdf": {}}
+        _fr, _c, details = score_labels(predictions, ground_truth)
+
+        sources_seen = {d["source_file"] for d in details}
+        assert sources_seen == {"A.pdf", "B.pdf"}
 
 
 class TestMergeLabelPages:
@@ -515,3 +650,411 @@ class TestRunPipelineMode:
         assert mock_subprocess.run.call_count > 1
         assert all(size < n for size in batch_sizes_seen)
         assert sum(batch_sizes_seen) == n
+
+    def _stub_one_label(self, tmp_path, monkeypatch):
+        stub_ground_truth = {"A.pdf": ({"brand_name": "X"}, [("a_p1", 1)], [])}
+        monkeypatch.setattr(score, "load_ground_truth", lambda: stub_ground_truth)
+        pdf_dir = tmp_path / "pdfs"
+        pdf_dir.mkdir()
+        (pdf_dir / "A.pdf").touch()
+        monkeypatch.setenv("EVAL_LABEL_PDF_DIR", str(pdf_dir))
+        canned_output = json.dumps([{
+            "source_file": "A.pdf", "brand_name": "X", "product_name": None, "nutrition_table": None,
+            "flavour": None, "fssai_number": None, "marketing_company": None, "address": None,
+            "customer_care_number": None, "customer_care_email": None, "package_size": None,
+            "manufacturing_company": None, "claims": [], "ingredients": [], "colour_theme": None,
+            "logo": None, "layout": None, "field_sources": {},
+        }])
+        mock_subprocess = Mock()
+        mock_subprocess.run = Mock(return_value=Mock(stdout=canned_output, returncode=0))
+        monkeypatch.setattr(score, "subprocess", mock_subprocess)
+        return mock_subprocess
+
+    def test_vlm_off_blanks_ollama_url_for_the_subprocess_regardless_of_the_ambient_environment(self, tmp_path, monkeypatch):
+        # The only way to measure the pipeline's own non-VLM accuracy against
+        # the exact same code path used with the VLM on: force OLLAMA_URL
+        # blank for this subprocess call specifically, even though a real
+        # Ollama server is configured and running in the ambient environment
+        # (as it normally is during a live pipeline run).
+        monkeypatch.setenv("OLLAMA_URL", "http://127.0.0.1:11434")
+        mock_subprocess = self._stub_one_label(tmp_path, monkeypatch)
+
+        run_pipeline_mode(vlm="off")
+
+        _args, kwargs = mock_subprocess.run.call_args
+        assert kwargs["env"]["OLLAMA_URL"] == ""
+
+    def test_vlm_on_default_leaves_the_ambient_ollama_url_untouched(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("OLLAMA_URL", "http://127.0.0.1:11434")
+        mock_subprocess = self._stub_one_label(tmp_path, monkeypatch)
+
+        run_pipeline_mode()  # vlm defaults to "on"
+
+        _args, kwargs = mock_subprocess.run.call_args
+        assert kwargs["env"]["OLLAMA_URL"] == "http://127.0.0.1:11434"
+
+    def test_vlm_on_with_no_ollama_url_configured_at_all_stays_unset(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("OLLAMA_URL", raising=False)
+        mock_subprocess = self._stub_one_label(tmp_path, monkeypatch)
+
+        run_pipeline_mode(vlm="on")
+
+        _args, kwargs = mock_subprocess.run.call_args
+        assert "OLLAMA_URL" not in kwargs["env"]
+
+
+class TestComputeBySourceTable:
+    """Step 2 (accuracy plan): is a given extraction pass net-positive or
+    net-negative on a given field? Answered by joining each label's
+    field_sources (which pass wrote a field's value) with score_field's own
+    correct/wrong verdict for that field, tallied per (field, source) pair."""
+
+    FIELDS_NEEDED = {
+        "brand_name": None, "product_name": None, "flavour": None, "fssai_number": None,
+        "marketing_company": None, "address": None, "customer_care_number": None,
+        "customer_care_email": None, "package_size": None,
+    }
+
+    def test_tallies_correct_and_wrong_per_field_and_source(self):
+        ground_truth = {
+            "A.pdf": ({**self.FIELDS_NEEDED, "brand_name": "ChewNectar"}, [], []),
+            "B.pdf": ({**self.FIELDS_NEEDED, "brand_name": "Sleeprio"}, [], []),
+        }
+        predictions_by_source = {
+            "A.pdf": {**self.FIELDS_NEEDED, "brand_name": "ChewNectar", "field_sources": {"brand_name": "text-layer-flattened"}},
+            "B.pdf": {**self.FIELDS_NEEDED, "brand_name": "Gluten Free", "field_sources": {"brand_name": "text-layer-flattened"}},
+        }
+        by_source = compute_by_source_table(predictions_by_source, ground_truth)
+        assert by_source[("brand_name", "text-layer-flattened")] == {"correct": 1, "wrong": 1}
+
+    def test_a_field_with_no_field_sources_entry_is_not_counted_anywhere(self):
+        # A blank field (or a mode/record with no field_sources at all, e.g.
+        # --mode textlayer) has no pass to credit or blame — MISSING cells
+        # never appear in this table.
+        ground_truth = {"A.pdf": ({**self.FIELDS_NEEDED, "brand_name": "ChewNectar"}, [], [])}
+        predictions_by_source = {"A.pdf": {**self.FIELDS_NEEDED, "field_sources": {}}}
+        by_source = compute_by_source_table(predictions_by_source, ground_truth)
+        assert by_source == {}
+
+    def test_a_record_with_no_field_sources_key_at_all_is_handled_like_an_empty_one(self):
+        ground_truth = {"A.pdf": ({**self.FIELDS_NEEDED, "brand_name": "ChewNectar"}, [], [])}
+        predictions_by_source = {"A.pdf": {**self.FIELDS_NEEDED, "brand_name": "ChewNectar"}}  # no "field_sources" key
+        by_source = compute_by_source_table(predictions_by_source, ground_truth)
+        assert by_source == {}
+
+    def test_two_different_sources_on_the_same_field_are_tallied_separately(self):
+        ground_truth = {
+            "A.pdf": ({**self.FIELDS_NEEDED, "brand_name": "ChewNectar"}, [], []),
+            "B.pdf": ({**self.FIELDS_NEEDED, "brand_name": "Sleeprio"}, [], []),
+        }
+        predictions_by_source = {
+            "A.pdf": {**self.FIELDS_NEEDED, "brand_name": "ChewNectar", "field_sources": {"brand_name": "text-layer-flattened"}},
+            "B.pdf": {**self.FIELDS_NEEDED, "brand_name": "Sleeprio", "field_sources": {"brand_name": "vlm-role-resolution"}},
+        }
+        by_source = compute_by_source_table(predictions_by_source, ground_truth)
+        assert by_source[("brand_name", "text-layer-flattened")] == {"correct": 1, "wrong": 0}
+        assert by_source[("brand_name", "vlm-role-resolution")] == {"correct": 1, "wrong": 0}
+
+    def test_only_tracks_the_nine_fillblanks_cascade_fields_not_list_or_fixed_fields(self):
+        # manufacturing_company is a fixed constant (never goes through the
+        # cascade) and claims/ingredients/nutrition_table have their own
+        # non-cascading extraction paths — a field_sources entry for either
+        # would be a bug elsewhere, but this table should ignore it either way.
+        ground_truth = {"A.pdf": ({**self.FIELDS_NEEDED, "manufacturing_company": "IM Healthcare Pvt. Ltd."}, [], [])}
+        predictions_by_source = {
+            "A.pdf": {
+                **self.FIELDS_NEEDED,
+                "manufacturing_company": "IM Healthcare Pvt. Ltd.",
+                "field_sources": {"manufacturing_company": "fixed-constant"},
+            }
+        }
+        by_source = compute_by_source_table(predictions_by_source, ground_truth)
+        assert by_source == {}
+
+
+class TestFormatBySourceTable:
+    def test_empty_table_produces_no_lines(self):
+        assert format_by_source_table({}) == []
+
+    def test_renders_one_row_per_field_source_pair_with_accuracy(self):
+        by_source = {("brand_name", "text-layer-flattened"): {"correct": 8, "wrong": 2}}
+        lines = format_by_source_table(by_source)
+        joined = "\n".join(lines)
+        assert "brand_name" in joined
+        assert "text-layer-flattened" in joined
+        assert "80.0%" in joined
+
+    def test_rows_are_sorted_by_field_then_source_for_a_stable_diff(self):
+        by_source = {
+            ("product_name", "vlm-role-resolution"): {"correct": 1, "wrong": 0},
+            ("brand_name", "vlm-role-resolution"): {"correct": 1, "wrong": 0},
+            ("brand_name", "text-layer-flattened"): {"correct": 1, "wrong": 0},
+        }
+        lines = format_by_source_table(by_source)
+        table_rows = [line for line in lines if line.startswith("|") and "field" not in line and "---" not in line]
+        assert table_rows[0].startswith("| brand_name | text-layer-flattened")
+        assert table_rows[1].startswith("| brand_name | vlm-role-resolution")
+        assert table_rows[2].startswith("| product_name | vlm-role-resolution")
+
+
+# Step 3 (accuracy plan) — a metric a client would sign. Every real pair
+# below is taken directly from a Step 1 `eval/diff.py` run against the
+# actual pipeline output (see ai_backend/eval/STEP1_FAILURE_ANALYSIS.md),
+# not invented, per the directive's own instruction.
+class TestNormalizeValue:
+    def test_a_real_nutrition_dv_parenthetical_is_stripped_symmetrically(self):
+        # CALRIO Gummies (2).pdf, nutrition_table: predicted '12 kcal',
+        # expected '12 kcal (<0.6% DV)' — the headline number+unit agree,
+        # the wrong-strict is purely the missing %DV annotation.
+        assert normalize_value("nutrition_table", "12 kcal") == normalize_value("nutrition_table", "12 kcal (<0.6% DV)")
+
+    def test_a_complex_real_dv_parenthetical_is_stripped_too(self):
+        # Vit2Fit IRN160-1.pdf, nutrition_table: predicted '0.5 mg', expected
+        # '0.5 mg (Children 1% / Teens 0.25% / Adults <0.5% DV)'.
+        assert normalize_value("nutrition_table", "0.5 mg") == normalize_value(
+            "nutrition_table", "0.5 mg (Children 1% / Teens 0.25% / Adults <0.5% DV)"
+        )
+
+    def test_mcg_spelling_variants_normalize_the_same(self):
+        assert normalize_value("nutrition_table", "50 mcg") == normalize_value("nutrition_table", "50 µg")
+        assert normalize_value("nutrition_table", "50 mcg") == normalize_value("nutrition_table", "50 μg")
+
+    def test_missing_space_before_unit_normalizes_the_same_as_a_spaced_one(self):
+        assert normalize_value("nutrition_table", "4.4g") == normalize_value("nutrition_table", "4.4 g")
+
+    def test_decimal_comma_normalizes_to_decimal_point(self):
+        assert normalize_value("nutrition_table", "4,4 g") == normalize_value("nutrition_table", "4.4 g")
+
+    def test_trailing_punctuation_is_stripped(self):
+        assert normalize_value("package_size", "30 Gummies.") == normalize_value("package_size", "30 Gummies")
+
+    def test_none_stays_none(self):
+        assert normalize_value("package_size", None) is None
+
+    def test_list_items_do_not_get_their_parenthetical_stripped(self):
+        # Unlike a nutrition DV annotation, an ingredient's parenthetical is
+        # often its main distinguishing content ("Vitamin C (Ascorbic
+        # acid)") — stripping it here would help the exact string compare
+        # but would throw away real information the token-set list matcher
+        # (TestScoreListFieldFuzzy) is specifically designed to use instead.
+        assert normalize_value("ingredients", "Vitamin C (Ascorbic acid)", strip_parenthetical=False) != normalize_value(
+            "ingredients", "Vitamin C", strip_parenthetical=False
+        )
+
+
+class TestNormalizeNutritionKey:
+    def test_strips_a_parenthetical_unit(self):
+        assert normalize_nutrition_key("Energy (kcal)") == normalize_nutrition_key("Energy")
+
+    def test_total_fat_and_fat_total_are_the_same_token_set(self):
+        assert normalize_nutrition_key("Total Fat") == normalize_nutrition_key("Fat, total")
+
+    def test_word_order_does_not_matter(self):
+        assert normalize_nutrition_key("Vitamin C") == normalize_nutrition_key("C Vitamin")
+
+    def test_none_stays_none(self):
+        assert normalize_nutrition_key(None) is None
+
+
+class TestScoreFieldNewMetricScalar:
+    def test_a_real_address_near_miss_missing_one_space_is_correct_fuzzy_not_wrong(self):
+        # MHJ Lutein Domestic IRN165-1.pdf, address: predicted 'DSM-030/031,
+        # DLF Tower, Shivaji Marg, New Delhi, West Delhi, Delhi- 110015,
+        # INDIA', expected the same string but 'Delhi - 110015' (one extra
+        # space before the dash) — strict-wrong, near-identical by eye.
+        predicted = "DSM-030/031, DLF Tower, Shivaji Marg, New Delhi, West Delhi, Delhi- 110015, INDIA"
+        expected = "DSM-030/031, DLF Tower, Shivaji Marg, New Delhi, West Delhi, Delhi - 110015, INDIA"
+        assert score_field("address", predicted, expected)["wrong"] == 1  # confirms this really is strict-wrong first
+        result = score_field_new_metric("address", predicted, expected)
+        assert result["correct_fuzzy"] == 1
+        assert result["correct_strict"] == 0
+        assert result["wrong"] == 0
+
+    def test_package_sizes_dominant_real_pattern_a_missing_unit_word_stays_wrong(self):
+        # Honest negative case, not swept under the rug: Step 1.2 found 35
+        # of 40 wrong package_size answers are just the bare number with no
+        # unit word at all ('30' vs '30 Gummies'). That is not a formatting
+        # difference normalize_value can fix, and the short numeric side
+        # fails the ">=4 chars" containment guard by design (so "IN" inside
+        # "INDIA" doesn't falsely pass) — this is Step 5.4's fix, not
+        # Step 3's. Pinning it here so nobody assumes the new metric quietly
+        # papers over this pattern.
+        result = score_field_new_metric("package_size", "30", "30 Gummies")
+        assert result["correct_fuzzy"] == 0
+        assert result["wrong"] == 1
+
+    def test_a_genuinely_different_value_stays_wrong_under_the_new_metric_too(self):
+        result = score_field_new_metric("brand_name", "Gluten Free", "Femirio")
+        assert result["correct_fuzzy"] == 0
+        assert result["wrong"] == 1
+
+    def test_a_strict_correct_value_counts_as_correct_in_both_columns(self):
+        result = score_field_new_metric("brand_name", "Sleeprio", "Sleeprio")
+        assert result["correct_strict"] == 1
+        assert result["correct_fuzzy"] == 1
+
+    def test_a_missing_value_is_missing_in_both_columns_not_wrong(self):
+        result = score_field_new_metric("brand_name", None, "Sleeprio")
+        assert result["missing"] == 1
+        assert result["wrong"] == 0
+        assert result["correct_fuzzy"] == 0
+
+
+class TestScoreListFieldFuzzy:
+    def test_the_directives_own_parenthetical_example_matches_via_token_set(self):
+        result = score_field_new_metric("ingredients", ["Vitamin C"], ["Vitamin C (Ascorbic acid)"])
+        assert result["correct_fuzzy"] == 1
+        assert result["missing"] == 0
+
+    def test_a_real_ins_code_truncation_still_matches_by_token_overlap(self):
+        # A generic sample of Step 1.2's dominant ingredients pattern: the
+        # list gets split inside an "(INS ###)" parenthetical, producing a
+        # fragment missing its closing paren. Token-set ratio should still
+        # recognise this as the same ingredient even before Step 5.2 fixes
+        # the split itself.
+        result = score_field_new_metric("ingredients", ["Acidity Regulator (INS 330"], ["Acidity Regulator (INS 330)"])
+        assert result["correct_fuzzy"] == 1
+
+    def test_an_unrelated_extra_item_is_still_wrong_not_fuzzy_matched_to_something_unrelated(self):
+        result = score_field_new_metric("ingredients", ["Gelatin", "Corn Syrup"], ["Gelatin"])
+        assert result["correct_fuzzy"] == 1
+        assert result["wrong"] == 1  # "Corn Syrup" hallucinated, matches nothing in expected
+
+    def test_matching_is_one_to_one_not_letting_one_predicted_item_satisfy_two_expected_items(self):
+        result = score_field_new_metric("ingredients", ["Gelatin"], ["Gelatin", "Gelatin (Bovine)"])
+        assert result["correct_fuzzy"] == 1  # only one of the two expected items can claim the single predicted one
+        assert result["missing"] == 1
+
+    def test_both_empty_is_trivially_correct(self):
+        result = score_field_new_metric("claims", [], [])
+        assert result["correct_fuzzy"] == 1
+
+
+class TestScoreNutritionTableFuzzy:
+    def test_matching_key_after_normalization_with_a_fuzzy_matching_value_counts_correct_fuzzy(self):
+        predicted = {"Energy": "12 kcal"}
+        expected = {"Energy (kcal)": "12 kcal (<0.6% DV)"}
+        result = score_field_new_metric("nutrition_table", predicted, expected)
+        assert result["correct_fuzzy"] == 1
+        assert result["correct_strict"] == 0
+
+    def test_a_present_row_with_a_genuinely_different_value_is_wrong_not_correct_fuzzy(self):
+        predicted = {"Energy": "50 kcal"}
+        expected = {"Energy": "12 kcal"}
+        result = score_field_new_metric("nutrition_table", predicted, expected)
+        assert result["correct_fuzzy"] == 0
+        assert result["wrong"] == 1
+
+    def test_both_empty_is_trivially_correct(self):
+        result = score_field_new_metric("nutrition_table", {}, {})
+        assert result["correct_fuzzy"] == 1
+
+
+class TestAggregateNewMetric:
+    def test_splits_text_fields_from_the_visual_block(self):
+        field_results = [{
+            "brand_name": {"correct_strict": 1, "correct_fuzzy": 1, "wrong": 0, "missing": 0},
+            "logo": {"correct_strict": 0, "correct_fuzzy": 0, "wrong": 0, "missing": 1},
+            "layout": {"correct_strict": 0, "correct_fuzzy": 0, "wrong": 0, "missing": 1},
+            "colour_theme": {"correct_strict": 0, "correct_fuzzy": 0, "wrong": 0, "missing": 1},
+        }]
+        result = aggregate_new_metric(field_results)
+        assert "brand_name" in result["text"]["per_field"]
+        assert "logo" not in result["text"]["per_field"]
+        assert "colour_theme" not in result["text"]["per_field"]
+        assert "logo" in result["visual"]["per_field"]
+        assert "colour_theme" in result["visual"]["per_field"]
+
+    def test_text_overall_accuracy_uses_correct_fuzzy_as_the_headline(self):
+        field_results = [{
+            "brand_name": {"correct_strict": 0, "correct_fuzzy": 1, "wrong": 0, "missing": 0},
+        }]
+        result = aggregate_new_metric(field_results)
+        assert result["text"]["overall"]["accuracy"] == 1.0
+        assert result["text"]["overall"]["strict_accuracy"] == 0.0
+
+
+class TestScoreLabelsNewMetric:
+    def test_one_record_per_label_scored_with_the_new_metric(self):
+        ground_truth = {
+            "A.pdf": ({"brand_name": "Sleeprio"}, [], []),
+            "B.pdf": ({"brand_name": "ChewNectar"}, [], []),
+        }
+        predictions_by_source = {"A.pdf": {"brand_name": "Sleeprio"}, "B.pdf": {"brand_name": "Gluten Free"}}
+        results = score_labels_new_metric(predictions_by_source, ground_truth)
+        assert len(results) == 2
+        by_brand = {r["brand_name"]["correct_fuzzy"] for r in results}
+        assert by_brand == {0, 1}
+
+    def test_does_not_touch_the_strict_score_labels_result(self):
+        # Regression guard for the directive's own instruction: the strict
+        # row must never drift because of a Step 3 change.
+        ground_truth = {"A.pdf": ({"brand_name": "Sleeprio"}, [], [])}
+        predictions_by_source = {"A.pdf": {"brand_name": "Sleeprio"}}
+        strict_results, _conflicts, _details = score_labels(predictions_by_source, ground_truth)
+        assert strict_results[0]["brand_name"] == {"correct": 1, "wrong": 0, "missing": 0}
+
+
+class TestFormatNewMetricBlock:
+    def test_empty_input_produces_no_lines(self):
+        assert format_new_metric_block({}) == []
+
+    def test_shows_both_fuzzy_and_strict_accuracy_for_the_text_headline(self):
+        new_metric = aggregate_new_metric([{
+            "brand_name": {"correct_strict": 0, "correct_fuzzy": 1, "wrong": 0, "missing": 0},
+        }])
+        lines = format_new_metric_block(new_metric)
+        joined = "\n".join(lines)
+        assert "100.0%" in joined  # fuzzy headline
+        assert "0.0%" in joined  # strict, for comparison
+        assert "brand_name" in joined
+
+    def test_visual_fields_appear_in_their_own_block_not_the_text_one(self):
+        new_metric = aggregate_new_metric([{
+            "logo": {"correct_strict": 1, "correct_fuzzy": 1, "wrong": 0, "missing": 0},
+        }])
+        lines = format_new_metric_block(new_metric)
+        joined = "\n".join(lines)
+        assert "**Visual fields**" in joined
+        assert "logo" in joined
+
+
+class TestFormatFabricationTable:
+    def test_empty_input_produces_no_lines(self):
+        assert format_fabrication_table({}) == []
+
+    def test_worst_offender_sorts_first(self):
+        fabrication = {
+            "claims": {"fabricated": 1, "opportunities": 10, "rate": 0.1},
+            "package_size": {"fabricated": 8, "opportunities": 10, "rate": 0.8},
+        }
+        lines = format_fabrication_table(fabrication)
+        rows = [line for line in lines if line.startswith("| ") and "field" not in line and "---" not in line]
+        assert rows[0].startswith("| package_size")
+
+
+class TestComputeFabrication:
+    FIELDS_NEEDED = {f: None for f in score.FIELDS}
+
+    def test_a_fabricated_scalar_is_counted_against_its_only_real_blank_opportunity(self):
+        ground_truth = {
+            "A.pdf": ({**self.FIELDS_NEEDED, "claims": []}, [], []),
+        }
+        predictions_by_source = {"A.pdf": {**self.FIELDS_NEEDED, "claims": ["Health Supplement"]}}
+        result = compute_fabrication(predictions_by_source, ground_truth)
+        assert result["claims"]["fabricated"] == 1
+        assert result["claims"]["opportunities"] == 1
+        assert result["claims"]["rate"] == 1.0
+
+    def test_a_field_that_is_never_genuinely_blank_has_no_fabrication_opportunities_at_all(self):
+        ground_truth = {"A.pdf": ({**self.FIELDS_NEEDED, "brand_name": "Sleeprio"}, [], [])}
+        predictions_by_source = {"A.pdf": {**self.FIELDS_NEEDED, "brand_name": "Sleeprio"}}
+        result = compute_fabrication(predictions_by_source, ground_truth)
+        assert "brand_name" not in result
+
+    def test_an_honest_blank_is_not_counted_as_fabrication(self):
+        ground_truth = {"A.pdf": ({**self.FIELDS_NEEDED, "brand_name": None}, [], [])}
+        predictions_by_source = {"A.pdf": {**self.FIELDS_NEEDED, "brand_name": None}}
+        result = compute_fabrication(predictions_by_source, ground_truth)
+        assert result["brand_name"]["fabricated"] == 0
+        assert result["brand_name"]["opportunities"] == 1

@@ -1,25 +1,27 @@
 {
-  "label": {
-    "address": null,
-    "brand_name": "BioFaith",
-    "claims": null,
-    "colour_theme": null,
-    "customer_care_email": null,
-    "customer_care_number": null,
-    "flavour": null,
-    "fssai_number": null,
-    "ingredients": null,
-    "layout": "UV varnish separation proof",
-    "logo": null,
-    "manufacturing_company": null,
-    "marketing_company": null,
-    "nutrition_table": null,
-    "package_size": null,
-    "product_name": "Hair, Skin & Nails Gummies (Rich in Biotin)"
-  },
+  "image_file": "hsn_vf_irn75_1_p2.png",
+  "sourceFile": "HSN VF IRN75-1.pdf",
   "page": 2,
   "reviewed": true,
-  "reviewedAt": 1789132800030,
+  "reviewedAt": 1789638753554,
   "isFront": false,
-  "sourceFile": "HSN VF IRN75-1.pdf"
+  "label": {
+    "brand_name": "BioFaith",
+    "product_name": "Hair, Skin & Nails Gummies (Rich in Biotin)",
+    "marketing_company": null,
+    "manufacturing_company": null,
+    "fssai_number": null,
+    "package_size": null,
+    "flavour": null,
+    "colour_theme": null,
+    "logo": null,
+    "layout": "UV varnish separation proof",
+    "customer_care_number": null,
+    "customer_care_email": null,
+    "address": null,
+    "claims": null,
+    "ingredients": null,
+    "nutrition_table": null
+  },
+  "aiReviewNotes": "[AI first-pass review, pending human confirmation] UV varnish separation proof (wordmark + product name only, plus print registration dots) checked directly against the image -- correct as-is, all nulls genuinely correct."
 }

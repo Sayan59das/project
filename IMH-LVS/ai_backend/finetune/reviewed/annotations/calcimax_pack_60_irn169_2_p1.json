@@ -1,7 +1,27 @@
 {
+  "image_file": "calcimax_pack_60_irn169_2_p1.png",
+  "sourceFile": "Calcimax pack 60 IRN169-2.pdf",
+  "page": 1,
+  "reviewed": true,
+  "reviewedAt": 1789639474837,
+  "isFront": true,
   "label": {
-    "address": "A-177, Wagle Estate, Thane – 400 604 (Mumbai), INDIA",
     "brand_name": "Calcimax",
+    "product_name": "CALCIUM + VITAMIN D",
+    "marketing_company": "Meyer Organics Pvt. Ltd.",
+    "manufacturing_company": "IM Healthcare Pvt. Ltd.",
+    "fssai_number": "10020022011831",
+    "package_size": "60 Gummies",
+    "flavour": "Strawberry",
+    "colour_theme": [
+      "Blue",
+      "Pink"
+    ],
+    "logo": "WRITTEN IN BLACK AND PINK",
+    "layout": "Carton (flattened die-line proof, front + side + back panels)",
+    "customer_care_number": "022-6275 7000/01, 2581 7000/01",
+    "customer_care_email": "consumercare@meyer.co.in",
+    "address": "A-177, Wagle Estate, Thane - 400 604 (Mumbai), INDIA",
     "claims": [
       "Strong Bones. Strong Family.",
       "Gluten Free",
@@ -9,14 +29,6 @@
       "Sugar Free",
       "Soy Free"
     ],
-    "colour_theme": [
-      "Blue",
-      "Pink"
-    ],
-    "customer_care_email": "consumercare@meyer.co.in",
-    "customer_care_number": "022-6275 7000/01, 2581 7000/01",
-    "flavour": "Strawberry",
-    "fssai_number": "10020022011831",
     "ingredients": [
       "Maltitol Syrup (INS 965)",
       "Water",
@@ -27,10 +39,6 @@
       "Food Colour: Black Carrot Concentrate (Daucus Carota root extract)",
       "Vitamin D"
     ],
-    "layout": "Carton (flattened die-line proof, front + side + back panels)",
-    "logo": null,
-    "manufacturing_company": "IM Healthcare Pvt. Ltd.",
-    "marketing_company": "Meyer Organics Pvt. Ltd.",
     "nutrition_table": {
       "Added Sugars": "Kids: 0.00 g; Adults: 0.00 g",
       "Carbohydrate (Sugar Alcohols)": "Kids: 2.60 g; Adults: 5.20 g",
@@ -42,13 +50,7 @@
       "Total Fat": "Kids: 0.00 g; Adults: 0.00 g",
       "Total Sugars": "Kids: 0.33 g; Adults: 0.66 g",
       "Vitamin D2 (Ergocalciferol)": "Kids: 5 mcg/200 IU (33.33% RDA); Adults: 10 mcg/400 IU (66.66% RDA)"
-    },
-    "package_size": "60 Gummies",
-    "product_name": "Calcimax Gummies"
+    }
   },
-  "page": 1,
-  "reviewed": true,
-  "reviewedAt": 1789132800008,
-  "isFront": true,
-  "sourceFile": "Calcimax pack 60 IRN169-2.pdf"
+  "aiReviewNotes": "[AI first-pass review, pending human confirmation] Same artwork family as final_new_calcimax_30_pack (6-gummy pack size) -- all priority fields, claims, and the rest of nutrition_table/ingredients checked directly against the image, all correct, same fssai_number convention confirmed correct. Real fix applied earlier: Energy row was missing its %RDA figures (0.505% / 1.010%, present in the source table) -- added directly. Address en dash verified as genuine correctly-encoded character, not mojibake."
 }

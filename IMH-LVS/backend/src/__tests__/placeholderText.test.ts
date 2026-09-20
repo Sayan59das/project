@@ -67,11 +67,14 @@ test('blanks placeholders and reports which fields they were', () => {
 // 'Net Content: 30 N' is the count declaration Indian supplement labels carry,
 // and all three dataset artworks use it. Before this, the pack count fell
 // through to OCR of the stylised front badge, which read a pack of 30 as '9'.
-test('reads the pack count from the Net Content declaration', () => {
-  assert.equal(extractLabelFields('Pouches not to be sold loose.\nNet Content: 30 N').packageSize, '30');
-  assert.equal(extractLabelFields('Net Content : 30 N').packageSize, '30');
-  assert.equal(extractLabelFields('Net Qty: 60 Nos').packageSize, '60');
-  assert.equal(extractLabelFields('Net Quantity: 12 units').packageSize, '12');
+test('reads the pack count from the Net Content declaration, unit word included', () => {
+  // Step 5.4 (accuracy plan): the bare number alone was the dominant real
+  // wrong-answer pattern for this field (35 of 40 in Step 1.2's sample) --
+  // the ground truth always carries the unit token too ("30 N", not "30").
+  assert.equal(extractLabelFields('Pouches not to be sold loose.\nNet Content: 30 N').packageSize, '30 N');
+  assert.equal(extractLabelFields('Net Content : 30 N').packageSize, '30 N');
+  assert.equal(extractLabelFields('Net Qty: 60 Nos').packageSize, '60 Nos');
+  assert.equal(extractLabelFields('Net Quantity: 12 units').packageSize, '12 units');
 });
 
 // The unit alternation is what keeps this a count. A weight or volume
@@ -91,7 +94,7 @@ test('does not mistake a following word starting with n for the N unit', () => {
 // The existing '<number> Gummies' wording still works, and still refuses a
 // serving size — 'Serving size: 1 Gummy' is a dose, not a pack.
 test('keeps the existing pack-count wording and its serving-size guard', () => {
-  assert.equal(extractLabelFields('30 Gummies').packageSize, '30');
+  assert.equal(extractLabelFields('30 Gummies').packageSize, '30 Gummies');
   assert.equal(extractLabelFields('Serving size: 1 Gummy').packageSize, '');
 });
 

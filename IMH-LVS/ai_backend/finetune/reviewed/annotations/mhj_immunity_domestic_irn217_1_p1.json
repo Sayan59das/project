@@ -1,7 +1,26 @@
 {
+  "image_file": "mhj_immunity_domestic_irn217_1_p1.png",
+  "sourceFile": "MHJ Immunity Domestic IRN217-1.pdf",
+  "page": 1,
+  "reviewed": true,
+  "reviewedAt": 1789639004258,
+  "isFront": true,
   "label": {
-    "address": null,
     "brand_name": "WOOBY",
+    "product_name": "Nature's Immunity Blend Kids Gummies",
+    "marketing_company": null,
+    "manufacturing_company": null,
+    "fssai_number": null,
+    "package_size": "30 Gummies",
+    "flavour": null,
+    "colour_theme": [
+      "Green (Lime)"
+    ],
+    "logo": null,
+    "layout": "Poster-style front panel",
+    "customer_care_number": null,
+    "customer_care_email": null,
+    "address": null,
     "claims": [
       "Pectin Based",
       "Gluten Free",
@@ -11,25 +30,8 @@
       "Teeth Friendly",
       "USFDA Registered Facility"
     ],
-    "colour_theme": [
-      "Green (Lime)"
-    ],
-    "customer_care_email": null,
-    "customer_care_number": null,
-    "flavour": null,
-    "fssai_number": null,
     "ingredients": null,
-    "layout": "Poster-style front panel",
-    "logo": null,
-    "manufacturing_company": null,
-    "marketing_company": null,
-    "nutrition_table": null,
-    "package_size": "30 Gummies",
-    "product_name": "Nature's Immunity Blend Kids Gummies"
+    "nutrition_table": null
   },
-  "page": 1,
-  "reviewed": true,
-  "reviewedAt": 1789132800046,
-  "isFront": true,
-  "sourceFile": "MHJ Immunity Domestic IRN217-1.pdf"
+  "aiReviewNotes": "[AI first-pass review, pending human confirmation] All fields checked directly against the image -- correct. The 'GET READY... FOR GUMMY ADVENTURE' rocket mascot text is correctly not captured as a claim (playful brand-voice flourish, not a statement about the product). Poster-style front-only panel, so the many nulls are genuinely correct -- nothing else is printed on this page."
 }
