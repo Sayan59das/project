@@ -250,6 +250,15 @@ const CLAIM_BADGES: readonly { pattern: RegExp; claim: string }[] = [
 export type ClaimsResult = {
   /** Every claim found on the label, in the ' | ' form the app stores. */
   claims: string;
+  /**
+   * accuracy3 Step 3: the same claims as a real array, in the same order
+   * `claims` joins them in. Exists so a combined-badge claim whose own
+   * text contains a literal " | " (see the FREE FROM matcher below) can be
+   * told apart from three separately-joined claims -- something the
+   * `claims` string alone can never do once split back apart by any
+   * consumer using the same ' | ' delimiter this file joins with.
+   */
+  claimsList: string[];
   /** Claims that matched a record in the Claims master. */
   matched: string[];
   /**
@@ -332,6 +341,37 @@ export function extractClaims(text: string, knownClaims: readonly string[] = [])
   // delimited project-wide, which is a bigger decision than this one bug
   // warrants making unilaterally.
 
+  // accuracy3 Step 3: the previously-backed-out combined badge -- see
+  // ClaimsResult.claimsList's own doc comment for why it's safe to ship
+  // now. Confirmed on the actual label: Iron IRN74-1.pdf prints "FREE
+  // FROM   GLUTEN | MILK | SOY" as one combined design element. Requires
+  // an explicit "|"-separated run of at least two words (not "free from
+  // artificial preservatives", ordinary prose with no pipes) and every
+  // captured word to be in the same generic allergen/dietary allowlist
+  // every other matcher here already uses, so this can't fire on
+  // arbitrary "free from X | Y" text that isn't really an allergen badge.
+  //
+  // The SAME label also prints separate "GLUTEN FREE"/"MILK FREE"/
+  // "SOY FREE" badges elsewhere -- a design redundancy for the exact same
+  // fact the combined badge already states, not a second real claim.
+  // combinedAllergens records every word a combined badge already
+  // accounted for, so the individual FREE_CLAIM/NO_CLAIM matchers below
+  // can skip them and avoid reporting both "Free From Gluten | Milk | Soy"
+  // AND a separate "Gluten Free" for the same allergen (ground truth has
+  // only the one combined entry for those three; ANOTHER allergen not
+  // named in any combined badge, like "Gelatin Free" on this same label,
+  // still has to be reported on its own).
+  const FREE_FROM_COMBINED = /\bfree\s+from\s+([A-Za-z]+(?:\s*\|\s*[A-Za-z]+)+)/gi;
+  const combinedAllergens = new Set<string>();
+  for (const match of flat.matchAll(FREE_FROM_COMBINED)) {
+    const words = match[1].split('|').map((w) => w.trim());
+    if (words.length < 2 || !words.every((w) => ALLERGEN_DIETARY_WORDS.has(w.toLowerCase()))) continue;
+    const claim = `Free From ${words.map((w) => `${w[0].toUpperCase()}${w.slice(1).toLowerCase()}`).join(' | ')}`;
+    const alreadyKnown = [...found.keys()].some((existing) => existing.toLowerCase() === claim.toLowerCase());
+    if (!alreadyKnown) found.set(claim, isKnown(claim, knownClaims));
+    for (const w of words) combinedAllergens.add(w.toLowerCase());
+  }
+
   // Real regression found the same way (Cal. Vit D/Iron/PMS/HSN families
   // again): "This food is by its nature gluten free." is a standard
   // regulatory disclaimer sentence, not a printed claim badge, but reads
@@ -349,6 +389,7 @@ export function extractClaims(text: string, knownClaims: readonly string[] = [])
   for (const match of flat.matchAll(FREE_CLAIM)) {
     const word = match[1];
     if (!ALLERGEN_DIETARY_WORDS.has(word.toLowerCase())) continue;
+    if (combinedAllergens.has(word.toLowerCase())) continue;
     if (BY_NATURE_DISCLAIMER.test(flat.slice(Math.max(0, match.index - 20), match.index))) continue;
     const claim = `${word[0].toUpperCase()}${word.slice(1).toLowerCase()} Free`;
     const alreadyKnown = [...found.keys()].some((existing) => existing.toLowerCase() === claim.toLowerCase());
@@ -368,6 +409,7 @@ export function extractClaims(text: string, knownClaims: readonly string[] = [])
   for (const match of flat.matchAll(NO_CLAIM)) {
     const word = match[1];
     if (!ALLERGEN_DIETARY_WORDS.has(word.toLowerCase())) continue;
+    if (combinedAllergens.has(word.toLowerCase())) continue;
     const claim = `No ${word[0].toUpperCase()}${word.slice(1).toLowerCase()}`;
     // Prefix check, not just exact match: a real bug caught by the test
     // suite — "No Artificial Colours" (the CLAIM_BADGES pattern, checked
@@ -419,30 +461,13 @@ export function extractClaims(text: string, knownClaims: readonly string[] = [])
     if (!alreadyKnown) found.set(claim, isKnown(claim, knownClaims));
   }
 
-  // NOT IMPLEMENTED, on purpose: a third real shape for the same fact was
-  // found and confirmed on a real label — Iron IRN74-1.pdf prints "FREE
-  // FROM   GLUTEN | MILK | SOY" as one combined badge, literal pipe
-  // characters and all, alongside six separate "GLUTEN FREE"/"MILK
-  // FREE"/... badges. Ground truth records it as its own single claim
-  // entry, "Free From Gluten | Milk | Soy". But this app's storage format
-  // joins every claim on a label into ONE string using that exact same
-  // " | " separator (see the join below, and CLAIM_DELIMITER in
-  // scripts/extract-pipeline.ts, which un-joins it the same naive way —
-  // value.split(' | ')). A claim whose own text contains " | " would be
-  // shattered back into three wrong fragments instead of staying one
-  // claim, which is worse than not extracting it at all. Recording this
-  // rather than guessing at a workaround (a different internal separator
-  // would silently stop matching the ground truth's exact string; storing
-  // claims as a real array end-to-end would be the correct fix but touches
-  // every caller of this field) — a decision for the human, not a code
-  // change to make unasked.
-
   const claims = [...found.keys()];
   return {
     // ' | ' is the separator the existing comparison data uses
     // ('Supports Immunity | High in Vitamin C'), so a stored value from here is
     // directly comparable with one authored by hand.
     claims: claims.join(' | '),
+    claimsList: claims,
     matched: claims.filter((claim) => found.get(claim) === true),
     unmatched: claims.filter((claim) => found.get(claim) !== true)
   };

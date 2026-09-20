@@ -208,6 +208,70 @@ test('splitIngredientsList: a real parenthetical item is not damaged by the peri
   assert.deepEqual(items, ['Corn Syrup', 'Natural Sweetener Stevia (INS 960)']);
 });
 
+// accuracy3 Step 3: extractClaims now also returns claimsList -- the raw
+// array before it gets joined with ' | ' into the claims string. Needed so
+// a combined-badge claim whose OWN text contains a literal " | " (see the
+// FREE FROM matcher below) can round-trip as one array element instead of
+// being indistinguishable from three separately-joined claims.
+test('claimsList is the same claims as an array, in the same order as the joined string', () => {
+  const result = extractClaims('Gluten Free. Sugar Free.', MASTER_CLAIMS);
+  assert.deepEqual(result.claimsList, result.claims.split(' | '));
+  assert.deepEqual(new Set(result.claimsList), new Set(['Gluten Free', 'Sugar Free']));
+});
+
+// accuracy3 Step 3: the previously-backed-out combined badge, now safe to
+// ship because claimsList is a real array -- see this file's own note just
+// above the matcher for the full history (the codebase joins every OTHER
+// claim on a label with the exact same ' | ' the ground truth chose to use
+// INSIDE this one claim's text; that only breaks the ' | '-joined STRING
+// form, not a real array). Confirmed on the actual label: Iron IRN74-1.pdf
+// prints "FREE FROM   GLUTEN | MILK | SOY" as one combined design element,
+// alongside six separate "<allergen> free" badges elsewhere on the same
+// label; ground truth records it as one claim, "Free From Gluten | Milk |
+// Soy".
+test('reports "FREE FROM X | Y | Z" as one combined claim, not three fragments -- real badge on Iron IRN74-1.pdf', () => {
+  const text = 'FREE FROM   GLUTEN | MILK | SOY \nFor Kids & Adults';
+  const result = extractClaims(text, []);
+  assert.ok(result.claimsList.includes('Free From Gluten | Milk | Soy'));
+  // The combined claim's own internal " | " must not fragment it when the
+  // array is later re-joined with the same delimiter for the legacy string
+  // field -- proven by finding it back out as one element, not three.
+  assert.equal(result.claimsList.filter((c) => /gluten|milk|soy/i.test(c)).length, 1);
+});
+
+test('a combined "FREE FROM X | Y" badge with only two allergens still reports correctly', () => {
+  const text = 'FREE FROM GLUTEN | SOY';
+  const result = extractClaims(text, []);
+  assert.ok(result.claimsList.includes('Free From Gluten | Soy'));
+});
+
+test('does not report a combined badge from ordinary "free from" prose with no allergen list', () => {
+  const text = 'This product is free from artificial preservatives and colours, made with love.';
+  const result = extractClaims(text, []);
+  assert.equal(result.claimsList.some((c) => c.toLowerCase().startsWith('free from')), false);
+});
+
+// accuracy3 Step 3: real label shape (Iron IRN74-1.pdf's actual text) --
+// the SAME three allergens the combined badge names ALSO appear as
+// separate standalone "GLUTEN FREE"/"MILK FREE"/"SOY FREE" badges
+// elsewhere on the same label (a design redundancy, not a second real
+// claim). Ground truth records only the one combined claim for those
+// three, not four entries for the same fact. An allergen NOT part of the
+// combined badge ("Gelatin Free", printed separately, no pipe-list
+// anywhere) still has to be reported on its own.
+test('an allergen already covered by a combined "FREE FROM" badge is not ALSO reported as its own separate claim -- real duplicate risk on Iron IRN74-1.pdf', () => {
+  const text = 'GELATIN FREE \nGLUTEN FREE \nMILK FREE \nPEANUT FREE \nNUT FREE \nSOY FREE \nFREE FROM   GLUTEN | MILK | SOY';
+  const result = extractClaims(text, []);
+  assert.ok(result.claimsList.includes('Free From Gluten | Milk | Soy'));
+  assert.equal(result.claimsList.includes('Gluten Free'), false);
+  assert.equal(result.claimsList.includes('Milk Free'), false);
+  assert.equal(result.claimsList.includes('Soy Free'), false);
+  // Allergens outside the combined badge still report normally.
+  assert.ok(result.claimsList.includes('Gelatin Free'));
+  assert.ok(result.claimsList.includes('Peanut Free'));
+  assert.ok(result.claimsList.includes('Nut Free'));
+});
+
 // THE REGRESSION THIS FILE EXISTS FOR.
 //
 // PDF text arrives in draw order, so these separate design elements from the
