@@ -1242,3 +1242,101 @@ constraint -- but the real aggregate number is still outstanding and
 should not be assumed or quoted until measured.
 
 PR: `feat/accuracy3-step3` (#12).
+
+## accuracy3 Step 4: prepareImage generalized; the crop-reader extensions blocked on Ollama
+
+Generalized `prepareImage` (ollamaVlm.service.ts) beyond its fixed
+1008px width: a `targetWidth` option (a crop reader wants a different
+base width than a whole-page read) and a `medianLineHeightPx`-driven
+upscale rule -- the same 32px threshold Step 1.3's per-strip PP-OCR
+upscale already uses -- capped at 1568px long side. Fully backward
+compatible (both real callers unaffected), 11 passing tests (6 new).
+
+The rest of Step 4 -- `vlm-read-ingredients`, `vlm-read-claims`,
+`vlm-read-identity`, the actual crop-reader extensions the original
+directive called "the highest-ROI change so far" -- needs a live Ollama
+server to validate for real. Ollama wasn't running or configured
+anywhere in this environment tonight (no `OLLAMA_URL`, no reachable
+server, no process). Starting it wasn't something I was authorized to
+do, and this session had already hit the harness's own memory-pressure
+safeguard twice on lighter, text-only work -- starting a model-serving
+process on top of that felt like the wrong call to make unilaterally
+overnight. Deferred rather than shipped mock-tested only, with no real
+confirmation of VLM output quality against actual label crops.
+
+PR: `feat/accuracy3-step4` (#13).
+
+## accuracy3 Step 5: one real flavour bug fixed; one by-source gating attempt tried and reverted after a real regression
+
+**A real lesson, learned the hard way**: the by-source table showed
+`tesseract-region-ocr` net-negative on both address (4 correct/5 wrong)
+and marketing_company (1 correct/8 wrong) -- past the directive's own
+">=3 labels" bar, a clean-looking gate-off candidate per Step 1.6's own
+rule. Disabling it entirely broke the regression oracle on two real,
+previously-correct labels (Apple Cider Vinegar Gummy and Chyawanprash
+Gummies -- same manufacturer, "Knoll Pharmaceuticals Ltd." went from
+correct to blank on both). The aggregate signal hides that a source can
+be reliable on some label families and unreliable on others; a blanket
+gate fixes the second group by breaking the first. Reverted (kept as a
+documented, honest record in the code, not silently dropped) rather
+than trade a real, confirmed regression for an aggregate number that
+looked good on paper. Applied the same discipline for the rest of the
+night: validate any by-source-driven fix against the regression
+oracle's specific fixtures before trusting the aggregate signal.
+
+**The real fix**: per-label diff against the actual eval/runs detail
+data (22 wrong flavour cases, not just the aggregate "14 wrong" the
+directive named) found a single dominant pattern -- 8 of 22 read
+"Tricalcium Phosphate, `<real flavour>`" instead of the real flavour
+alone, across the whole Cal. Vit D IRN120/Calcimax/Calrio family.
+Tricalcium Phosphate (a calcium-supplement ingredient) sits immediately
+before the label's own flavour statement inside the ingredients
+declaration, and the flavour extractor's connector-chaining regex (up
+to 4 comma/space/&-joined Title Case words) swept it into the capture.
+An existing, correct test needed the EXACT same sentence shape ("Word,
+Word & Word") to capture a genuine three-part flavour whole, so a
+structural fix would have silently broken that real case while fixing
+this one -- caught by writing that exact regression guard before
+touching any extraction code. Fixed with a semantic signal instead:
+common food-chemistry compound-name suffixes (Phosphate, Sulphate,
+Carbonate, Citrate, ...) are never part of a flavour name on any label,
+in any client's product -- trimmed off when they lead a captured value
+followed by a comma and more content. Validated against all 9 real
+affected labels: 8 now read cleanly, 1 (no usable text layer for this
+specific check) goes from wrong to missing -- both an improvement,
+neither a regression.
+
+**Not attempted tonight**: package_size's own by-source imbalance
+(`text-layer-flattened` 9 correct/14 wrong) — gating it off correctly
+would need suppressing an EARLY, primary source so a LATER one gets a
+chance to fill the field instead (fillBlanks's "blanks only" rule means
+the reverse ordering that Steps 1/3 already used for ppocr-text doesn't
+apply directly here), a more invasive change than tonight's other
+fixes; left as a scoped, named follow-up rather than rushed.
+
+**Not yet measured with score.py** -- no heavy run was started tonight
+after the two earlier memory-pressure kills this session already hit on
+lighter work; the code-level evidence above (18 passing tests, 9/9 real
+labels validated directly, regression oracle 14/14) is the basis for
+merging, the same judgment call Steps 2 and 3 made under the same
+memory constraint.
+
+PR: `feat/accuracy3-step5` (#14, to be opened).
+
+## Where this leaves things for the next session
+
+Steps 1-3 are merged into `main` with real, measured or code-level-
+validated improvements. Step 4's non-VLM piece is merged; its VLM-
+dependent crop-reader extensions are the single largest remaining lever
+per Step 0's own ceiling analysis and need Ollama running to build and
+validate for real -- the natural first thing to pick up. Step 5 found
+and fixed one dominant real bug (flavour) and one real lesson (by-source
+aggregate signals can hide per-family reliability differences); its
+package_size and address/marketing_company items are still open. Steps
+6 and 7 (the holdout re-run, masters-off rows for every step, the
+`NEVER_A_CLAIM` hardcoded-set replacement, and the client's own
+truth-sign-off) haven't been started. No fresh aggregate score.py number
+exists for anything shipped since the Step 1 baseline (43.0% strict /
+54.3% fuzzy / 46.6% strict text) -- that's the first thing worth running
+once memory conditions are confirmed stable, to see where the whole
+night's work actually landed.
