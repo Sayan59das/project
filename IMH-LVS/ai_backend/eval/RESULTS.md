@@ -4513,3 +4513,115 @@ Exact for the 9 scalar fields (a cell already fuzzy-correct despite a strict "wr
 - `claims`: 2 whole-missing, 23 partial-missing
   - `Derocal IRN177-1.pdf`
   - `LXIR Shilajit gummy VF IRN18-1.pdf`
+
+## 2026-09-20 13:38 UTC — mode `pipeline (vlm off, masters on)` — 84b3695
+
+**45 labels, 2136 fields scored.** Overall accuracy: **43.0%** (918 correct / 394 wrong / 824 missing)
+
+| field | correct | wrong | missing | accuracy |
+|---|---|---|---|---|
+| brand_name | 2 | 25 | 18 | 4.4% |
+| product_name | 0 | 30 | 15 | 0.0% |
+| colour_theme | 34 | 28 | 53 | 29.6% |
+| flavour | 19 | 24 | 2 | 42.2% |
+| claims | 198 | 44 | 154 | 50.0% |
+| logo | 12 | 0 | 33 | 26.7% |
+| layout | 0 | 0 | 45 | 0.0% |
+| nutrition_table | 174 | 109 | 210 | 35.3% |
+| fssai_number | 33 | 8 | 4 | 73.3% |
+| ingredients | 282 | 59 | 251 | 47.6% |
+| marketing_company | 20 | 16 | 9 | 44.4% |
+| address | 19 | 13 | 13 | 42.2% |
+| customer_care_number | 24 | 11 | 10 | 53.3% |
+| customer_care_email | 35 | 4 | 6 | 77.8% |
+| package_size | 22 | 22 | 1 | 48.9% |
+| manufacturing_company | 44 | 1 | 0 | 97.8% |
+
+**Accuracy by source** (which pass produced each field's value — a source with more wrong than correct is actively hurting that field and is a candidate to gate off; MISSING cells have no source and aren't counted here):
+| field | source | correct | wrong | accuracy |
+|---|---|---|---|---|
+| address | ppocr-text | 0 | 3 | 0.0% |
+| address | tesseract-full-page | 0 | 1 | 0.0% |
+| address | tesseract-region-ocr | 4 | 5 | 44.4% |
+| address | text-layer-flattened | 14 | 4 | 77.8% |
+| brand_name | master-snap | 1 | 0 | 100.0% |
+| brand_name | tesseract-full-page | 1 | 25 | 3.8% |
+| customer_care_email | ppocr-text | 6 | 0 | 100.0% |
+| customer_care_email | tesseract-full-page | 7 | 4 | 63.6% |
+| customer_care_email | text-layer-flattened | 20 | 0 | 100.0% |
+| customer_care_number | ppocr-text | 0 | 3 | 0.0% |
+| customer_care_number | tesseract-full-page | 6 | 6 | 50.0% |
+| customer_care_number | text-layer-flattened | 16 | 2 | 88.9% |
+| flavour | ppocr-text | 0 | 2 | 0.0% |
+| flavour | tesseract-full-page | 4 | 7 | 36.4% |
+| flavour | text-layer-flattened | 11 | 15 | 42.3% |
+| fssai_number | ppocr-text | 3 | 1 | 75.0% |
+| fssai_number | tesseract-full-page | 5 | 5 | 50.0% |
+| fssai_number | text-layer-flattened | 15 | 2 | 88.2% |
+| fssai_number | text-layer-reading-order | 4 | 0 | 100.0% |
+| marketing_company | ppocr-text | 0 | 6 | 0.0% |
+| marketing_company | tesseract-full-page | 0 | 2 | 0.0% |
+| marketing_company | tesseract-region-ocr | 1 | 8 | 11.1% |
+| marketing_company | text-layer-flattened | 18 | 0 | 100.0% |
+| package_size | package-size-ocr | 1 | 1 | 50.0% |
+| package_size | ppocr-text | 1 | 1 | 50.0% |
+| package_size | tesseract-full-page | 10 | 6 | 62.5% |
+| package_size | text-layer-flattened | 9 | 14 | 39.1% |
+| product_name | tesseract-full-page | 0 | 8 | 0.0% |
+| product_name | tesseract-title-region | 0 | 5 | 0.0% |
+| product_name | text-layer-flattened | 0 | 17 | 0.0% |
+
+**New metric — text fields only** (13 fields; logo/layout/colour_theme are scored separately below, per the brief comparing them as images, not text). Accuracy: **54.3%** (fuzzy/normalized — the 80% target) / 46.6% (strict, for comparison to the row above)
+
+| field | correct (strict) | correct (fuzzy) | wrong | missing | accuracy (fuzzy) |
+|---|---|---|---|---|---|
+| brand_name | 2 | 2 | 25 | 18 | 4.4% |
+| product_name | 0 | 5 | 25 | 15 | 11.1% |
+| flavour | 19 | 28 | 15 | 2 | 62.2% |
+| claims | 198 | 204 | 38 | 148 | 52.3% |
+| nutrition_table | 174 | 238 | 45 | 190 | 50.3% |
+| fssai_number | 33 | 36 | 5 | 4 | 80.0% |
+| ingredients | 282 | 317 | 24 | 216 | 56.9% |
+| marketing_company | 20 | 28 | 8 | 9 | 62.2% |
+| address | 19 | 21 | 11 | 13 | 46.7% |
+| customer_care_number | 24 | 33 | 2 | 10 | 73.3% |
+| customer_care_email | 35 | 37 | 2 | 6 | 82.2% |
+| package_size | 22 | 23 | 21 | 1 | 51.1% |
+| manufacturing_company | 44 | 44 | 1 | 0 | 97.8% |
+
+**Visual fields** (logo, layout, colour_theme — compared as images per the brief §9, not part of the 80% text target; strict matching only): 22.4%
+
+| field | correct | wrong | missing | accuracy |
+|---|---|---|---|---|
+| logo | 12 | 0 | 33 | 26.7% |
+| colour_theme | 34 | 28 | 53 | 29.6% |
+| layout | 0 | 0 | 45 | 0.0% |
+
+**Fabrication rate** (predicted a value for a field the label genuinely doesn't have one for — must never go up in exchange for accuracy):
+| field | fabricated | opportunities | rate |
+|---|---|---|---|
+| manufacturing_company | 1 | 1 | 100.0% |
+| flavour | 3 | 7 | 42.9% |
+| claims | 0 | 1 | 0.0% |
+| logo | 0 | 12 | 0.0% |
+| nutrition_table | 0 | 1 | 0.0% |
+| fssai_number | 0 | 6 | 0.0% |
+| ingredients | 0 | 1 | 0.0% |
+| marketing_company | 0 | 1 | 0.0% |
+| address | 0 | 1 | 0.0% |
+| customer_care_number | 0 | 2 | 0.0% |
+| customer_care_email | 0 | 2 | 0.0% |
+| package_size | 0 | 1 | 0.0% |
+
+**Ground-truth conflicts found** (a field printed differently on two pages of the same label — resolved by keeping the first page's value; worth a human look):
+- `AM7 GUMMIES - ORANGE  FLAVOUR (2).pdf` — layout: ['Carton (flattened, front and back content together)', 'Circular cap face']
+- `Chawan VF IRN138-1 (1).pdf` — logo: ['Small orange leaf icon above the Chewvit wordmark', 'Small leaf icon above the Chewvit wordmark']
+- `Chawan VF IRN138-1 (1).pdf` — layout: ['Carton', 'Carton (spot-UV/foil separation proof)']
+- `Dr. Chewitals Vision IRN13-1.pdf` — layout: ['Wraparound bottle/pouch label', 'Circular cap face (top); blank base template']
+- `Final New-Calcimax 30 Pack 16.02.26  .pdf` — layout: ['Carton (flattened die-line proof, front + side + back panels)', 'Carton (die-line/emboss proof)', 'Carton (spot-UV proof)']
+- `Final New-Calcimax 6 Pack 16.02.26  .pdf` — layout: ['Carton (flattened die-line proof, front + side + back panels)', 'Carton (die-line/emboss proof)', 'Carton (spot-UV proof)']
+- `HSN VF IRN75-1.pdf` — layout: ['Bottle label (jar cap circles + wraparound body label)', 'UV varnish separation proof']
+- `Iron VF IRN74-1.pdf` — layout: ['Bottle label (jar cap circles + wraparound body label)', 'UV varnish separation proof']
+- `LXIR Shilajit gummy VF IRN18-1.pdf` — layout: ['Bottle label (wraparound + cap circles)', 'Blank die-line/dimension template']
+- `LXIR Shilajit STICK VF IRN19-1.pdf` — layout: ['Sachet/stick box label (wraparound + cap circles)', 'Blank die-line/dimension template']
+- `PMS VF IRN71-1.pdf` — layout: ['Bottle label (jar cap circles + wraparound body label)', 'UV varnish separation proof']

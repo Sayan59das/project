@@ -7,7 +7,7 @@
 // the full HTTP extraction tests in labels.extract.test.ts.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { fillBlanks, fillBlanksFrom, tagFilledFields, type FieldMeta } from '../services/labelExtraction.service';
+import { fillBlanks, fillBlanksFrom, tagFilledFields, ppOcrTextScalarPatch, type FieldMeta } from '../services/labelExtraction.service';
 import type { ExtractedLabelFields } from '../services/labelFieldExtractor.service';
 
 function emptyFields(): ExtractedLabelFields {
@@ -92,4 +92,42 @@ test('fillBlanksFrom preserves a confidence already present in the running meta 
   const meta: Record<string, FieldMeta> = { brand: { source: 'vlm-role-resolution', confidence: 0.82, needsReview: true } };
   const { meta: nextMeta } = fillBlanksFrom(fields, { address: '123 Street' }, 'tesseract-full-page', meta);
   assert.deepEqual(nextMeta.brand, { source: 'vlm-role-resolution', confidence: 0.82, needsReview: true });
+});
+
+// accuracy3 Step 1.6: ppOcrTextScalarPatch's by-source-measured exclusion
+// list (2026-09-20, RESULTS.md `84b3695` row -- see its own comment for the
+// exact per-field correct/wrong counts that justified each exclusion).
+test('ppOcrTextScalarPatch: brand and productName are always stripped, regardless of value', () => {
+  const candidates = { ...emptyFields(), brand: 'Fabricated Brand', productName: 'Fabricated Product' };
+  const patch = ppOcrTextScalarPatch(candidates);
+  assert.equal('brand' in patch, false);
+  assert.equal('productName' in patch, false);
+});
+
+test('ppOcrTextScalarPatch: address, customerCareNumber, flavour, marketingCompany are stripped -- measured net-harmful sources', () => {
+  const candidates: ExtractedLabelFields = {
+    ...emptyFields(),
+    address: '123 Street',
+    customerCareNumber: '1800-123-456',
+    flavour: 'Mango',
+    marketingCompany: 'Acme Wellness Pvt Ltd'
+  };
+  const patch = ppOcrTextScalarPatch(candidates);
+  assert.equal('address' in patch, false);
+  assert.equal('customerCareNumber' in patch, false);
+  assert.equal('flavour' in patch, false);
+  assert.equal('marketingCompany' in patch, false);
+});
+
+test('ppOcrTextScalarPatch: email, fssaiNumber, packageSize pass through -- measured net-positive-or-neutral sources', () => {
+  const candidates: ExtractedLabelFields = {
+    ...emptyFields(),
+    email: 'care@example.com',
+    fssaiNumber: '12345678901234',
+    packageSize: '30 Gummies'
+  };
+  const patch = ppOcrTextScalarPatch(candidates);
+  assert.equal(patch.email, 'care@example.com');
+  assert.equal(patch.fssaiNumber, '12345678901234');
+  assert.equal(patch.packageSize, '30 Gummies');
 });

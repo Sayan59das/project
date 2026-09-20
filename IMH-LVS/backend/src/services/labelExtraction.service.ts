@@ -1138,6 +1138,36 @@ export async function recoverBodyTextViaPpOcr(
   return { text: texts.join('\n'), nutritionTable };
 }
 
+// accuracy3 Step 1.6: which of recoverBodyTextViaPpOcr's own scalar reads
+// are safe to route into the fillBlanks cascade as source 'ppocr-text'.
+// brand/productName are excluded unconditionally -- PP-OCR's raw strip-
+// order text is exactly the source that produced this project's 0-correct/
+// 13-wrong flattened-text brand guess (see recoverNamesViaVlm/
+// recoverDisplayTextCandidates for the only path allowed to touch those
+// two fields). The other four exclusions come from the first real by-
+// source measurement of this source (2026-09-20, RESULTS.md `84b3695` row,
+// pipeline vlm-off/masters-on, 45 real labels): address 0 correct/3 wrong,
+// customer_care_number 0/3, flavour 0/2, marketing_company 0/6 -- net
+// harmful on all four, and the flavour misses included a NEW fabrication
+// (a value filled in on a label ground truth says has none), which this
+// project's own rule never allows in exchange for accuracy elsewhere.
+// customerCareEmail (6/0), fssaiNumber (3/1), and packageSize (1/1, not
+// "more wrong than correct") measured net-positive-or-neutral and stay
+// enabled. Per Step 1.6's own instruction: "let the by-source table
+// decide... name which ones in the report."
+export function ppOcrTextScalarPatch(candidates: ExtractedLabelFields): Partial<ExtractedLabelFields> {
+  const {
+    brand: _brand,
+    productName: _productName,
+    address: _address,
+    customerCareNumber: _customerCareNumber,
+    flavour: _flavour,
+    marketingCompany: _marketingCompany,
+    ...patch
+  } = candidates;
+  return patch;
+}
+
 // A bare measurement/dimension value — never a brand name, but a real
 // wrong guess seen on several client labels (a die-line/print-spec
 // dimension nearby getting picked up instead of the brand).
@@ -1700,8 +1730,21 @@ export async function extractLabelReportFromFile(
           // flattened-text brand guess (see the comment on
           // recoverNamesViaVlm/recoverDisplayTextCandidates for the only
           // path allowed to touch those two fields).
+          //
+          // Also gated off address/customerCareNumber/flavour/
+          // marketingCompany: the first real by-source measurement of this
+          // source (2026-09-20, RESULTS.md `84b3695` row) found it net-
+          // harmful on exactly those four -- address 0/3, customer_care_
+          // number 0/3, flavour 0/2, marketing_company 0/6 (correct/wrong)
+          // -- and the flavour misses included a new fabrication (a value
+          // filled in on a label ground truth says has none), which this
+          // project's own rule never allows in exchange for accuracy
+          // elsewhere. customerCareEmail (6/0), fssaiNumber (3/1), and
+          // packageSize (1/1, not "more wrong than correct") stay enabled.
+          // Per Step 1.6's own instruction: "let the by-source table
+          // decide."
           const ppOcrScalarCandidates = extractLabelFields(recovered.text, { knownFlavours });
-          const { brand: _ppOcrBrand, productName: _ppOcrProductName, ...ppOcrScalarPatch } = ppOcrScalarCandidates;
+          const ppOcrScalarPatch = ppOcrTextScalarPatch(ppOcrScalarCandidates);
           const ppOcrMerge = fillBlanksFrom(pass.fields, ppOcrScalarPatch, 'ppocr-text', pass.fieldMeta ?? {});
           pass.fields = ppOcrMerge.fields;
           pass.fieldMeta = ppOcrMerge.meta;
