@@ -1043,3 +1043,45 @@ almost never triggers -- confirmed by the by-source table showing no
 Running both together buys nothing measurable while actively risking
 the contention/crash behavior seen three times this session.
 Recommendation: run one or the other, never both at once.
+
+## accuracy3 Step 1: finished the PP-OCR reader -- small real gain, one net-negative source caught and gated off
+
+Step 0's ceiling measurement (see the "## Ceiling" section, RESULTS.md)
+showed 84.7% of every currently-wrong-or-missing cell IS readable by
+some machine reader, mostly PP-OCR -- but the reader actually wired
+into production (`scanPageWithPpOcr`) was page-1-only, never rotated,
+and never upscaled, while the ceiling was measured with a MORE capable
+reader (`scripts/dump-readable-text.ts`) that did all three. Step 1
+closed that gap: every rasterized page gets scanned (capped at 4 via
+`PPOCR_MAX_PAGES`), 90/270-degree rotation passes run when a panel is
+rotated or there's no text layer at all, each strip gets its own
+upscale retry below a 32px median line height, and the whole scan is
+cached per page so two callers reading the same page only pay once.
+The `isComplete()` fast path -- which used to skip all of this
+entirely whenever every SCALAR field came from the text layer, even if
+nutrition/claims/ingredients were still empty -- now gets the same
+escalation the slow path always had.
+
+**Measured (vlm off, masters on, all 45 real labels): overall 43.0%
+strict (was 42.5%), new-metric text-fields 54.3% fuzzy / 46.6% strict
+(was 53.3% / 46.1%).** A real gain, but a modest one -- not the
+ceiling-closing jump the round hoped for by itself. Steps 2-4
+(ingredients/claims anchor generalization, the crop reader) are where
+the bigger remaining gap sits.
+
+**One thing caught before it could do damage**: Step 1.6 also routes
+PP-OCR's own reading-order text into blank scalar fields (source tag
+`ppocr-text`), same as every other reader. The by-source table from
+this exact run showed it net-harmful on four of the seven fields it
+reached -- address (0 correct/3 wrong), customer_care_number (0/3),
+flavour (0/2), marketing_company (0/6) -- and the flavour misses
+pushed that field's fabrication rate up from 2/7 to 3/7 labels, which
+this project's own rule never allows in exchange for accuracy
+elsewhere. Gated all four off (kept customerCareEmail 6/0, fssaiNumber
+3/1, packageSize 1/1 -- not "more wrong than correct"). Not
+re-measured after the gate yet -- expected to recover a little more,
+not confirmed.
+
+PR: `feat/accuracy3-step1` (#10). Steps 2-6 of the accuracy3 plan
+(ingredients/claims generalization, the extended crop reader, scalar
+leftovers, the honesty passes) are still ahead.
