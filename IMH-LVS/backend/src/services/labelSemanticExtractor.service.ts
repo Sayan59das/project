@@ -60,7 +60,14 @@ const INGREDIENTS_TERMINATORS =
 // so "ingredient\s+list" and "ingredientes" must come before the bare
 // "ingredients?" or it steals a prefix match first (e.g. "ingredient" out
 // of "ingredient list", leaving "list:" as if it were part of the value).
-const INGREDIENTS_ANCHOR = /(^|\n)\s*\b(ingredient\s+list|ingredientes|ingredients?|composition)\b\s*:?\s*/i;
+// (?!-) after the word boundary: a real heading is followed by whitespace,
+// a colon, or nothing; a coincidental line-wrap mid-compound-word is
+// followed by "-continuation" (real regression found by measurement:
+// "...All claims are\ningredient-based and not based on..." wraps the
+// word "ingredient" onto its own line as part of "ingredient-based",
+// which line-start alone can't tell apart from a genuine heading --
+// Calcimax pack 60 IRN169-2.pdf, a scored label).
+const INGREDIENTS_ANCHOR = /(^|\n)\s*\b(ingredient\s+list|ingredientes|ingredients?|composition)\b(?!-)\s*:?\s*/i;
 
 /**
  * The ingredients declaration, or '' when the label has none.

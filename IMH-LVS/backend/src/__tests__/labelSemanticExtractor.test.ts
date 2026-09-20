@@ -100,6 +100,30 @@ test('a mid-sentence mention of "ingredients" with no colon is NOT mistaken for 
   assert.equal(extractIngredients(text), '');
 });
 
+// accuracy3 Step 2: real regression caught by a score.py measurement after
+// this whole generalization first shipped (Calcimax pack 60 IRN169-2.pdf,
+// a scored label). Line-start alone isn't enough to tell a real heading
+// from a coincidental line-wrap: "...All claims are\ningredient-based and
+// not based on the final product." wraps the word "ingredient" onto its
+// own line as part of the compound word "ingredient-based", which the
+// colon-optional anchor matched as if it were a real heading -- then
+// captured the unrelated allergen-free list that followed as "ingredients"
+// instead of the label's real declaration further down. Fixed with a
+// negative lookahead rejecting a hyphen immediately after the anchor word
+// (a real heading is always followed by whitespace, a colon, or nothing;
+// a line-wrapped compound word is followed by "-continuation").
+test('a line-wrapped compound word ("ingredient-based") is NOT mistaken for a heading -- real regression on Calcimax pack 60 IRN169-2.pdf', () => {
+  const text =
+    'This product is not meant to diagnose any disease. All claims are\n' +
+    'ingredient-based and not based on the final product.\n' +
+    'Free of:\n' +
+    'Proteins, Trans Fats, Saturated Fats, Cholesterol, Gelatin, Wheat (Gluten), Milk, Eggs, Soy.\n' +
+    'Ingredients: Maltitol Syrup (INS 965), Water, Gelling Agents (INS 440), Acidity Regulator.';
+  const ingredients = extractIngredients(text);
+  assert.equal(ingredients.includes('Proteins'), false, 'must not capture the unrelated allergen-free list');
+  assert.match(ingredients, /^Maltitol Syrup/, 'must find the REAL declaration further down instead');
+});
+
 // accuracy3 Step 2: a real over-capture bug found while investigating the
 // anchor gap above (pre-existing, not introduced by this change) -- a
 // dosage/usage-instruction sentence right after the ingredients list on
