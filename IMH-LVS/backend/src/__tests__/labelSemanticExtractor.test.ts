@@ -11,7 +11,8 @@ import {
   extractClaims,
   extractIngredients,
   extractNutritionTableFormat,
-  splitIngredientsList
+  splitIngredientsList,
+  findGenericShapeClaims
 } from '../services/labelSemanticExtractor.service';
 
 const MASTER_CLAIMS = ['Supports Immunity', 'Sugar Free', 'High in Vitamin C', 'No Added Preservatives'];
@@ -483,6 +484,130 @@ test('never reports "Health Supplement" as a claim, even when it is in the Maste
   const result = extractClaims('Health Supplement. Gluten Free.', ['Health Supplement', 'Gluten Free']);
   assert.deepEqual(result.matched, ['Gluten Free']);
   assert.equal(result.claims, 'Gluten Free');
+});
+
+// ---------------------------------------------------------------------
+// accuracy3 Step 3.3: the generic claim-shape extractor
+// ---------------------------------------------------------------------
+//
+// Every fixed matcher above only catches a specific closed vocabulary
+// (badge list, allergen words). Scanning all 45 real labels' ground-truth
+// claims against what those matchers currently find turned up 297 real
+// misses (eval, not invented) -- most far too long to be a real badge
+// (marketing prose, correctly excluded by design), but a real, recurring
+// SHAPE showed up across many different labels' front panels: a short,
+// verb-led sentence naming a benefit ("Supports Hair Health", "Helps
+// Reduce Tiredness", "Supports Menstrual Comfort"). This is the shape
+// findGenericShapeClaims targets, gated narrowly to avoid the fabrication
+// risk a loose "any short sentence" rule would carry:
+//   - 2-8 words
+//   - no digits, except a leading "100%" or trailing "40+"
+//   - Title Case or ALL CAPS (not ordinary sentence-case prose)
+//   - starts with a generic claim verb (Supports/Helps/Promotes/...)
+//   - not shaped like nutrition, ingredients, a terminator phrase,
+//     a company name, an address, a regulatory line, a URL, an email,
+//     or a phone number
+//
+// NOT implemented, on purpose, and worth being explicit about: the
+// original directive's "OR lies in the front panel" alternative to the
+// claim-verb requirement, and "OR >=0.9 PP-OCR confidence" alternative to
+// two-source corroboration. Neither panel geometry nor PP-OCR per-line
+// confidence is available to this text-only function; extending it to use
+// them is future work, not silently approximated here. This function
+// finds CANDIDATES only -- corroboration across two independently-
+// extracted texts and the 12/label cap are applied by the caller
+// (mergeClaimsResults, labelExtraction.service.ts), the same place
+// mergeClaimsResults already unions claims from two text sources.
+//
+// The "100%"/"40+" digit exception is a standalone-token allowance
+// (either may appear anywhere in an otherwise verb-led, digit-free
+// sentence), not strictly the first/last characters of the line -- a bare
+// non-verb "100% Vegan" or "Ayurvedic 40+ herbs" (the real ground-truth
+// wording) still needs the front-panel path this function doesn't
+// implement, same as "Great Taste" above.
+test('findGenericShapeClaims: catches real verb-led claim sentences found missing on real labels (HSN/Iron/PMS families)', () => {
+  const text = 'Supports Hair Health\nHelps Maintain Healthy Skin\nHelps Maintain Healthy Nails';
+  const claims = findGenericShapeClaims(text);
+  assert.ok(claims.includes('Supports Hair Health'));
+  assert.ok(claims.includes('Helps Maintain Healthy Skin'));
+  assert.ok(claims.includes('Helps Maintain Healthy Nails'));
+});
+
+test('findGenericShapeClaims: catches a real multi-word claim with "&" and no digits (Calrio IRN159-1.pdf)', () => {
+  const claims = findGenericShapeClaims('Support Strong Bones & Healthy Growth');
+  assert.ok(claims.includes('Support Strong Bones & Healthy Growth'));
+});
+
+test('findGenericShapeClaims: rejects long marketing prose over 8 words (real over-length miss, Sleeprio Gummies.pdf)', () => {
+  const claims = findGenericShapeClaims(
+    'Riomedica Relax Gummies are thoughtfully formulated with melatonin and botanical extracts to support restful sleep and relaxation.'
+  );
+  assert.equal(claims.length, 0);
+});
+
+test('findGenericShapeClaims: rejects ordinary sentence-case prose (not Title Case or ALL CAPS)', () => {
+  const claims = findGenericShapeClaims('this product supports healthy digestion every day.');
+  assert.equal(claims.length, 0);
+});
+
+test('findGenericShapeClaims: rejects a phrase with no claim verb and no way to check "front panel" -- conservative by design', () => {
+  // "Great Taste" is a real ground-truth claim (Calrio IRN159-1.pdf) this
+  // function deliberately does NOT catch: it has no verb, and front-panel
+  // position isn't available to a text-only function. Under-catching here
+  // is the safe failure direction, not a bug.
+  const claims = findGenericShapeClaims('Great Taste');
+  assert.equal(claims.length, 0);
+});
+
+test('findGenericShapeClaims: allows a "100%" or "40+" token without rejecting the whole line for having a digit', () => {
+  const claims = findGenericShapeClaims('Supports 100% Natural Wellness\nDelivers 40+ Essential Nutrients');
+  assert.ok(claims.includes('Supports 100% Natural Wellness'));
+  assert.ok(claims.includes('Delivers 40+ Essential Nutrients'));
+});
+
+test('findGenericShapeClaims: rejects any other digit shape (a real dose/count, not a claim)', () => {
+  const claims = findGenericShapeClaims('Supports 2 Servings Daily');
+  assert.equal(claims.length, 0);
+});
+
+test('findGenericShapeClaims: rejects a nutrition-shaped line (has a unit)', () => {
+  const claims = findGenericShapeClaims('Supports Elemental Calcium 125 mg');
+  assert.equal(claims.length, 0);
+});
+
+test('findGenericShapeClaims: rejects an ingredients-shaped line', () => {
+  const claims = findGenericShapeClaims('Contains Corn Syrup Sugar Water');
+  assert.equal(claims.length, 0);
+});
+
+test('findGenericShapeClaims: rejects a company-name-shaped line', () => {
+  const claims = findGenericShapeClaims('Helps IM Healthcare Pvt Ltd');
+  assert.equal(claims.length, 0);
+});
+
+test('findGenericShapeClaims: rejects an address-shaped line (a real PIN code)', () => {
+  const claims = findGenericShapeClaims('Supports Village Doduwal 173205');
+  assert.equal(claims.length, 0);
+});
+
+test('findGenericShapeClaims: rejects a regulatory/FSSAI-shaped line', () => {
+  const claims = findGenericShapeClaims('Supports FSSAI Registered Facility');
+  assert.equal(claims.length, 0);
+});
+
+test('findGenericShapeClaims: rejects a URL-shaped line', () => {
+  const claims = findGenericShapeClaims('Helps Visit www.example.com');
+  assert.equal(claims.length, 0);
+});
+
+test('findGenericShapeClaims: rejects an email-shaped line', () => {
+  const claims = findGenericShapeClaims('Helps Contact care@example.com');
+  assert.equal(claims.length, 0);
+});
+
+test('findGenericShapeClaims: rejects a terminator-shaped line (batch/use-by/storage etc.)', () => {
+  const claims = findGenericShapeClaims('Helps Store In Cool Dry Place');
+  assert.equal(claims.length, 0);
 });
 
 test('reads the serving basis a nutrition panel declares', () => {

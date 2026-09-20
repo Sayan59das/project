@@ -56,6 +56,7 @@ import {
   extractIngredients,
   extractNutritionTableFormat,
   splitIngredientsList,
+  findGenericShapeClaims,
   ALLERGEN_DIETARY_WORDS,
   type ClaimsResult
 } from './labelSemanticExtractor.service';
@@ -294,7 +295,21 @@ function toResult(fields: ExtractedLabelFields, extended: ExtendedFields): Label
 // gates on a narrow, generic word list regardless of which text
 // surfaced the match, so a claim found either way is still a claim
 // really printed on the label.
-export function mergeClaimsResults(primary: ClaimsResult, secondaryText: string | undefined, knownClaims: readonly string[]): ClaimsResult {
+// accuracy3 Step 3.3: findGenericShapeClaims's own required corroboration
+// -- a candidate is only trusted when the same claim (case-insensitively)
+// is found by an independent extraction of BOTH texts this function
+// already has in hand. This is the one place in the whole claims pipeline
+// where two independently-derived texts are both available, so it's where
+// the generic matcher's corroboration requirement is applied, not inside
+// findGenericShapeClaims itself (which only ever sees one text at a time).
+const GENERIC_CLAIMS_CAP = 12;
+
+export function mergeClaimsResults(primary: ClaimsResult, primaryText: string, secondaryText: string | undefined, knownClaims: readonly string[]): ClaimsResult {
+  // accuracy3 Step 3.3: generic-shape candidates need BOTH texts even when
+  // secondaryText is absent -- findGenericShapeClaims(primaryText) alone
+  // is never enough to satisfy its own corroboration requirement, so with
+  // no secondary text there is nothing to add here either, and the
+  // original early return (unchanged) is still correct.
   if (!secondaryText) return primary;
   const secondary = extractClaims(secondaryText, knownClaims);
 
@@ -311,6 +326,15 @@ export function mergeClaimsResults(primary: ClaimsResult, secondaryText: string 
   }
   for (const claim of secondary.claimsList) {
     if (claim && !merged.has(claim.toLowerCase())) merged.set(claim.toLowerCase(), claim);
+  }
+
+  const primaryGeneric = findGenericShapeClaims(primaryText);
+  const secondaryGenericLower = new Set(findGenericShapeClaims(secondaryText).map((c) => c.toLowerCase()));
+  const corroboratedGeneric = primaryGeneric
+    .filter((claim) => secondaryGenericLower.has(claim.toLowerCase()))
+    .slice(0, GENERIC_CLAIMS_CAP);
+  for (const claim of corroboratedGeneric) {
+    if (!merged.has(claim.toLowerCase())) merged.set(claim.toLowerCase(), claim);
   }
 
   const matchedLower = new Set([...primary.matched, ...secondary.matched].map((claim) => claim.toLowerCase()));
@@ -392,7 +416,7 @@ async function extractExtendedFields(
   displayTextCandidates?: DisplayTextCandidate[],
   flattenedText?: string
 ): Promise<ExtendedFields> {
-  const claims = mergeClaimsResults(extractClaims(text, knownClaims), flattenedText, knownClaims);
+  const claims = mergeClaimsResults(extractClaims(text, knownClaims), text, flattenedText, knownClaims);
 
   let colourTheme = '';
   if (pageImage) {
