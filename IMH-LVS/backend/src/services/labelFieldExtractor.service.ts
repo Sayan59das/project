@@ -1037,6 +1037,39 @@ function bestNonNegatedMatch(text: string, pattern: RegExp): RegExpExecArray | n
   );
 }
 
+// accuracy3 Step 5: real, dominant flavour bug found across 8 of 22 wrong
+// ground-truth cases (the Cal. Vit D IRN120/Calcimax/Calrio family) --
+// NAME_THEN_FLAVOUR_WORD's connector-chaining (see its own doc comment)
+// has no way to tell "this leading word is a real ingredient name" from
+// "this leading word is one more part of the flavour" purely from
+// sentence shape: an existing, correct test needs the exact same "Word,
+// Word & Word" shape to capture a genuine three-part flavour whole
+// ('a three-part flavour joined by comma and "&"'). The real signal is
+// semantic, not structural: common food-chemistry compound-name suffixes
+// (Phosphate, Sulphate, Carbonate, ...) are never part of a flavour name
+// on ANY label, in any client's product -- an industry-standard naming
+// convention, not this client's specific ingredient. A leading
+// chemical-compound-shaped word run, followed by a comma and more
+// content, is trimmed off the captured value.
+const CHEMICAL_COMPOUND_WORD =
+  /^(phosphates?|sulphates?|sulfates?|chlorides?|carbonates?|citrates?|oxides?|hydroxides?|bicarbonates?|gluconates?|lactates?|malates?|tartrates?|acetates?)$/i;
+
+function trimLeadingChemicalCompoundName(value: string): string {
+  const commaIndex = value.indexOf(',');
+  if (commaIndex === -1) return value;
+
+  const before = value.slice(0, commaIndex).trim();
+  const words = before.split(/\s+/).filter(Boolean);
+  const lastWord = words[words.length - 1];
+  if (words.length < 2 || !lastWord || !CHEMICAL_COMPOUND_WORD.test(lastWord)) return value;
+
+  // Never trim to nothing -- a chemical-compound name that IS the whole
+  // captured value (no real flavour after it) is left as-is; there's
+  // nothing better to fall back to within this one capture.
+  const rest = value.slice(commaIndex + 1).trim();
+  return rest || value;
+}
+
 function extractFlavour(text: string, knownFlavours: readonly string[]): string {
   // Only affects the two anchor-based tiers below — a compound flavour
   // phrase split across a dangling-connector line break needs to read as
@@ -1048,7 +1081,7 @@ function extractFlavour(text: string, knownFlavours: readonly string[]): string 
 
   const nameThenFlavour = bestNonNegatedMatch(textWithJoinedFlavourLines, NAME_THEN_FLAVOUR_WORD);
   if (nameThenFlavour) {
-    const value = titleCase(nameThenFlavour[1].trim());
+    const value = titleCase(trimLeadingChemicalCompoundName(nameThenFlavour[1].trim()));
     debugLog(`flavour: matched "${value}" via "<Name> Flavour" wording ("${nameThenFlavour[0]}").`);
     return value;
   }
