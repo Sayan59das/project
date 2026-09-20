@@ -921,6 +921,20 @@ model that can actually read the artwork-only 47% well -- and that
 has now been tried twice (Step 6's bigger local model, and the vision-
 model fallback below) with two failures, not two successes.
 
+> **SUPERSEDED 2026-09-20.** The 66.6% ceiling above only counted the
+> PDF text layer and Tesseract as "readable" -- it never counted
+> PP-OCR, which was already running in production (`recoverDisplay
+> TextCandidates`) but throwing away everything except its own top-10
+> outlined lines. Re-measured the same way (`eval/ceiling.py`, same 45
+> labels, same gap cells), this time counting PP-OCR's own strip-based
+> reads too: **84.7% real fuzzy ceiling (1564/1847 cells)**, not 66.6%.
+> Full breakdown: see the "## Ceiling" section near the end of this
+> file's companion `RESULTS.md`. The conclusion above was correct given
+> what it measured; what it measured wasn't the whole picture. 80% is
+> not a fitting artefact of the metric -- it is reachable through
+> extraction improvements alone, using readers already in this
+> repository.
+
 ## The vision-model fallback: real gains, real fabrication, both fixed
 
 `AI_EXTRACTION_URL` -- a SECOND, separate AI fallback (its own local

@@ -4471,3 +4471,45 @@ Also decided (Step 1.2, `STEP1_FAILURE_ANALYSIS.md`):
 | field | fabricated | opportunities | rate |
 |---|---|---|---|
 | logo | 0 | 1 | 0.0% |
+
+## Ceiling — 2026-09-20, `ac060e7` (accuracy2 Step 1)
+
+**Not an accuracy row.** This is the output of `eval/ceiling.py` run against `eval/runs/pipeline-vlm-off.json` (45 real labels) and the strip-based, PP-OCR text dump `dump-readable-text.ts` produces (0/90/270 degree rotation passes, 2x upscale when the median line height is below 32px, every page) — a MORE capable PP-OCR reader than the one wired into production at the time this ceiling was measured (`scanPageWithPpOcr`: page 1 only, no rotation, no upscale rule). It answers one question: of every cell the pipeline got WRONG or MISSING, how many are actually readable by *some* machine reader (the PDF text layer, Tesseract, or this PP-OCR reader), and how many aren't readable at all no matter what reads the page.
+
+Per-field gap/readability breakdown (`gap` = wrong+missing cells for that field; `text-layer`/`tesseract`/`ppocr` = how many of those gap cells that specific reader can find the expected value in; `any` = found by at least one reader; `none` = not found by any reader):
+
+| field | gap | text-layer | tesseract | ppocr | any | none | any% |
+|---|---|---|---|---|---|---|---|
+| nutrition_table | 308 | 93 | 35 | 159 | 185 | 123 | 60.1% |
+| ingredients | 262 | 73 | 153 | 181 | 227 | 35 | 86.6% |
+| claims | 249 | 81 | 93 | 112 | 161 | 88 | 64.7% |
+| brand_name | 43 | 10 | 12 | 31 | 36 | 7 | 83.7% |
+| product_name | 39 | 14 | 9 | 8 | 20 | 19 | 51.3% |
+| package_size | 25 | 5 | 5 | 7 | 8 | 17 | 32.0% |
+| address | 24 | 0 | 0 | 0 | 0 | 24 | 0.0% |
+| marketing_company | 18 | 2 | 10 | 10 | 14 | 4 | 77.8% |
+| flavour | 17 | 2 | 2 | 4 | 4 | 13 | 23.5% |
+| customer_care_number | 15 | 2 | 3 | 5 | 8 | 7 | 53.3% |
+| customer_care_email | 14 | 0 | 1 | 9 | 9 | 5 | 64.3% |
+| fssai_number | 12 | 3 | 4 | 9 | 11 | 1 | 91.7% |
+| **TOTAL** | **1026** | **285** | **327** | **535** | **683** | **343** | **66.6%** |
+
+Current fuzzy (new metric, text fields, at `ac060e7`): 881/1847 = 47.7%.
+**CEILING if every present-in-any-reader cell were recovered: 1564/1847 = 84.7%.**
+
+Exact for the 9 scalar fields (a cell already fuzzy-correct despite a strict "wrong" verdict is excluded from the gap so it isn't double-counted). `claims`/`ingredients`/`nutrition_table` use the strict gap unadjusted, since their fuzzy match is cross-item bipartite matching this script doesn't replicate — their true ceiling is very slightly LOWER than shown here, not higher.
+
+**Whole-field-missing labels** (the entire field came back empty on that label, of labels with ≥3 gap cells for that field):
+
+- `nutrition_table`: 6 whole-missing, 26 partial-missing
+  - `Calcimax Pack 30 IRN168-2.pdf`
+  - `Calcimax pack 60 IRN169-2.pdf`
+  - `Final New-Calcimax 30 Pack 16.02.26  .pdf`
+  - `Final New-Calcimax 6 Pack 16.02.26  .pdf`
+  - `LXIR Shilajit gummy VF IRN18-1.pdf`
+  - `Novocal Kid 19-10-2024 (3).jpg`
+- `ingredients`: 1 whole-missing, 11 partial-missing
+  - `LXIR Shilajit gummy VF IRN18-1.pdf`
+- `claims`: 2 whole-missing, 23 partial-missing
+  - `Derocal IRN177-1.pdf`
+  - `LXIR Shilajit gummy VF IRN18-1.pdf`

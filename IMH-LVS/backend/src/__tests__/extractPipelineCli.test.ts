@@ -46,7 +46,12 @@ test('a corrupt PDF produces a null record instead of crashing the whole run', {
   assert.deepEqual(records[0].field_sources, {});
 });
 
-test('every record has the full field set score.py expects, in argument order', { timeout: 120_000 }, async () => {
+// accuracy3 Step 0: the 120s default is enough when this file runs alone,
+// but not when the full backend suite runs at full parallelism (this real
+// CLI call competes with every other real-PDF/OCR test's own CPU work) --
+// confirmed timing out at ~121s under that contention. Raised, not
+// weakened: this still exercises the real CLI against a real PDF.
+test('every record has the full field set score.py expects, in argument order', { timeout: 300_000 }, async () => {
   const pdfPaths = [path.join(fixturesDir, 'she-arise-gummies.pdf'), path.join(fixturesDir, 'corrupt.pdf')];
   const { stdout, exitCode } = await runCli(pdfPaths);
   assert.equal(exitCode, 0);
