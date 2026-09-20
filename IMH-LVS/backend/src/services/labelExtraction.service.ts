@@ -55,6 +55,7 @@ import {
   extractClaims,
   extractIngredients,
   extractNutritionTableFormat,
+  splitIngredientsList,
   ALLERGEN_DIETARY_WORDS,
   type ClaimsResult
 } from './labelSemanticExtractor.service';
@@ -300,6 +301,37 @@ export function mergeClaimsResults(primary: ClaimsResult, secondaryText: string 
   };
 }
 
+// accuracy3 Step 2: the same reading-order-vs-flattened-text rescue
+// mergeClaimsResults applies to claims, applied to ingredients. Real gap
+// found via a score.py measurement (Calcimax pack 60 IRN169-2.pdf): its
+// ingredients paragraph sits at the same Y-coordinates as a narrow MRP/
+// pricing side column, so the geometry-based reading-order reconstruction
+// zigzags between them, splicing pricing fragments into the middle of the
+// list and truncating it early. The PDF's own flattened (draw-order) text
+// doesn't reconstruct columns at all, so it isn't vulnerable to this
+// specific failure mode.
+//
+// Unlike claims (an unordered set of independent badge matches, safe to
+// union), an ingredients declaration is one coherent ordered list -- safe
+// to swap wholesale for a better candidate, unsafe to merge fragments of
+// (splicing two different runs' text together would scramble the order
+// and risk creating an item that was never really printed as such). Picks
+// whichever source recovers strictly more items, via the same
+// splitIngredientsList every other consumer of a declaration already
+// uses; a tie keeps the reading-order result, since it's still the
+// better-tested default for every label that doesn't hit this failure mode.
+export function mergeIngredientsResults(text: string, flattenedText: string | undefined): string {
+  const primary = extractIngredients(text);
+  if (!flattenedText) return primary;
+
+  const secondary = extractIngredients(flattenedText);
+  if (!secondary) return primary;
+
+  const primaryCount = splitIngredientsList(primary).length;
+  const secondaryCount = splitIngredientsList(secondary).length;
+  return secondaryCount > primaryCount ? secondary : primary;
+}
+
 type ExtendedFields = {
   values: Pick<LabelExtractionResult, 'colourTheme' | 'claims' | 'ingredients' | 'nutritionTableFormat' | 'nutritionTable' | 'displayTextCandidates'>;
   unknownClaims: string[];
@@ -351,7 +383,7 @@ async function extractExtendedFields(
     values: {
       colourTheme,
       claims: claims.claims,
-      ingredients: extractIngredients(text),
+      ingredients: mergeIngredientsResults(text, flattenedText),
       nutritionTableFormat: extractNutritionTableFormat(text),
       // nutritionTable is filled from the PDF's geometry structure (Task 5) or
       // the AI backend's vision-model fallback. This function only stringifies

@@ -37,8 +37,11 @@ function flatten(text: string): string {
 // 'usage\s+instruction' (accuracy3 Step 2): a real over-capture bug found on
 // honey-stick-style artwork -- a dosage sentence right after the list had
 // no terminator to stop at, so the declaration ran straight into it.
+// 'mfg\.?\s*by' (accuracy3 Step 2): the abbreviated form of "manufactured
+// by" -- a real gap found on Calcimax pack 60 IRN169-2.pdf's flattened
+// text ("Pillow pouches Mfg by: Osho Industries Ltd...").
 const INGREDIENTS_TERMINATORS =
-  /\b(nutritional\s+(facts|information)|recommended\s+usage|duration\s+of\s+usage|usage\s+instruction|storage|store\s+in|keep\s+(out|away)|marketed\s+by|manufactured\s+by|packed\s+by|fssai|customer\s+care|consumer\s+care|net\s+(content|wt)|batch\s+no|mfg\.?\s*date|use\s+by|m\.?r\.?p|best\s+before|this\s+food\s+is|allergen|contains\s+permitted|not\s+for\s+medicinal|to\s+be\s+sold|images?\s+are|pouches?\s+not)/i;
+  /\b(nutritional\s+(facts|information)|recommended\s+usage|duration\s+of\s+usage|usage\s+instruction|storage|store\s+in|keep\s+(out|away)|marketed\s+by|manufactured\s+by|mfg\.?\s*by|packed\s+by|fssai|customer\s+care|consumer\s+care|net\s+(content|wt)|batch\s+no|mfg\.?\s*date|use\s+by|m\.?r\.?p|best\s+before|this\s+food\s+is|allergen|contains\s+permitted|not\s+for\s+medicinal|to\s+be\s+sold|images?\s+are|pouches?\s+not)/i;
 
 // accuracy3 Step 2: the anchor phrases that introduce an ingredients
 // declaration, generalized beyond the old "ingredients:" -- a mandatory

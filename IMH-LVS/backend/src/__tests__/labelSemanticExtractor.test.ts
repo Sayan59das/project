@@ -138,6 +138,19 @@ test('stops at "Usage Instruction" -- a real over-capture bug on honey-stick-sty
   assert.match(ingredients, /Natural Vitamin C\.$/);
 });
 
+// accuracy3 Step 2: another real over-capture bug, found while investigating
+// the Calcimax pack 60 regression above (via the PDF's own flattened text --
+// see mergeIngredientsResults in labelExtraction.service.ts) -- "Mfg by:" is
+// the abbreviated form of "Manufactured by:" the old terminator list only
+// had spelled out in full.
+test('stops at "Mfg by" -- the abbreviated form of "Manufactured by" (real gap on Calcimax pack 60 IRN169-2.pdf)', () => {
+  const text = 'Ingredients: Maltitol Syrup, Water, Gelling Agents, Vitamin D.\nPillow pouches Mfg by: Osho Industries Ltd. CPCB Regn. No.';
+  const ingredients = extractIngredients(text);
+  assert.equal(ingredients.includes('Mfg by'), false);
+  assert.equal(ingredients.includes('Osho Industries'), false);
+  assert.match(ingredients, /Vitamin D\.$/);
+});
+
 // Step 5.2 (accuracy plan): splitting an ingredients declaration into
 // discrete items on every comma breaks any item whose own name contains a
 // comma inside parentheses/brackets -- an INS food-additive code list being
