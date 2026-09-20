@@ -250,6 +250,15 @@ const CLAIM_BADGES: readonly { pattern: RegExp; claim: string }[] = [
 export type ClaimsResult = {
   /** Every claim found on the label, in the ' | ' form the app stores. */
   claims: string;
+  /**
+   * accuracy3 Step 3: the same claims as a real array, in the same order
+   * `claims` joins them in. Exists so a combined-badge claim whose own
+   * text contains a literal " | " (see the FREE FROM matcher below) can be
+   * told apart from three separately-joined claims -- something the
+   * `claims` string alone can never do once split back apart by any
+   * consumer using the same ' | ' delimiter this file joins with.
+   */
+  claimsList: string[];
   /** Claims that matched a record in the Claims master. */
   matched: string[];
   /**
@@ -332,6 +341,37 @@ export function extractClaims(text: string, knownClaims: readonly string[] = [])
   // delimited project-wide, which is a bigger decision than this one bug
   // warrants making unilaterally.
 
+  // accuracy3 Step 3: the previously-backed-out combined badge -- see
+  // ClaimsResult.claimsList's own doc comment for why it's safe to ship
+  // now. Confirmed on the actual label: Iron IRN74-1.pdf prints "FREE
+  // FROM   GLUTEN | MILK | SOY" as one combined design element. Requires
+  // an explicit "|"-separated run of at least two words (not "free from
+  // artificial preservatives", ordinary prose with no pipes) and every
+  // captured word to be in the same generic allergen/dietary allowlist
+  // every other matcher here already uses, so this can't fire on
+  // arbitrary "free from X | Y" text that isn't really an allergen badge.
+  //
+  // The SAME label also prints separate "GLUTEN FREE"/"MILK FREE"/
+  // "SOY FREE" badges elsewhere -- a design redundancy for the exact same
+  // fact the combined badge already states, not a second real claim.
+  // combinedAllergens records every word a combined badge already
+  // accounted for, so the individual FREE_CLAIM/NO_CLAIM matchers below
+  // can skip them and avoid reporting both "Free From Gluten | Milk | Soy"
+  // AND a separate "Gluten Free" for the same allergen (ground truth has
+  // only the one combined entry for those three; ANOTHER allergen not
+  // named in any combined badge, like "Gelatin Free" on this same label,
+  // still has to be reported on its own).
+  const FREE_FROM_COMBINED = /\bfree\s+from\s+([A-Za-z]+(?:\s*\|\s*[A-Za-z]+)+)/gi;
+  const combinedAllergens = new Set<string>();
+  for (const match of flat.matchAll(FREE_FROM_COMBINED)) {
+    const words = match[1].split('|').map((w) => w.trim());
+    if (words.length < 2 || !words.every((w) => ALLERGEN_DIETARY_WORDS.has(w.toLowerCase()))) continue;
+    const claim = `Free From ${words.map((w) => `${w[0].toUpperCase()}${w.slice(1).toLowerCase()}`).join(' | ')}`;
+    const alreadyKnown = [...found.keys()].some((existing) => existing.toLowerCase() === claim.toLowerCase());
+    if (!alreadyKnown) found.set(claim, isKnown(claim, knownClaims));
+    for (const w of words) combinedAllergens.add(w.toLowerCase());
+  }
+
   // Real regression found the same way (Cal. Vit D/Iron/PMS/HSN families
   // again): "This food is by its nature gluten free." is a standard
   // regulatory disclaimer sentence, not a printed claim badge, but reads
@@ -349,6 +389,7 @@ export function extractClaims(text: string, knownClaims: readonly string[] = [])
   for (const match of flat.matchAll(FREE_CLAIM)) {
     const word = match[1];
     if (!ALLERGEN_DIETARY_WORDS.has(word.toLowerCase())) continue;
+    if (combinedAllergens.has(word.toLowerCase())) continue;
     if (BY_NATURE_DISCLAIMER.test(flat.slice(Math.max(0, match.index - 20), match.index))) continue;
     const claim = `${word[0].toUpperCase()}${word.slice(1).toLowerCase()} Free`;
     const alreadyKnown = [...found.keys()].some((existing) => existing.toLowerCase() === claim.toLowerCase());
@@ -368,6 +409,7 @@ export function extractClaims(text: string, knownClaims: readonly string[] = [])
   for (const match of flat.matchAll(NO_CLAIM)) {
     const word = match[1];
     if (!ALLERGEN_DIETARY_WORDS.has(word.toLowerCase())) continue;
+    if (combinedAllergens.has(word.toLowerCase())) continue;
     const claim = `No ${word[0].toUpperCase()}${word.slice(1).toLowerCase()}`;
     // Prefix check, not just exact match: a real bug caught by the test
     // suite — "No Artificial Colours" (the CLAIM_BADGES pattern, checked
@@ -419,30 +461,13 @@ export function extractClaims(text: string, knownClaims: readonly string[] = [])
     if (!alreadyKnown) found.set(claim, isKnown(claim, knownClaims));
   }
 
-  // NOT IMPLEMENTED, on purpose: a third real shape for the same fact was
-  // found and confirmed on a real label — Iron IRN74-1.pdf prints "FREE
-  // FROM   GLUTEN | MILK | SOY" as one combined badge, literal pipe
-  // characters and all, alongside six separate "GLUTEN FREE"/"MILK
-  // FREE"/... badges. Ground truth records it as its own single claim
-  // entry, "Free From Gluten | Milk | Soy". But this app's storage format
-  // joins every claim on a label into ONE string using that exact same
-  // " | " separator (see the join below, and CLAIM_DELIMITER in
-  // scripts/extract-pipeline.ts, which un-joins it the same naive way —
-  // value.split(' | ')). A claim whose own text contains " | " would be
-  // shattered back into three wrong fragments instead of staying one
-  // claim, which is worse than not extracting it at all. Recording this
-  // rather than guessing at a workaround (a different internal separator
-  // would silently stop matching the ground truth's exact string; storing
-  // claims as a real array end-to-end would be the correct fix but touches
-  // every caller of this field) — a decision for the human, not a code
-  // change to make unasked.
-
   const claims = [...found.keys()];
   return {
     // ' | ' is the separator the existing comparison data uses
     // ('Supports Immunity | High in Vitamin C'), so a stored value from here is
     // directly comparable with one authored by hand.
     claims: claims.join(' | '),
+    claimsList: claims,
     matched: claims.filter((claim) => found.get(claim) === true),
     unmatched: claims.filter((claim) => found.get(claim) !== true)
   };
@@ -450,6 +475,196 @@ export function extractClaims(text: string, knownClaims: readonly string[] = [])
 
 function isKnown(claim: string, knownClaims: readonly string[]): boolean {
   return knownClaims.some((known) => known.trim().toLowerCase() === claim.toLowerCase());
+}
+
+// accuracy3 Step 3.3: generic verb-led claim sentences ("Supports Hair
+// Health", "Helps Reduce Tiredness") — the recurring real shape a scan of
+// all 45 labels' ground truth turned up, not built from any one label's
+// specific wording. Generic across the industry the same way the fixed
+// CLAIM_BADGES list and the allergen matchers above already are.
+//
+// "Contains" deliberately excluded despite being a real claim-verb on some
+// labels ("Contains 40+ Ayurvedic herbs"): it's also exactly how an
+// ingredients declaration itself commonly opens ("Contains: Corn Syrup,
+// Sugar..."), and INGREDIENTS_SHAPE below only catches the literal word
+// "ingredients"/"composition", not an arbitrary run of ingredient names —
+// "Contains Corn Syrup Sugar Water" would otherwise slip through as a
+// false claim. Left out rather than building a riskier, looser ingredients
+// check just to admit one verb.
+const CLAIM_VERB = /^(supports?|helps?|promotes?|boosts?|aids?|improves?|reduces?|prevents?|maintains?|provides?|enhances?|protects?|strengthens?|nourishes?|delivers?)\b/i;
+
+// Shape exclusions: a line that LOOKS like a claim sentence but is really
+// one of these other label sections. Each is a narrow, generic shape
+// check (a unit, a digit pattern, a suffix, a symbol) — never built from
+// one client's specific company/address/product text.
+const NUTRITION_SHAPE = /\b\d+(\.\d+)?\s*(mg|mcg|g|kg|ml|l|kcal|iu|%)\b/i;
+const INGREDIENTS_SHAPE = /\b(ingredients?|composition|ingredient\s+list)\b/i;
+const COMPANY_SHAPE = /\b(pvt\.?\s*ltd\.?|private\s+limited|ltd\.?|limited|llp|inc\.?)\b/i;
+const ADDRESS_SHAPE = /\b\d{6}\b|\b(village|road|street|nagar|industrial\s+area|sector|highway)\b/i;
+const REGULATORY_SHAPE = /\b(fssai|licen[cs]e|lic\.?\s*no|registered|regd\.?)\b/i;
+const URL_SHAPE = /https?:\/\/|www\.|\.(com|in|org|net)\b/i;
+const EMAIL_SHAPE = /@/;
+const PHONE_SHAPE = /\b\d{10}\b|\b\d{3,5}[-\s]\d{6,8}\b/;
+
+// A line whose only digits form a standalone "100%" or "40+" token still
+// counts as digit-free for this matcher's purposes — both are real,
+// recurring claim shapes ("100% Vegan", "Ayurvedic 40+ herbs") confirmed
+// on real labels, not invented; any OTHER digit (a dose, a count, a
+// measurement) is exactly the nutrition/ingredients-adjacent content this
+// matcher must not mistake for a claim. Matched as a token anywhere in the
+// line, not just its first/last characters -- a real claim can read
+// "Supports 100% Natural Wellness" just as well as "100% Natural".
+function hasDisallowedDigits(line: string): boolean {
+  // No trailing \b after "%"/"+": both are non-word characters, so a \b
+  // right after either can never match (a word boundary needs one side to
+  // be a word character) -- caught by this file's own test suite.
+  const stripped = line.replace(/\b100%/gi, '').replace(/\b40\+/gi, '');
+  return /\d/.test(stripped);
+}
+
+const CASE_CONNECTOR_WORDS = new Set(['of', 'the', 'a', 'an', 'and', 'or', 'for', 'to', 'in', 'on', 'with', 'is', 'are']);
+
+// Title Case (connector words may stay lowercase, every other word starts
+// uppercase) or ALL CAPS — not ordinary sentence-case prose, which is the
+// shape of a disclaimer or instruction, not a printed claim badge.
+function isTitleCaseOrAllCaps(line: string): boolean {
+  const words = line.split(/\s+/).filter((w) => /[a-zA-Z]/.test(w));
+  if (words.length === 0) return false;
+  if (words.every((w) => w === w.toUpperCase())) return true;
+  return words.every((w, i) => {
+    const bareLower = w.toLowerCase().replace(/[^a-z]/g, '');
+    if (i > 0 && CASE_CONNECTOR_WORDS.has(bareLower)) return true;
+    return /^[A-Z]/.test(w);
+  });
+}
+
+/**
+ * Candidate generic-shape claims found in `text` — verb-led sentences
+ * naming a benefit, narrowly gated (see this file's own test suite for
+ * the full list of real positive and negative shapes this was built and
+ * validated against): 2-8 words, no digits except a leading "100%" or
+ * trailing "40+", Title Case or ALL CAPS, starts with a generic claim
+ * verb, and not shaped like nutrition, ingredients, a company name, an
+ * address, a regulatory line, a URL, an email, or a phone number.
+ *
+ * Returns every CANDIDATE the shape rules allow — corroboration across
+ * two independently-extracted texts and the 12/label cap are the CALLER's
+ * job (mergeClaimsResults, labelExtraction.service.ts), not this
+ * function's, the same separation of concerns extractClaims/
+ * mergeClaimsResults already use for the badge/allergen matchers above.
+ *
+ * Deliberately does NOT implement the original directive's "OR lies in
+ * the front panel" alternative to the verb requirement, or "OR >=0.9
+ * PP-OCR confidence" alternative to corroboration — neither panel
+ * geometry nor PP-OCR per-line confidence is available to this text-only
+ * function. Under-catching (missing a real front-panel claim with no
+ * verb, like "Great Taste") is the safe failure direction; a looser rule
+ * without that signal would risk matching ordinary prose instead.
+ */
+// accuracy3 Step 3.3: anchored on the verb, not split into lines first —
+// a first version that split on newlines fragmented real multi-line
+// claims ("Support Strong Bones\n& Healthy Growth" became just "Support
+// Strong Bones"), confirmed as a real 0%-true-positive/16-false-positive
+// result validating against all 45 labels' ground truth. PDF text
+// legitimately line-wraps mid-claim, so a fixed line boundary can't be
+// trusted as a claim boundary.
+//
+// Instead, scans the FLATTENED text (newlines collapsed to spaces, same
+// as every other matcher in this file) for each CLAIM_VERB occurrence,
+// then windows forward from there up to whichever comes first: a
+// sentence-ending punctuation mark, 8 words, or -- critically -- the
+// START of the NEXT claim-verb match. That third bound is what tells
+// "Support Strong Bones & Healthy Growth" (one real claim, no punctuation
+// mid-sentence) apart from "Supports Hair Health Helps Maintain Healthy
+// Skin" (two adjacent real claims on the same label with no punctuation
+// between them either) -- without it, the second case merges into one
+// over-long candidate that would either falsely span two claims or get
+// rejected outright by the word-count gate, silently losing one of the
+// two real claims either way.
+// CLAIM_VERB.source (without its leading ^) reused here, not
+// re-typed -- the same verb list, just anchored to occur ANYWHERE in the
+// flattened text rather than only at the very start of the whole string.
+// A real bug caught by this file's own test suite: naively wrapping
+// CLAIM_VERB.source in a 'g' flag while its ^ anchor was still embedded
+// meant it only ever matched once, at position 0.
+const CLAIM_VERB_GLOBAL = new RegExp(`\\b${CLAIM_VERB.source.replace(/^\^/, '')}`, 'gi');
+const SENTENCE_END = /[.!?]/;
+
+export function findGenericShapeClaims(text: string): string[] {
+  const flat = flatten(text);
+  const rawVerbMatches = [...flat.matchAll(CLAIM_VERB_GLOBAL)];
+
+  // Real bug caught the same way: several real claims use two DIFFERENT
+  // verbs from this list back to back ("Helps Maintain Healthy Skin",
+  // "Helps Reduce Tiredness") -- the second verb was being treated as the
+  // start of a brand-new claim, splitting "Helps" off on its own (too
+  // short, discarded) and losing the real claim's own leading word. A verb
+  // match only counts as a genuine new claim boundary when there is at
+  // least one real word between it and the previous verb match; back-to-
+  // back DIFFERENT verbs stay part of the same claim's window.
+  //
+  // Deliberately NOT merged: the SAME verb root repeated back to back
+  // (e.g. "...DAILY NUTRITIONAL SUPPORT\nSUPPORTS IMMUNITY", a real
+  // Multivitamin Gummies.pdf badge layout) -- confirmed as a real false
+  // positive ("SUPPORT SUPPORTS IMMUNITY", one garbled candidate instead
+  // of two real separate claims). A genuine compound verb phrase never
+  // repeats the same root; a design layout running two adjacent badge
+  // captions together can and does.
+  const verbRoot = (word: string): string => word.toLowerCase().replace(/s$/, '');
+  const verbMatches = rawVerbMatches.filter((match, i) => {
+    if (i === 0) return true;
+    const previous = rawVerbMatches[i - 1];
+    // Same root repeated: always a genuine new claim boundary, never a
+    // compound-verb continuation to merge away.
+    if (verbRoot(previous[0]) === verbRoot(match[0])) return true;
+    const gap = flat.slice(previous.index! + previous[0].length, match.index!);
+    return gap.trim().length > 0;
+  });
+
+  const candidates: string[] = [];
+  for (let i = 0; i < verbMatches.length; i++) {
+    const start = verbMatches[i].index!;
+    const nextVerbStart = i + 1 < verbMatches.length ? verbMatches[i + 1].index! : flat.length;
+    const rest = flat.slice(start, nextVerbStart);
+
+    const terminator = rest.search(SENTENCE_END);
+    const bounded = terminator === -1 ? rest : rest.slice(0, terminator);
+
+    // Word count checked on the FULL window, before any truncation -- an
+    // over-long window (marketing prose, or two claims that failed to
+    // split apart) must be rejected outright, never silently chopped down
+    // to its first 8 words and passed off as a real, complete claim.
+    const words = bounded.trim().split(/\s+/).filter(Boolean);
+    if (words.length < 2 || words.length > 8) continue;
+    const line = words.join(' ');
+
+    // A trailing "*" is a footnote marker pointing at qualifying fine
+    // print elsewhere on the label -- a real, recurring shape (Sleeprio
+    // Gummies.pdf prints "SUPPORTS RELAXATION*", "PROMOTES RESTFUL
+    // SLEEP*", "Helps Regulate Sleep Cycle*") that ground truth does NOT
+    // record as its own standalone claim, unlike the same label's
+    // unqualified badges. A conditional, footnoted statement is a
+    // different, weaker kind of claim than an unqualified one; treating
+    // them the same overstates what the label actually asserts.
+    if (/\*\s*$/.test(line)) continue;
+
+    if (hasDisallowedDigits(line)) continue;
+    if (!isTitleCaseOrAllCaps(line)) continue;
+    if (NUTRITION_SHAPE.test(line)) continue;
+    if (INGREDIENTS_SHAPE.test(line)) continue;
+    if (COMPANY_SHAPE.test(line)) continue;
+    if (ADDRESS_SHAPE.test(line)) continue;
+    if (REGULATORY_SHAPE.test(line)) continue;
+    if (URL_SHAPE.test(line)) continue;
+    if (EMAIL_SHAPE.test(line)) continue;
+    if (PHONE_SHAPE.test(line)) continue;
+    if (INGREDIENTS_TERMINATORS.test(line)) continue;
+
+    if (!candidates.some((c) => c.toLowerCase() === line.toLowerCase())) {
+      candidates.push(line);
+    }
+  }
+  return candidates;
 }
 
 // ---------------------------------------------------------------------

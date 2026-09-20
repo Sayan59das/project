@@ -18,8 +18,6 @@ import path from 'path';
 import { extractLabelReportFromFile } from '../src/services/labelExtraction.service';
 import { splitIngredientsList } from '../src/services/labelSemanticExtractor.service';
 
-// The delimiter used by labelSemanticExtractor.service to join claims.
-const CLAIM_DELIMITER = ' | ';
 const COLOUR_DELIMITER = ' & '; // colourTheme.service's own join delimiter
 
 interface OutputRecord {
@@ -138,7 +136,12 @@ function nullRecordFor(filePath: string): OutputRecord {
   };
 }
 
-function toOutputRecord(filePath: string, extractionResult: any, fieldMeta: Record<string, { source: string }>): OutputRecord {
+function toOutputRecord(
+  filePath: string,
+  extractionResult: any,
+  fieldMeta: Record<string, { source: string }>,
+  claimsList: string[]
+): OutputRecord {
   return {
     source_file: path.basename(filePath),
     brand_name: blankToNull(extractionResult.brand),
@@ -151,7 +154,14 @@ function toOutputRecord(filePath: string, extractionResult: any, fieldMeta: Reco
     customer_care_email: blankToNull(extractionResult.email),
     package_size: blankToNull(extractionResult.packageSize),
     manufacturing_company: blankToNull(extractionResult.manufacturingCompany),
-    claims: parseDelimited(extractionResult.claims, CLAIM_DELIMITER),
+    // accuracy3 Step 3: claimsList (a real array from the report object),
+    // not parseDelimited(extractionResult.claims, CLAIM_DELIMITER) --
+    // splitting the ' | '-joined STRING back apart shatters a combined
+    // badge whose own text contains that same delimiter (e.g. "Free From
+    // Gluten | Milk | Soy") into meaningless fragments. See
+    // ClaimsResult.claimsList's own doc comment (labelSemanticExtractor
+    // .service.ts) for the full history.
+    claims: claimsList,
     ingredients: splitIngredientsList(extractionResult.ingredients),
     nutrition_table: parseNutritionTable(extractionResult.nutritionTable),
     colour_theme: extractionResult.colourTheme ? parseDelimited(extractionResult.colourTheme, COLOUR_DELIMITER) : null,
@@ -186,7 +196,7 @@ async function main() {
           masters.knownFlavours,
           masters.knownBrands
         );
-        results.push(toOutputRecord(pdfPath, report.result, report.fieldMeta));
+        results.push(toOutputRecord(pdfPath, report.result, report.fieldMeta, report.claimsList));
       } catch (error) {
         console.error(`Warning: failed to extract ${pdfPath}: ${error instanceof Error ? error.message : String(error)}`);
         results.push(nullRecordFor(pdfPath));

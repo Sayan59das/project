@@ -56,6 +56,7 @@ import {
   extractIngredients,
   extractNutritionTableFormat,
   splitIngredientsList,
+  findGenericShapeClaims,
   ALLERGEN_DIETARY_WORDS,
   type ClaimsResult
 } from './labelSemanticExtractor.service';
@@ -233,6 +234,20 @@ export type LabelExtractionReport = {
    * See FieldMeta's own doc comment for the absence convention.
    */
   fieldMeta: Record<string, FieldMeta>;
+
+  /**
+   * accuracy3 Step 3: the same claims as `result.claims`, as a real array
+   * rather than a ' | '-joined string. Lives on the report object, not on
+   * LabelExtractionResult, so it doesn't touch EXTRACTION_RESULT_KEYS or
+   * any compare-extracted fixture built against the existing shape. A
+   * combined-badge claim (e.g. "Free From Gluten | Milk | Soy") can
+   * contain a literal " | " in its own text, which `result.claims` alone
+   * can't be told apart from three separately-joined claims by any
+   * consumer that splits it back apart on that same delimiter (see
+   * scripts/extract-pipeline.ts's own switch to this field for exactly
+   * that reason).
+   */
+  claimsList: string[];
 };
 
 export function buildPlaceholderExtraction(): LabelExtractionResult {
@@ -280,22 +295,53 @@ function toResult(fields: ExtractedLabelFields, extended: ExtendedFields): Label
 // gates on a narrow, generic word list regardless of which text
 // surfaced the match, so a claim found either way is still a claim
 // really printed on the label.
-export function mergeClaimsResults(primary: ClaimsResult, secondaryText: string | undefined, knownClaims: readonly string[]): ClaimsResult {
+// accuracy3 Step 3.3: findGenericShapeClaims's own required corroboration
+// -- a candidate is only trusted when the same claim (case-insensitively)
+// is found by an independent extraction of BOTH texts this function
+// already has in hand. This is the one place in the whole claims pipeline
+// where two independently-derived texts are both available, so it's where
+// the generic matcher's corroboration requirement is applied, not inside
+// findGenericShapeClaims itself (which only ever sees one text at a time).
+const GENERIC_CLAIMS_CAP = 12;
+
+export function mergeClaimsResults(primary: ClaimsResult, primaryText: string, secondaryText: string | undefined, knownClaims: readonly string[]): ClaimsResult {
+  // accuracy3 Step 3.3: generic-shape candidates need BOTH texts even when
+  // secondaryText is absent -- findGenericShapeClaims(primaryText) alone
+  // is never enough to satisfy its own corroboration requirement, so with
+  // no secondary text there is nothing to add here either, and the
+  // original early return (unchanged) is still correct.
   if (!secondaryText) return primary;
   const secondary = extractClaims(secondaryText, knownClaims);
 
+  // accuracy3 Step 3: reads primary.claimsList/secondary.claimsList (the
+  // real arrays), not primary.claims.split(' | ')/secondary.claims.split(
+  // ' | ') -- splitting the joined STRING back apart is exactly the bug
+  // claimsList exists to avoid: a combined-badge claim whose own text
+  // contains " | " (see ClaimsResult.claimsList's doc comment) would be
+  // shattered into meaningless fragments here otherwise, the same way it
+  // would downstream.
   const merged = new Map<string, string>(); // lowercase -> canonical casing, primary wins ties
-  for (const claim of primary.claims.split(' | ')) {
+  for (const claim of primary.claimsList) {
     if (claim) merged.set(claim.toLowerCase(), claim);
   }
-  for (const claim of secondary.claims.split(' | ')) {
+  for (const claim of secondary.claimsList) {
     if (claim && !merged.has(claim.toLowerCase())) merged.set(claim.toLowerCase(), claim);
+  }
+
+  const primaryGeneric = findGenericShapeClaims(primaryText);
+  const secondaryGenericLower = new Set(findGenericShapeClaims(secondaryText).map((c) => c.toLowerCase()));
+  const corroboratedGeneric = primaryGeneric
+    .filter((claim) => secondaryGenericLower.has(claim.toLowerCase()))
+    .slice(0, GENERIC_CLAIMS_CAP);
+  for (const claim of corroboratedGeneric) {
+    if (!merged.has(claim.toLowerCase())) merged.set(claim.toLowerCase(), claim);
   }
 
   const matchedLower = new Set([...primary.matched, ...secondary.matched].map((claim) => claim.toLowerCase()));
   const mergedClaims = [...merged.values()];
   return {
     claims: mergedClaims.join(' | '),
+    claimsList: mergedClaims,
     matched: mergedClaims.filter((claim) => matchedLower.has(claim.toLowerCase())),
     unmatched: mergedClaims.filter((claim) => !matchedLower.has(claim.toLowerCase()))
   };
@@ -335,6 +381,14 @@ export function mergeIngredientsResults(text: string, flattenedText: string | un
 type ExtendedFields = {
   values: Pick<LabelExtractionResult, 'colourTheme' | 'claims' | 'ingredients' | 'nutritionTableFormat' | 'nutritionTable' | 'displayTextCandidates'>;
   unknownClaims: string[];
+  /**
+   * accuracy3 Step 3: the same claims as `values.claims`, as a real array
+   * rather than a ' | '-joined string. See ClaimsResult.claimsList's own
+   * doc comment for why this exists — a combined-badge claim can contain a
+   * literal " | " in its own text, which the joined string alone can't
+   * tell apart from three separately-joined claims once split back apart.
+   */
+  claimsList: string[];
 };
 
 /**
@@ -362,7 +416,7 @@ async function extractExtendedFields(
   displayTextCandidates?: DisplayTextCandidate[],
   flattenedText?: string
 ): Promise<ExtendedFields> {
-  const claims = mergeClaimsResults(extractClaims(text, knownClaims), flattenedText, knownClaims);
+  const claims = mergeClaimsResults(extractClaims(text, knownClaims), text, flattenedText, knownClaims);
 
   let colourTheme = '';
   if (pageImage) {
@@ -393,7 +447,8 @@ async function extractExtendedFields(
       // page or image; stringified when present, '' when none.
       displayTextCandidates: displayTextCandidates && displayTextCandidates.length ? JSON.stringify(displayTextCandidates) : ''
     },
-    unknownClaims: claims.unmatched
+    unknownClaims: claims.unmatched,
+    claimsList: claims.claimsList
   };
 }
 
@@ -1875,9 +1930,9 @@ export async function extractLabelReportFromFile(
       if (typeof finalValue === 'string' && finalValue) fieldMeta[field] = entry;
     }
 
-    return { result: postProcessed, unknownClaims: extended.unknownClaims, discardedFields, fieldMeta };
+    return { result: postProcessed, unknownClaims: extended.unknownClaims, discardedFields, fieldMeta, claimsList: extended.claimsList };
   } catch (error) {
     console.error('[labelExtraction] Unexpected error during label extraction:', error instanceof Error ? error.message : error);
-    return { result: buildPlaceholderExtraction(), unknownClaims: [], discardedFields: [], fieldMeta: {} };
+    return { result: buildPlaceholderExtraction(), unknownClaims: [], discardedFields: [], fieldMeta: {}, claimsList: [] };
   }
 }
