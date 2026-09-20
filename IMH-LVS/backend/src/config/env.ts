@@ -81,6 +81,13 @@ export const env = {
   // PP-OCR ONNX-based line recognition for outlined display text where
   // Tesseract fails. ON by default; set PADDLE_OCR_ENABLED=false to disable.
   paddleOcrEnabled: parseBoolean(process.env.PADDLE_OCR_ENABLED, true),
+  // accuracy3 Step 1.1: how many rasterized pages recoverBodyTextViaPpOcr
+  // will strip-scan per label. Each page is a full PP-OCR pass (potentially
+  // three angles -- see scanPageWithPpOcr's rotation rule), so this bounds
+  // a pathological multi-page upload from turning one extraction into
+  // dozens of scans; 4 covers every real multi-page client label seen so
+  // far with headroom to spare.
+  ppOcrMaxPages: parsePositiveNumber(process.env.PPOCR_MAX_PAGES, 4),
 
   // The on-prem vision-model service (ai_backend/, FastAPI + Qwen2-VL) that
   // fills in fields Tesseract could not read. OFF unless a URL is set: the
