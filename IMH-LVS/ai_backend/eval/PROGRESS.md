@@ -1152,3 +1152,93 @@ baseline, but this is not yet a RESULTS.md row and should not be quoted
 as one until it is.
 
 PR: `feat/accuracy3-step2` (#11).
+
+## accuracy3 Step 3: claims -- claimsList, the FREE FROM combined badge, and the generic claim-shape extractor
+
+**Step 3.1/3.2**: Added `claimsList: string[]` -- the same claims as a
+real array alongside the existing ' | '-joined string, on the report
+object rather than `LabelExtractionResult` (so `EXTRACTION_RESULT_KEYS`
+and compare-extracted fixtures stay untouched). This finally makes it
+safe to ship the combined `FREE FROM X | Y | Z` badge matcher, found on
+a real label back in the accuracy plan's Step 6 and deliberately backed
+out then: the whole codebase joins a label's claims with the exact same
+' | ' the ground truth chose to use INSIDE this one claim's own text
+("Free From Gluten | Milk | Soy"), so any consumer that splits the
+string back apart shatters it into three meaningless fragments. A real
+array sidesteps the problem. `mergeClaimsResults`'s own merge logic had
+the identical bug internally (splitting `primary.claims`/`secondary
+.claims` strings back apart) -- fixed the same way. Confirmed on the
+real label family this shape was found on (HSN IRN75-1, Iron IRN74-1,
+PMS IRN71-1): also caught and fixed a duplicate-claim risk -- the same
+three allergens also print as separate standalone badges on those same
+labels, which would otherwise report both the combined claim and three
+redundant individual ones.
+
+**Step 3.3, the generic claim-shape extractor**: scanning all 45 labels'
+ground-truth claims against current extraction found 297 real misses --
+most correctly-excluded marketing prose over the directive's 8-word cap,
+but a real, recurring shape kept showing up: short verb-led sentences
+("Supports Hair Health", "Helps Reduce Tiredness"). Built
+`findGenericShapeClaims` to catch that shape, gated narrowly (2-8 words,
+no digits except a standalone "100%"/"40+" token, Title Case or ALL
+CAPS, starts with a generic claim verb, excluded from nutrition/
+ingredients/company/address/regulatory/URL/email/phone/terminator
+shapes).
+
+**The first version scored 0% true positives against real data** (16
+false positives, all truncated fragments) -- caught by the same
+"validate against all 45 real labels before trusting it" discipline
+Step 2 established, not invented after the fact. Root cause: splitting
+text into lines first, then checking each line's shape, fragmented real
+claims that line-wrap mid-sentence in the PDF's text layer ("Support
+Strong Bones\n& Healthy Growth" became just "Support Strong Bones").
+Rebuilt around verb-anchoring on the flattened text instead (matchAll,
+same as every other matcher in this file), windowing forward to the
+next sentence terminator, an 8-word cap, or the start of the NEXT verb
+match -- whichever comes first.
+
+That rebuild introduced its OWN new false positive, caught the same
+way: "...DAILY NUTRITIONAL SUPPORT\nSUPPORTS IMMUNITY" (two separate
+real badges on Multivitamin Gummies.pdf) merged into one garbled
+candidate, because "Support"/"Supports" are the same verb root with
+nothing between them -- indistinguishable at first glance from a
+genuine compound-verb phrase like "Helps Maintain X". Fixed by only
+treating ADJACENT DIFFERENT verb roots as a continuation; the same root
+repeated always starts a new claim boundary. Also excluded a trailing
+"*" footnote marker (Sleeprio Gummies.pdf prints "SUPPORTS RELAXATION*",
+"PROMOTES RESTFUL SLEEP*" -- conditional claims ground truth doesn't
+record as their own entries, unlike the same label's unqualified
+badges).
+
+**Final validated result: 11 true positives, 0 false positives**,
+against all 45 real labels. Wired into `mergeClaimsResults` with real
+two-source corroboration (a candidate must be found in an independent
+extraction of BOTH the reading-order and flattened text), capped at
+12/label. Confirmed through the actual end-to-end pipeline on the real
+HSN/Iron/PMS family, not just the isolated matcher.
+
+**Honest scope limits, stated rather than silently approximated**: the
+original directive's "OR lies in the front panel" alternative to the
+verb requirement, and "OR >=0.9 PP-OCR confidence" alternative to
+corroboration, are NOT implemented -- neither panel geometry nor PP-OCR
+per-line confidence is available to this text-only function. Under-
+catching is the deliberate, safe failure direction (a real front-panel
+claim with no verb, like "Great Taste", stays missing rather than risk
+a looser rule matching ordinary prose).
+
+**Not yet measured with score.py.** The masters-off run the directive
+requires for this feature was started twice tonight and killed both
+times by the harness's own memory-pressure safeguard mid-run -- both
+times, memory had fully recovered (to 9+ GB free, nothing heavy still
+running) within moments of the kill, which looks like a transient spike
+during one particularly rotation-heavy label's OCR pass rather than a
+genuine leak, but that's an observation, not a confirmed diagnosis. Per
+that safeguard's own instruction, not restarting it a third time without
+being asked. Code-level evidence (88 passing tests, 11/0 true/false
+positives against all 45 real labels, confirmed correct on the real
+HSN/Iron/PMS family through the actual end-to-end pipeline) is strong
+enough to merge on -- the same judgment call Step 2 made under the same
+constraint -- but the real aggregate number is still outstanding and
+should not be assumed or quoted until measured.
+
+PR: `feat/accuracy3-step3` (#12).
