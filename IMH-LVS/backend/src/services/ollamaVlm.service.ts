@@ -31,18 +31,65 @@ export function isVlmEnabled(): boolean {
   return env.ollamaUrl !== '';
 }
 
+export type PrepareImageOptions = {
+  /** Overrides the 1008px default -- a crop reader wants a different base width than a whole-page read. */
+  targetWidth?: number;
+  /**
+   * accuracy3 Step 4: the caller's own measurement of median text line
+   * height AS IT WOULD RENDER at targetWidth's scale (i.e. "if this image
+   * were sent at targetWidth, how tall would a text line be"). Below 32px
+   * -- the same threshold Step 1.3's per-strip PP-OCR upscale rule already
+   * uses -- small print stops reading reliably, so targetWidth is scaled
+   * up by the ratio needed to reach exactly 32px. Omit when unknown; no
+   * upscaling happens without this measurement.
+   */
+  medianLineHeightPx?: number;
+};
+
+// accuracy3 Step 4: caps how far the upscale rule above can grow the sent
+// image's long side (whichever of width/height is larger on the ORIGINAL
+// image, since aspect ratio is preserved throughout). Unbounded upscaling
+// would burn real latency/memory on a model call for diminishing
+// readability return past this point.
+const MAX_LONG_SIDE = 1568;
+
+const MIN_READABLE_LINE_HEIGHT_PX = 32;
+
 /**
  * Resize a PNG image to fit the VLM input constraints:
- * - Width: exactly 1008 pixels
+ * - Width: `targetWidth` (default 1008), upscaled per `medianLineHeightPx`
+ *   (see PrepareImageOptions), capped so neither dimension exceeds 1568px
  * - Height: rounded to the nearest multiple of 28 (min 28), preserving aspect ratio
  * Returns metadata required to interpret model responses.
  */
-export async function prepareImage(image: Buffer): Promise<VlmImage> {
+export async function prepareImage(image: Buffer, options: PrepareImageOptions = {}): Promise<VlmImage> {
   const meta = await sharp(image).metadata();
-  const sentWidth = 1008;
+  const originalWidth = meta.width!;
+  const originalHeight = meta.height!;
+  const baseTargetWidth = options.targetWidth ?? 1008;
+
+  let sentWidth = baseTargetWidth;
+  if (
+    options.medianLineHeightPx !== undefined &&
+    options.medianLineHeightPx > 0 &&
+    options.medianLineHeightPx < MIN_READABLE_LINE_HEIGHT_PX
+  ) {
+    sentWidth = Math.round(baseTargetWidth * (MIN_READABLE_LINE_HEIGHT_PX / options.medianLineHeightPx));
+  }
+
+  // Cap the long side at MAX_LONG_SIDE, preserving the ORIGINAL image's
+  // own aspect ratio (not the sent image's, which hasn't been decided
+  // yet) to decide whether width or height is the one to cap.
+  if (originalHeight <= originalWidth) {
+    sentWidth = Math.min(sentWidth, MAX_LONG_SIDE);
+  } else {
+    const maxWidthForHeightCap = Math.floor((MAX_LONG_SIDE * originalWidth) / originalHeight);
+    sentWidth = Math.min(sentWidth, maxWidthForHeightCap);
+  }
+
   // Height must be a multiple of 28 for the model's sliding window.
   // Original aspect ratio is preserved.
-  const sentHeight = Math.max(28, Math.floor((meta.height! * 1008 / meta.width!) / 28) * 28);
+  const sentHeight = Math.max(28, Math.floor((originalHeight * sentWidth / originalWidth) / 28) * 28);
   const base64 = (
     await sharp(image)
       .resize({ width: sentWidth, height: sentHeight, fit: 'fill' })
@@ -54,8 +101,8 @@ export async function prepareImage(image: Buffer): Promise<VlmImage> {
     base64,
     sentWidth,
     sentHeight,
-    originalWidth: meta.width!,
-    originalHeight: meta.height!
+    originalWidth,
+    originalHeight
   };
 }
 
