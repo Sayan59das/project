@@ -144,6 +144,27 @@ test('findIngredientsPanelFromLines: a large vertical gap breaks a run even with
   assert.doesNotMatch(match!.corroborationText, /Directions/);
 });
 
+// Real bug found validating PR #16 against real client labels (LXIR
+// Shilajit STICK VF IRN19-1.pdf): the longest small-print run on that
+// label was a benefits/properties section ("Vrishya (Aphrodisiac)",
+// "Vajikar (Enhances Vigor and Vitality)"), not the ingredients
+// declaration -- both lines are real, correctly-read text (so they
+// passed whole-phrase corroboration honestly), just the WRONG panel. A
+// real ingredients declaration is comma-separated (the same "two
+// ingredients is the floor" convention extractIngredients and
+// isPlausibleIngredientItem's MIN_ITEMS already apply); a benefits list
+// of short standalone phrases is not. Requiring the run's own text to
+// clear that same floor rejects this shape without hardcoding any
+// specific word or brand.
+test('findIngredientsPanelFromLines: rejects a run of short standalone phrases with no comma-list shape -- real bug on LXIR Shilajit STICK VF IRN19-1.pdf (a benefits section, not ingredients)', () => {
+  const lines: OcrLineLike[] = [
+    line('Vrishya (Aphrodisiac)', 20, 300, 280, 318),
+    line('Vajikar (Enhances Vigor and Vitality)', 20, 320, 280, 338),
+    line('Balya (Improves Strength)', 20, 340, 280, 358)
+  ];
+  assert.equal(findIngredientsPanelFromLines(lines), null);
+});
+
 test('findIngredientsPanelFromLines: returns null when no run reaches the minimum line count -- too little signal to trust', () => {
   const lines: OcrLineLike[] = [
     line('Net Wt 60g', 20, 700, 120, 718),

@@ -87,9 +87,24 @@ export function findIngredientsPanelFromSpans(
 // short caption rather than a real ingredients paragraph.
 const SMALL_TEXT_MAX_HEIGHT_PX = 32;
 const MIN_RUN_LINES = 3;
+// Same "two ingredients is the floor" convention MIN_ITEMS and
+// extractIngredients' own comma-count check already apply -- a real
+// ingredients declaration is comma-separated; a benefits/properties
+// section (real bug found on LXIR Shilajit STICK VF IRN19-1.pdf: "Vrishya
+// (Aphrodisiac)", "Vajikar (Enhances Vigor and Vitality)" -- real,
+// correctly-read text, just the wrong panel) is a run of short standalone
+// phrases with no comma-list shape at all. Generic (a structural count,
+// not a specific word or brand), so it doesn't reintroduce the hardcoding
+// this project's own ground rules ban.
+const MIN_RUN_COMMAS = 2;
 
 function rangesOverlap(aStart: number, aEnd: number, bStart: number, bEnd: number): boolean {
   return aStart < bEnd && bStart < aEnd;
+}
+
+function hasCommaListShape(run: readonly OcrLineLike[]): boolean {
+  const commaCount = run.reduce((count, ln) => count + (ln.text.match(/,/g)?.length ?? 0), 0);
+  return commaCount >= MIN_RUN_COMMAS;
 }
 
 /**
@@ -98,10 +113,12 @@ function rangesOverlap(aStart: number, aEnd: number, bStart: number, bEnd: numbe
  * or production-proof image, most of this client's real intake). Groups
  * lines into columns by X-overlap, then within each column finds the
  * longest continuous run of small-print lines (a large vertical gap or a
- * large-print line breaks the run) -- the shape a real ingredients
- * declaration has that nothing else on a label does. Returns null when no
- * run reaches MIN_RUN_LINES; a short run is too easily an unrelated
- * caption to trust as the declaration.
+ * large-print line breaks the run) that also has comma-list shape -- the
+ * two properties together are what a real ingredients declaration has
+ * that nothing else on a label does; length alone isn't enough (see
+ * MIN_RUN_COMMAS's own comment). Returns null when no run reaches
+ * MIN_RUN_LINES with that shape; a short or non-list-shaped run is too
+ * easily an unrelated caption or benefits section to trust.
  */
 export function findIngredientsPanelFromLines(lines: readonly OcrLineLike[]): IngredientsPanelMatch | null {
   if (lines.length === 0) return null;
@@ -113,6 +130,9 @@ export function findIngredientsPanelFromLines(lines: readonly OcrLineLike[]): In
     if (column) column.push(ln);
     else columns.push([ln]);
   }
+
+  const considerAsBest = (candidate: OcrLineLike[], current: OcrLineLike[]): OcrLineLike[] =>
+    candidate.length > current.length && hasCommaListShape(candidate) ? candidate : current;
 
   let bestRun: OcrLineLike[] = [];
   for (const column of columns) {
@@ -126,11 +146,11 @@ export function findIngredientsPanelFromLines(lines: readonly OcrLineLike[]): In
       if (isSmall && gapOk) {
         current.push(ln);
       } else {
-        if (current.length > bestRun.length) bestRun = current;
+        bestRun = considerAsBest(current, bestRun);
         current = isSmall ? [ln] : [];
       }
     }
-    if (current.length > bestRun.length) bestRun = current;
+    bestRun = considerAsBest(current, bestRun);
   }
 
   if (bestRun.length < MIN_RUN_LINES) return null;

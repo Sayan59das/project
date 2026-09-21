@@ -790,6 +790,27 @@ async function ocrImageWithEnhancement(
     }
   }
 
+  // accuracy3: tried and REVERTED (keeping the record, not silently
+  // dropping it -- same discipline as the tesseract-region-ocr attempt
+  // above). The by-source table (2026-09-21, RESULTS.md `dde3652` row)
+  // shows brand/productName from Tesseract's full-page-OCR family net-
+  // negative in aggregate (brand_name 1 correct/17 wrong; product_name 0
+  // correct/7 wrong via tesseract-full-page, 0/5 via tesseract-title-
+  // region) -- unconditionally blanking both here, so only VLM role
+  // resolution could fill them, broke the regression oracle on 6 of 14
+  // fixtures, both synthetic (a clean OCR-only JPG/PDF whose brand
+  // "VitaFit" this source reads correctly and reliably) and real (Apple
+  // Cider Vinegar Gummy, Chyawanprash Gummies, She-Arise Gummies, a
+  // real-world JPG pattern) -- exactly the Step 5 lesson repeating: the
+  // aggregate "more wrong than correct" signal hides that a source is
+  // reliable on some label families (clean, well-formed artwork) and
+  // unreliable on others (this client's messier real intake), and a
+  // blanket gate fixes the second group by breaking the first. A real fix
+  // would need VLM role resolution to actively OUTVOTE a Tesseract guess
+  // when both are available, rather than Tesseract being blanked pre-
+  // emptively whether or not a better answer ever arrives -- left
+  // unresolved rather than trade a real, confirmed regression for an
+  // aggregate number that looked good on paper.
   return { text: combinedText, fields, fieldMeta, words };
 }
 
