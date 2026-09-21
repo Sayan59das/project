@@ -1,38 +1,49 @@
-// accuracy3 Step 4: a second crop-reader extension, following the exact
-// pattern nutritionCropReader.service.ts already proved in production
-// (accuracy2 Step 7) -- a whole-page VLM read is too low-resolution to
-// read small print reliably; a real-resolution crop of just the panel
-// reads it correctly, at no extra latency cost since a crop is a smaller
-// image than the whole page despite its higher effective resolution.
+// accuracy3 Step 4.1 (original directive spec): the ingredients crop
+// reader, following the pattern nutritionCropReader.service.ts already
+// proved in production (accuracy2 Step 7) -- a whole-page VLM read is too
+// low-resolution to read small print reliably; a real-resolution crop of
+// just the panel reads it correctly, at no extra latency cost.
 //
 // This is a LAST-RESORT side channel, same philosophy as every other
 // recovery pass in this pipeline: only reached when extractIngredients
 // and mergeIngredientsResults (the text-layer and OCR-text paths) both
 // left ingredients empty, and only when the VLM is enabled. A crop read
 // is still a model guess, not an OCR fact, so every item is grounded
-// (isPlausibleIngredientItem) before it's trusted -- the same discipline
-// isPlausibleNutritionRow already applies to nutrition rows.
+// (isPlausibleIngredientItem + isCorroboratedWholePhrase) before it's
+// trusted -- the same discipline isPlausibleNutritionRow already applies
+// to nutrition rows, strengthened here per the directive's own spec: an
+// item is accepted only when a PP-OCR or text-layer line in the SAME
+// PANEL also states it, whole-phrase.
 //
-// Deliberately span-based only, with no OCR-word/line fallback (unlike
-// nutritionCropReader's two-path design): a nutrition panel has a
-// distinctive multi-word vocabulary (Energy, Protein, Sodium, ...) that
-// makes a >=3-anchor-word OCR fallback trustworthy on its own. An
-// ingredients declaration has no such vocabulary -- just one heading word
-// followed by a paragraph -- so a word-level OCR fallback would have to
-// guess how many lines below the heading belong to the declaration, on a
-// page where accuracy3 Step 2 already found a real case of two unrelated
-// panels (an ingredients paragraph and an adjacent MRP/pricing column)
-// sharing overlapping Y-coordinate ranges. Restricting this to the
-// text-layer path avoids re-introducing that exact risk into crop
-// geometry; a scanned-image label with no text layer at all simply keeps
-// its existing (unchanged) behaviour.
+// Two ways to locate the panel:
+//   - findIngredientsPanelFromSpans: exact, from the PDF's own text-layer
+//     geometry, when an anchor line ("Ingredients:", "Composition:", ...)
+//     is present.
+//   - findIngredientsPanelFromLines: a no-anchor fallback for labels with
+//     no PDF text layer at all (most of this client's real scanned
+//     intake, confirmed by validating the anchor-only v1 against 69 real
+//     labels and finding zero activations for exactly this reason) --
+//     locates the panel holding the longest continuous run of small-print
+//     OCR lines, the same shape an ingredients declaration has on every
+//     real label (dense small print), as opposed to a wordmark (large) or
+//     a short caption (too few lines to trust).
 import sharp from 'sharp';
 import type { TextSpan } from './pdf.service';
 import { segmentPanels } from './textLayerGeometry.service';
 import { projectSpanToPixels } from './outlinedText.service';
+import type { OcrLineLike } from './outlinedText.service';
 import type { VlmClient, VlmImage } from './ollamaVlm.service';
 import { INGREDIENTS_ANCHOR } from './labelSemanticExtractor.service';
 import type { CropBox } from './nutritionCropReader.service';
+
+export type IngredientsPanelMatch = {
+  box: CropBox;
+  // The panel's own text (from spans or OCR lines, whichever located it),
+  // flattened to one string -- used to whole-phrase-corroborate every VLM
+  // item before it's trusted. This is real, independently-read text, not
+  // anything the VLM itself produced.
+  corroborationText: string;
+};
 
 /**
  * Finds the ingredients panel's real pixel bounding box from the PDF's own
@@ -44,7 +55,7 @@ export function findIngredientsPanelFromSpans(
   spans: readonly TextSpan[],
   pageHeightPt: number,
   dpi: number
-): CropBox | null {
+): IngredientsPanelMatch | null {
   if (spans.length === 0) return null;
   const panels = segmentPanels(spans);
   const panel = panels.find((p) => p.lines.some((l) => INGREDIENTS_ANCHOR.test(l.text)));
@@ -61,7 +72,109 @@ export function findIngredientsPanelFromSpans(
     maxX = Math.max(maxX, rect.left + rect.width);
     maxY = Math.max(maxY, rect.top + rect.height);
   }
-  return { left: minX, top: minY, width: maxX - minX, height: maxY - minY };
+  return {
+    box: { left: minX, top: minY, width: maxX - minX, height: maxY - minY },
+    corroborationText: panel.lines.map((l) => l.text).join(' ')
+  };
+}
+
+// A real ingredients declaration's print is small (the same 32px
+// median-line-height cutoff Step 1.3 already established for the PP-OCR
+// upscale rule) -- a wordmark or a front-panel headline is much taller,
+// and a short caption (net weight, pack count) never runs more than a
+// couple of lines. MIN_RUN_LINES is the floor for something worth calling
+// a declaration; below that the run is far too likely to be an ordinary
+// short caption rather than a real ingredients paragraph.
+const SMALL_TEXT_MAX_HEIGHT_PX = 32;
+const MIN_RUN_LINES = 3;
+
+function rangesOverlap(aStart: number, aEnd: number, bStart: number, bEnd: number): boolean {
+  return aStart < bEnd && bStart < aEnd;
+}
+
+/**
+ * Finds the ingredients panel from OCR line geometry alone -- the
+ * no-anchor fallback for a label with no PDF text layer at all (a scanned
+ * or production-proof image, most of this client's real intake). Groups
+ * lines into columns by X-overlap, then within each column finds the
+ * longest continuous run of small-print lines (a large vertical gap or a
+ * large-print line breaks the run) -- the shape a real ingredients
+ * declaration has that nothing else on a label does. Returns null when no
+ * run reaches MIN_RUN_LINES; a short run is too easily an unrelated
+ * caption to trust as the declaration.
+ */
+export function findIngredientsPanelFromLines(lines: readonly OcrLineLike[]): IngredientsPanelMatch | null {
+  if (lines.length === 0) return null;
+
+  const sorted = [...lines].sort((a, b) => a.box.x0 - b.box.x0);
+  const columns: OcrLineLike[][] = [];
+  for (const ln of sorted) {
+    const column = columns.find((c) => c.some((l) => rangesOverlap(l.box.x0, l.box.x1, ln.box.x0, ln.box.x1)));
+    if (column) column.push(ln);
+    else columns.push([ln]);
+  }
+
+  let bestRun: OcrLineLike[] = [];
+  for (const column of columns) {
+    const byY = [...column].sort((a, b) => a.box.y0 - b.box.y0);
+    let current: OcrLineLike[] = [];
+    for (const ln of byY) {
+      const height = ln.box.y1 - ln.box.y0;
+      const isSmall = height > 0 && height <= SMALL_TEXT_MAX_HEIGHT_PX;
+      const prev = current[current.length - 1];
+      const gapOk = !prev || ln.box.y0 - prev.box.y1 <= height * 3;
+      if (isSmall && gapOk) {
+        current.push(ln);
+      } else {
+        if (current.length > bestRun.length) bestRun = current;
+        current = isSmall ? [ln] : [];
+      }
+    }
+    if (current.length > bestRun.length) bestRun = current;
+  }
+
+  if (bestRun.length < MIN_RUN_LINES) return null;
+
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const ln of bestRun) {
+    minX = Math.min(minX, ln.box.x0);
+    minY = Math.min(minY, ln.box.y0);
+    maxX = Math.max(maxX, ln.box.x1);
+    maxY = Math.max(maxY, ln.box.y1);
+  }
+  return {
+    box: { left: minX, top: minY, width: maxX - minX, height: maxY - minY },
+    corroborationText: bestRun.map((l) => l.text).join(' ')
+  };
+}
+
+function normalizeForCorroboration(text: string): string {
+  return text
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim()
+    .replace(/\s+/g, ' ');
+}
+
+/**
+ * Whether an item the VLM returned is backed up, whole-phrase, by
+ * something a real, independent reader (PP-OCR or the PDF's own text
+ * layer) actually saw in the same panel -- the grounding gate the
+ * original directive's Step 4.1 spec requires. Normalizes case,
+ * whitespace and punctuation before comparing (a real OCR read of the
+ * same crop can differ from the VLM's own transcription in trivial
+ * formatting -- "[INS 440]" vs "(INS 440)" -- without that difference
+ * meaning the item is fabricated), but still requires the FULL phrase to
+ * appear with word boundaries on both ends, so a longer, unprinted item
+ * is never waved through merely because a shorter real ingredient's name
+ * happens to be a substring of it.
+ */
+export function isCorroboratedWholePhrase(item: string, corroborationText: string): boolean {
+  const normalizedItem = normalizeForCorroboration(item);
+  if (!normalizedItem) return false;
+  const normalizedCorroboration = normalizeForCorroboration(corroborationText);
+  const pattern = new RegExp(`\\b${normalizedItem}\\b`);
+  return pattern.test(normalizedCorroboration);
 }
 
 const CROP_SCHEMA = {
@@ -124,16 +237,19 @@ async function prepareCropImage(crop: Buffer): Promise<VlmImage> {
 
 /**
  * Reads an ingredients declaration from a crop of the page image via the
- * VLM, grounded before being trusted (see isPlausibleIngredientItem).
- * Returns null -- never an empty string, never a throw -- when the crop,
- * the VLM call, or too few items in the answer don't hold up; the
- * caller's own "still missing" check decides what to do with that, same
- * fail-soft contract as readNutritionTableFromCrop.
+ * VLM, grounded before being trusted: every item must be plausibly
+ * shaped (isPlausibleIngredientItem) AND corroborated whole-phrase by the
+ * panel's own independently-read text (isCorroboratedWholePhrase,
+ * corroborationText). Returns null -- never an empty string, never a
+ * throw -- when the crop, the VLM call, or too few items in the answer
+ * don't hold up; the caller's own "still missing" check decides what to
+ * do with that, same fail-soft contract as readNutritionTableFromCrop.
  */
 export async function readIngredientsFromCrop(
   pageImage: Buffer,
   cropBox: CropBox,
-  client: VlmClient
+  client: VlmClient,
+  corroborationText: string
 ): Promise<string | null> {
   let image: VlmImage;
   try {
@@ -161,10 +277,18 @@ export async function readIngredientsFromCrop(
   if (!Array.isArray(items)) return null;
 
   const plausible: string[] = [];
+  let rejectedCount = 0;
   for (const item of items) {
     if (plausible.length >= MAX_ITEMS) break;
     if (!isPlausibleIngredientItem(item)) continue;
+    if (!isCorroboratedWholePhrase(item, corroborationText)) {
+      rejectedCount++;
+      continue;
+    }
     plausible.push(item.trim());
+  }
+  if (rejectedCount > 0) {
+    console.warn(`[ingredientsCropReader] ${rejectedCount} item(s) rejected: not corroborated by the panel's own read`);
   }
 
   return plausible.length >= MIN_ITEMS ? plausible.join(', ') : null;
