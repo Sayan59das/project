@@ -86,6 +86,7 @@ import {
   padCropBox,
   readNutritionTableFromCrop
 } from './nutritionCropReader.service';
+import { findIngredientsPanelFromSpans, readIngredientsFromCrop } from './ingredientsCropReader.service';
 import { resolveDisplayRoles, type DisplayCandidateIn } from './displayRoleResolver.service';
 
 setLabelFieldExtractorDebug(env.labelExtractionDebug);
@@ -1907,6 +1908,38 @@ export async function extractLabelReportFromFile(
       } catch (error) {
         console.warn(
           '[labelExtraction] Nutrition-panel crop recovery failed: ' +
+            (error instanceof Error ? error.message : String(error))
+        );
+      }
+    }
+
+    // accuracy3 Step 4: the same crop-reader rescue, extended to
+    // ingredients -- last resort, after extractIngredients and
+    // mergeIngredientsResults (the text-layer and OCR-text paths) both
+    // left ingredients empty. Span-based only (see
+    // ingredientsCropReader.service.ts's own comment for why this
+    // deliberately has no OCR-word/line fallback): a scanned-image label
+    // with no text layer keeps its existing, unchanged behaviour. Every
+    // item is grounded before being trusted (readIngredientsFromCrop), so
+    // a crop that doesn't hold up leaves the field MISSING, never WRONG.
+    if (!extended.values.ingredients && isVlmEnabled() && ocrPageImages[0]) {
+      try {
+        const pageImageBuffer = ocrPageImages[0];
+        const meta = await sharp(pageImageBuffer).metadata();
+        const pageHeight = meta.height!;
+        const dpi = env.pdfRasterDpi;
+
+        const box = findIngredientsPanelFromSpans(pass.spans ?? [], pageHeight / (dpi / 72), dpi);
+        if (box) {
+          const padded = padCropBox(box, 20, meta.width!, pageHeight);
+          const recovered = await readIngredientsFromCrop(pageImageBuffer, padded, ollamaClient);
+          if (recovered) {
+            extended = { ...extended, values: { ...extended.values, ingredients: recovered } };
+          }
+        }
+      } catch (error) {
+        console.warn(
+          '[labelExtraction] Ingredients-panel crop recovery failed: ' +
             (error instanceof Error ? error.message : String(error))
         );
       }

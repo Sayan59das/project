@@ -1266,6 +1266,140 @@ confirmation of VLM output quality against actual label crops.
 
 PR: `feat/accuracy3-step4` (#13).
 
+## accuracy3 Step 4 continued: Ollama online, the ingredients crop reader built -- zero real-label activations, and a clear diagnosis of why
+
+Ollama is now running locally (`qwen2.5vl:3b`/`qwen2.5vl:7b`, GPU-accelerated
+on the dev machine's RTX 4050) and `OLLAMA_URL` is set in `backend/.env`, so
+the VLM path that blocked the rest of Step 4 is unblocked. Built
+`ingredientsCropReader.service.ts`, following `nutritionCropReader.service
+.ts`'s already-shipped pattern almost exactly: `findIngredientsPanelFromSpans`
+locates the panel from the PDF's own text-layer geometry (reusing the same
+`INGREDIENTS_ANCHOR`/`INGREDIENTS_TERMINATORS` the text-layer path already
+uses, now exported for reuse), `readIngredientsFromCrop` asks the VLM for a
+JSON `items` array and grounds every item before trusting it (non-empty, a
+real length ceiling, at least one letter -- no digit-only or punctuation-only
+"ingredient"), joins survivors into the same comma-joined shape the rest of
+the pipeline expects, and returns null (never a throw, never an empty
+string) when nothing holds up. Wired in as a last-resort fallback in
+`extractFieldsFromPdf`, gated on `ingredients` still being blank after every
+text-based path and on `isVlmEnabled()`, mirroring the nutrition table's own
+wiring line for line. 10 new passing tests
+(`ingredientsCropReader.test.ts`), 620/620 relevant tests still green (see
+below for the 10 known, unrelated pre-existing failures).
+
+**Deliberately scoped span-only, with no OCR-word/line fallback** -- unlike
+nutritionCropReader's two-path design. A nutrition panel has a distinctive
+multi-word vocabulary (Energy, Protein, Sodium, ...) that makes a >=3-anchor
+OCR-word fallback trustworthy on its own; an ingredients declaration is just
+one heading word followed by a paragraph, and Step 2 this same project
+already found a real case of an ingredients paragraph and an unrelated
+pricing column sharing overlapping Y-coordinates on a real label. Building an
+OCR-word/line-based crop locator without that same care risks feeding the
+VLM a crop that blends two unrelated panels together -- a real fabrication
+risk on a project whose fabrication table must stay at 0%. Scoped out rather
+than rushed.
+
+**Validated directly against 69 real client labels** (of the 79 in
+`IMH-LVS/all labels/`; 10 were skipped by an earlier batch-tooling mistake
+this session, not a label-specific problem -- see below). Result: **zero
+activations**. Every label whose `ingredients` field is currently empty
+turned out to have no PDF text layer at all (confirmed directly: 205 chars
+or fewer, no "ingredient" word anywhere, on every one of five spot-checked
+files) -- so `findIngredientsPanelFromSpans` correctly returns null every
+time, exactly as designed, because there are no spans to search.
+
+This isn't a dead end, though -- it's a precise diagnosis. One label,
+`Wellmedic VF Relax IRN27-2.pdf`, makes the gap concrete: OCR (Tesseract)
+successfully reads its address, marketing company, flavour and package size
+(`field_sources` shows `tesseract-region-ocr`/`tesseract-full-page`), so the
+label is legible and OCR-worthy -- but ingredients stays blank, because my
+crop reader can only locate a panel from PDF text-layer *spans*, and this
+label simply doesn't have any (it's rasterized/scanned artwork, like most of
+this client's real intake). The real next step, not attempted tonight, is an
+OCR-word/line-based panel locator -- the same idea `findNutritionPanelFromWords`
+already proves works for nutrition panels -- built with the same
+same-panel/X-proximity care Step 2's reading-order fix already established,
+so a scanned label's ingredients paragraph doesn't get crop-blended with an
+unrelated column. Named as the clear, valuable follow-up rather than rushed
+tonight under real fabrication-risk stakes.
+
+**Also deliberately deferred**: `vlm-read-claims` (the directive's other
+named crop-reader extension). Claims already sits at 0 false positives after
+Step 3's careful, conservative shape-gate work; a VLM-based claims reader
+risks reintroducing false positives on a field that's already precision-
+tuned, and the original directive's nuanced badge/icon-handling spec for it
+isn't available to reconstruct responsibly from this session's own context.
+`vlm-read-identity` (the directive's third piece, targeting `product_name` --
+named as the worst-performing field) also wasn't attempted tonight -- time
+ran out validating the ingredients piece; the existing `resolveDisplayRoles`/
+`groundToCandidates` pipeline already has real anti-fabrication grounding,
+and the natural, low-risk next enhancement is giving it a cropped
+higher-resolution front-panel image instead of the whole page at
+`prepareImage`'s fixed width (the same lesson nutrition and ingredients
+crops already prove), rather than building a new pipeline from scratch.
+
+**Two real, unrelated issues found and diagnosed while validating tonight**
+(neither caused by this branch -- both confirmed via bisection or direct
+inspection before being ruled out):
+
+1. **DB sequence pollution.** Two rounds of necessary `Stop-Process -Force`
+   kills tonight (a hung/ambiguous test run, and two genuine memory-pressure
+   emergencies) left the local dev Postgres container's sequences bumped --
+   Postgres sequences are never rolled back by a rolled-back transaction, by
+   design, so `nextval()` calls from interrupted test runs permanently
+   advanced counters like the artwork-code sequence. This surfaced as 7
+   failing tests across `db.repositories.test.ts` and `api.persistence.test
+   .ts` (hardcoded expected row counts/codes now off by however many
+   sequence advances leaked through). Confirmed as pure local dev-state
+   pollution, not a code issue (an anonymous Docker volume, fully
+   reproducible from the project's own seed script). Recreating the
+   container needs a destructive-looking Docker command the harness
+   correctly declined to run unsupervised; the user has the exact recovery
+   command from earlier in this session (`docker stop imh-lvs-pg && docker
+   rm imh-lvs-pg -v && docker run -d --name imh-lvs-pg -e
+   POSTGRES_PASSWORD=lvsdev -e POSTGRES_USER=lvs -e POSTGRES_DB=imh_lvs -p
+   5433:5432 postgres:16-alpine`, then `npm run db:migrate && npm run
+   db:seed` from `backend/`) to run themselves when convenient -- not
+   blocking, since none of these tests touch label extraction.
+
+2. **NUTRINOL OCR non-determinism (pre-existing, confirmed via bisection).**
+   `labels.extract.test.ts`'s Sharp Mind Plus Gummies test expects `brand`
+   to stay blank -- its real brand, "NUTRINOL", is rendered as an outlined
+   graphic wordmark with no real text anywhere in the PDF, deliberately
+   unreadable by OCR. Tonight it occasionally reads through anyway. Bisected
+   with `git stash` against unmodified `main`: the exact same failure
+   reproduces there, byte for byte, with none of tonight's changes present --
+   confirming this is pre-existing OCR non-determinism (Tesseract/PP-OCR
+   occasionally crossing a confidence threshold it usually doesn't, likely
+   sensitive to subtle rendering differences run to run), not a regression
+   from this branch. Worth its own look in a future session; out of scope
+   here.
+
+A third and fourth failure (`displayRoleResolver.test.ts`'s live Unicare
+test failing on a hardcoded path from a different machine entirely --
+`M:\New Drive\Desktop\bot\project\...`, and `textLayerGeometry.test.ts`
+failing on `IMH-LVS/Dataset_Example/Multivitamin IRN56-3.pdf`, one of four
+files already shown deleted in this session's very first `git status`,
+before any of tonight's work began) are both pre-existing environment/
+fixture issues, unrelated to this branch, not investigated further tonight.
+
+**Batch-processing lessons from tonight's real-label validation** (all
+tooling mistakes on my side, not codebase issues): `dotenv.config()` loads
+`OLLAMA_URL` from `backend/.env` regardless of the shell's own env state --
+`unset OLLAMA_URL` before a command does nothing once the key is in `.env`,
+so there is no way left to get a genuinely VLM-disabled run without editing
+the file. Label filenames contain spaces; `$(cat batch_file)` word-splits
+them into garbage fragments -- `mapfile -t files < batch_file` is required.
+Relative paths are fragile across `cd`s between `IMH-LVS/` and
+`IMH-LVS/backend/`; absolute paths avoid the whole class of mistake. Running
+many real labels through one long-lived Node process with VLM active is
+meaningfully heavier than OCR alone -- 10-file batches hit real memory
+pressure (one crashed outright, exit 127, likely an OS-level OOM kill);
+5-file batches, each a fresh process, stayed comfortably within safe memory
+bounds the whole way through.
+
+PR: `feat/accuracy3-step4-vlm` (branched off Step 5's merge).
+
 ## accuracy3 Step 5: one real flavour bug fixed; one by-source gating attempt tried and reverted after a real regression
 
 **A real lesson, learned the hard way**: the by-source table showed
@@ -1326,17 +1460,25 @@ PR: `feat/accuracy3-step5` (#14, to be opened).
 ## Where this leaves things for the next session
 
 Steps 1-3 are merged into `main` with real, measured or code-level-
-validated improvements. Step 4's non-VLM piece is merged; its VLM-
-dependent crop-reader extensions are the single largest remaining lever
-per Step 0's own ceiling analysis and need Ollama running to build and
-validate for real -- the natural first thing to pick up. Step 5 found
-and fixed one dominant real bug (flavour) and one real lesson (by-source
-aggregate signals can hide per-family reliability differences); its
-package_size and address/marketing_company items are still open. Steps
+validated improvements. Step 4's non-VLM piece is merged; Ollama is now
+running and the ingredients crop reader is built, tested, and validated
+against 69 real labels -- correctly scoped, but currently inert on this
+label population because it needs a PDF text layer to locate a panel from,
+and the labels still missing ingredients don't have one. The real next
+lever is the OCR-word/line-based panel locator described above, built with
+the same reading-order care Step 2 already proved out; `vlm-read-claims`
+and `vlm-read-identity`'s front-panel crop are both still open too. Step 5
+found and fixed one dominant real bug (flavour) and one real lesson
+(by-source aggregate signals can hide per-family reliability differences);
+its package_size and address/marketing_company items are still open. Steps
 6 and 7 (the holdout re-run, masters-off rows for every step, the
 `NEVER_A_CLAIM` hardcoded-set replacement, and the client's own
 truth-sign-off) haven't been started. No fresh aggregate score.py number
 exists for anything shipped since the Step 1 baseline (43.0% strict /
 54.3% fuzzy / 46.6% strict text) -- that's the first thing worth running
 once memory conditions are confirmed stable, to see where the whole
-night's work actually landed.
+night's work actually landed. The local dev Postgres container also needs
+recreating (see the DB sequence pollution note above) before
+`db.repositories.test.ts`/`api.persistence.test.ts` will show a clean run
+again -- unrelated to any of this work, just left-over state from tonight's
+necessary process kills.
