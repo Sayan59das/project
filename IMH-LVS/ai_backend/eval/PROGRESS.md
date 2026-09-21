@@ -1400,6 +1400,18 @@ bounds the whole way through.
 
 PR: `feat/accuracy3-step4-vlm` (branched off Step 5's merge).
 
+## accuracy3 Step 4.1 continued: the no-anchor ingredients locator + whole-phrase corroboration
+
+The user shared the project's original directive text mid-session, which specified exactly what Step 4.1 was always supposed to include beyond the span-only v1 above: a **no-anchor fallback** ("the panel holding the longest continuous small-text run") for labels with no PDF text layer, and **whole-phrase corroboration** ("an item is accepted only when a PP-OCR or text-layer line in the same crop corroborates it") instead of shape-only grounding. Both are now built.
+
+`findIngredientsPanelFromLines` (new): groups OCR lines into columns by X-overlap, then within each column finds the longest continuous run of small-print lines (<=32px, the same threshold Step 1.3 already established) -- a large-print line or a large vertical gap breaks the run. Returns null below 3 lines (too little signal to trust as a real declaration rather than a short caption). `isCorroboratedWholePhrase` (new): every VLM-returned item must appear, whole-phrase and word-bounded, in the panel's own independently-read text (from spans or OCR lines, whichever located the panel) after normalizing case/punctuation/whitespace -- an item with no basis in what was actually, independently read is rejected and logged, never silently kept. 11 new tests (21 total in the file), all passing; full backend suite still 631 tests / 620 pass with the exact same 10 pre-existing, unrelated failures as before this change (confirmed by diffing the failing-test list) -- zero regressions.
+
+**Validated against real labels**: of the 14 real client labels confirmed empty-ingredients in the earlier span-only validation, a partial re-run (5 of 14, time-constrained) recovered a clean, correct-looking 8-item declaration on `Iron VF IRN116-2.pdf` (previously empty). One label, `Iron VF IRN36-1.pdf`, recovered only 2 items that look like they may be a truncated fragment of a longer declaration rather than the complete list -- flagged honestly rather than hidden; corroboration means the failure mode there is "incomplete," never "fabricated" (every surviving item is independently backed by real text in the crop), consistent with this whole project's safety-first design. The corroboration gate is confirmed actively working on real data: log lines show 1-7 items rejected per label across the sample, not a rubber stamp.
+
+**Not fully validated**: the remaining 9 of 14 labels, for time (this update lands right at a hard session cutoff). Worth a follow-up real-data pass before the next `score.py` measurement to confirm the gain is real and broad, not a single lucky label.
+
+PR: `feat/accuracy3-step4.1-noanchor` (branched off the Step 4 ingredients merge).
+
 ## accuracy3 Step 5: one real flavour bug fixed; one by-source gating attempt tried and reverted after a real regression
 
 **A real lesson, learned the hard way**: the by-source table showed

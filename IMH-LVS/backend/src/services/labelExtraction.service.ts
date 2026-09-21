@@ -86,7 +86,7 @@ import {
   padCropBox,
   readNutritionTableFromCrop
 } from './nutritionCropReader.service';
-import { findIngredientsPanelFromSpans, readIngredientsFromCrop } from './ingredientsCropReader.service';
+import { findIngredientsPanelFromSpans, findIngredientsPanelFromLines, readIngredientsFromCrop } from './ingredientsCropReader.service';
 import { resolveDisplayRoles, type DisplayCandidateIn } from './displayRoleResolver.service';
 
 setLabelFieldExtractorDebug(env.labelExtractionDebug);
@@ -1913,26 +1913,37 @@ export async function extractLabelReportFromFile(
       }
     }
 
-    // accuracy3 Step 4: the same crop-reader rescue, extended to
-    // ingredients -- last resort, after extractIngredients and
-    // mergeIngredientsResults (the text-layer and OCR-text paths) both
-    // left ingredients empty. Span-based only (see
-    // ingredientsCropReader.service.ts's own comment for why this
-    // deliberately has no OCR-word/line fallback): a scanned-image label
-    // with no text layer keeps its existing, unchanged behaviour. Every
-    // item is grounded before being trusted (readIngredientsFromCrop), so
-    // a crop that doesn't hold up leaves the field MISSING, never WRONG.
+    // accuracy3 Step 4.1 (original directive spec): the same crop-reader
+    // rescue, extended to ingredients -- last resort, after
+    // extractIngredients and mergeIngredientsResults (the text-layer and
+    // OCR-text paths) both left ingredients empty. Span-based location
+    // first (exact, from the PDF's own text-layer geometry); when that
+    // finds nothing -- confirmed via real-data validation to be the
+    // common case, since every currently-empty-ingredients label in this
+    // client's real intake lacks a PDF text layer entirely -- falls back
+    // to locating the panel from OCR line geometry alone
+    // (findIngredientsPanelFromLines). Every item from either path is
+    // grounded before being trusted: a plausible shape AND whole-phrase
+    // corroboration against the panel's own independently-read text
+    // (readIngredientsFromCrop), so a crop that doesn't hold up leaves
+    // the field MISSING, never WRONG.
     if (!extended.values.ingredients && isVlmEnabled() && ocrPageImages[0]) {
       try {
         const pageImageBuffer = ocrPageImages[0];
         const meta = await sharp(pageImageBuffer).metadata();
+        const pageWidth = meta.width!;
         const pageHeight = meta.height!;
         const dpi = env.pdfRasterDpi;
 
-        const box = findIngredientsPanelFromSpans(pass.spans ?? [], pageHeight / (dpi / 72), dpi);
-        if (box) {
-          const padded = padCropBox(box, 20, meta.width!, pageHeight);
-          const recovered = await readIngredientsFromCrop(pageImageBuffer, padded, ollamaClient);
+        let match = findIngredientsPanelFromSpans(pass.spans ?? [], pageHeight / (dpi / 72), dpi);
+        if (!match) {
+          const scan = await scanPageWithPpOcr(pageImageBuffer, pass.spans ?? [], dpi);
+          if (scan) match = findIngredientsPanelFromLines(scan.deduped);
+        }
+
+        if (match) {
+          const padded = padCropBox(match.box, 20, pageWidth, pageHeight);
+          const recovered = await readIngredientsFromCrop(pageImageBuffer, padded, ollamaClient, match.corroborationText);
           if (recovered) {
             extended = { ...extended, values: { ...extended.values, ingredients: recovered } };
           }
